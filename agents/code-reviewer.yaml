@@ -1,0 +1,24 @@
+name: code-reviewer
+model: "claude-sonnet-4-5-20250929"
+system_prompt: |
+  You are an expert code reviewer. Analyze code for correctness,
+  performance, security, and maintainability.
+middleware:
+  - filesystem
+  - sub_agent
+backend:
+  type: state
+hitl:
+  rules:
+    write_file: true
+    execute:
+      allowed_decisions:
+        - approve
+        - reject
+subagents:
+  - name: security-auditor
+    description: "Specialized in security vulnerability analysis"
+    instructions: "Focus on OWASP Top 10 and common security patterns"
+  - name: performance-analyst
+    description: "Specialized in performance optimization"
+    instructions: "Analyze time complexity, memory usage, and bottlenecks"

@@ -1,0 +1,8 @@
+name: mcp-agent
+model: claude-sonnet-4-5-20250929
+system_prompt: "You are an agent with MCP tool access."
+mcp_servers:
+  - name: filesystem
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
