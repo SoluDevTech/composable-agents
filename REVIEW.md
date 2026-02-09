@@ -56,14 +56,18 @@ La règle de dépendance est correctement appliquée : le domaine n'importe rien
 
 ---
 
-## Utilité
+## Positionnement et utilité
+
+**Segment : agent gateway / runtime d'agents déclaratif.** Ce projet ne se compare pas aux frameworks d'orchestration multi-agents (CrewAI, AutoGen) ni au serving LangChain (LangServe). Il se positionne comme une **couche de déploiement** : YAML in, API out. Plus proche de Langflow/Flowise en philosophie, mais en version code-first, sans UI, et léger.
+
+La proposition de valeur est claire : **10 lignes de YAML = une API d'agent complète** avec conversations, streaming SSE/WebSocket, et HITL. C'est un segment sous-exploité.
 
 | Critère | Evaluation |
 |---------|-----------|
-| Problème résolu | Réel : déployer des agents configurables sans code |
-| Différenciation | Faible : LangServe, CrewAI, AutoGen sont plus matures |
-| Production | Non prêt |
-| Prototypage | Oui, très adapté pour des PoC |
+| Problème résolu | Réel : servir des agents IA comme API sans code applicatif |
+| Différenciation | Bonne : peu de solutions code-first et légères sur ce segment |
+| Production | Non prêt (persistence, auth, logging manquants) |
+| Prototypage / PoC | Excellent : déploiement quasi-instantané |
 | Extensibilité | Excellente grâce à l'architecture hexagonale |
 | Maintenabilité | Bonne : code propre, bien structuré, testé |
 
@@ -79,4 +83,4 @@ La règle de dépendance est correctement appliquée : le domaine n'importe rien
 
 ## Score global : 7.5/10
 
-Projet bien architecturé avec une excellente maîtrise des principes de conception. Idéal pour le prototypage, mais nécessite des améliorations significatives pour un usage en production.
+Projet bien architecturé avec une excellente maîtrise des principes de conception, positionné sur un segment pertinent et sous-exploité (agent runtime déclaratif). Idéal pour le prototypage et le déploiement rapide d'agents, mais nécessite des améliorations significatives (persistence, auth, logging) pour un usage en production.
