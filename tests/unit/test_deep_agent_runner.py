@@ -1,8 +1,15 @@
-import pytest
+"""Tests for DeepAgentRunner.
+
+Graph is mocked (external LLM boundary via LangGraph).
+"""
+
 from unittest.mock import AsyncMock, MagicMock
-from src.infrastructure.deepagent.adapter import DeepAgentRunner
+
+import pytest
+
 from src.domain.entities.message import MessageRole, MessageStatus
 from src.domain.exceptions import AgentError
+from src.infrastructure.deepagent.adapter import DeepAgentRunner
 
 
 def _make_graph(messages, interrupts=(), state_values=None):
@@ -17,7 +24,6 @@ def _make_graph(messages, interrupts=(), state_values=None):
 
 
 class TestDeepAgentRunner:
-    @pytest.mark.asyncio
     async def test_invoke_returns_message(self):
         mock_msg = MagicMock()
         mock_msg.content = "Hello from agent"
@@ -32,7 +38,6 @@ class TestDeepAgentRunner:
         assert result.status == MessageStatus.COMPLETED
         graph.ainvoke.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_invoke_uses_only_last_message_tool_calls(self):
         """Only tool_calls from the last message are returned, not intermediate ones."""
         human_msg = MagicMock(spec=[])
@@ -52,7 +57,6 @@ class TestDeepAgentRunner:
         assert result.tool_calls is None
         assert result.status == MessageStatus.COMPLETED
 
-    @pytest.mark.asyncio
     async def test_invoke_detects_hitl_interruption(self):
         """When get_state() reports interrupts, status is awaiting_hitl."""
         ai_msg = MagicMock()
@@ -68,7 +72,6 @@ class TestDeepAgentRunner:
         assert result.tool_calls is not None
         assert result.content == ""
 
-    @pytest.mark.asyncio
     async def test_invoke_completed_when_no_interrupts(self):
         """When get_state() reports no interrupts, status is completed."""
         mock_msg = MagicMock()
@@ -81,7 +84,6 @@ class TestDeepAgentRunner:
 
         assert result.status == MessageStatus.COMPLETED
 
-    @pytest.mark.asyncio
     async def test_invoke_returns_none_tool_calls_when_last_message_has_none(self):
         """When the final AI message has no tool_calls, result.tool_calls is None."""
         old_human = MagicMock(spec=[])
@@ -103,18 +105,16 @@ class TestDeepAgentRunner:
         assert result.content == "New response"
         assert result.tool_calls is None
 
-    @pytest.mark.asyncio
     async def test_invoke_raises_on_error(self):
         mock_graph = AsyncMock()
         mock_graph.ainvoke.side_effect = RuntimeError("LLM error")
 
         runner = DeepAgentRunner(mock_graph)
-        with pytest.raises(AgentError, match="Erreur d'execution"):
+        with pytest.raises(AgentError, match="Agent execution error"):
             await runner.invoke("thread-1", "Hello")
 
     # --- HITL _build_response integration tests ---
 
-    @pytest.mark.asyncio
     async def test_approve_hitl_detects_subsequent_interrupt(self):
         """After approve, if graph returns new interrupts, status is AWAITING_HITL."""
         human_msg = MagicMock(spec=[])
@@ -139,7 +139,6 @@ class TestDeepAgentRunner:
         assert result.tool_calls is not None
         assert any(tc["name"] == "deploy" for tc in result.tool_calls)
 
-    @pytest.mark.asyncio
     async def test_reject_hitl_detects_subsequent_interrupt(self):
         """After reject, if graph returns new interrupts, status is AWAITING_HITL."""
         human_msg = MagicMock(spec=[])
@@ -164,7 +163,6 @@ class TestDeepAgentRunner:
         assert result.tool_calls is not None
         assert any(tc["name"] == "confirm_delete" for tc in result.tool_calls)
 
-    @pytest.mark.asyncio
     async def test_edit_hitl_detects_subsequent_interrupt(self):
         """After edit, if graph returns new interrupts, status is AWAITING_HITL."""
         human_msg = MagicMock(spec=[])
@@ -200,7 +198,6 @@ class TestDeepAgentRunner:
         assert decision["edited_action"]["name"] == "send_email"
         assert decision["edited_action"]["args"] == {"to": "x@y.com"}
 
-    @pytest.mark.asyncio
     async def test_approve_hitl_completed_when_no_interrupts(self):
         """After approve with no further interrupts, status is COMPLETED with no tool_calls."""
         human_msg = MagicMock(spec=[])
@@ -224,15 +221,12 @@ class TestDeepAgentRunner:
         assert result.content == "Search complete. Found 3 results."
         assert result.tool_calls is None
 
-    @pytest.mark.asyncio
     async def test_reject_hitl_excludes_rejected_tool_calls(self):
         """After reject, the rejected tool_calls are not in the response."""
         human_msg = MagicMock(spec=[])
         human_msg.type = "human"
-        # AI tried to call word_count (was interrupted)
         ai_with_tools = MagicMock()
         ai_with_tools.tool_calls = [{"name": "word_count", "args": {"text": "test"}, "id": "tc-1"}]
-        # After rejection, agent gives a text response
         final_ai = MagicMock()
         final_ai.content = "I can count manually: 1 word."
         final_ai.tool_calls = []
@@ -248,3 +242,54 @@ class TestDeepAgentRunner:
         assert result.status == MessageStatus.COMPLETED
         assert result.content == "I can count manually: 1 word."
         assert result.tool_calls is None
+
+    # --- Structured output tests ---
+
+    async def test_build_response_extracts_structured_response_dict(self):
+        """When result contains structured_response dict, it appears in Message."""
+        mock_msg = MagicMock()
+        mock_msg.content = "Weather report"
+        mock_msg.tool_calls = None
+        graph = _make_graph([mock_msg])
+        graph.ainvoke.return_value = {
+            "messages": [mock_msg],
+            "structured_response": {"temperature": 22, "condition": "sunny"},
+        }
+
+        runner = DeepAgentRunner(graph)
+        result = await runner.invoke("thread-1", "weather?")
+
+        assert result.structured_response == {"temperature": 22, "condition": "sunny"}
+
+    async def test_build_response_extracts_structured_response_model_dump(self):
+        """When structured_response is a Pydantic model, it's converted via model_dump()."""
+        mock_msg = MagicMock()
+        mock_msg.content = "Report"
+        mock_msg.tool_calls = None
+
+        pydantic_obj = MagicMock()
+        pydantic_obj.model_dump.return_value = {"temperature": 15, "condition": "cloudy"}
+
+        graph = _make_graph([mock_msg])
+        graph.ainvoke.return_value = {
+            "messages": [mock_msg],
+            "structured_response": pydantic_obj,
+        }
+
+        runner = DeepAgentRunner(graph)
+        result = await runner.invoke("thread-1", "weather?")
+
+        assert result.structured_response == {"temperature": 15, "condition": "cloudy"}
+        pydantic_obj.model_dump.assert_called_once()
+
+    async def test_build_response_no_structured_response(self):
+        """When result has no structured_response, field is None."""
+        mock_msg = MagicMock()
+        mock_msg.content = "Hello"
+        mock_msg.tool_calls = None
+        graph = _make_graph([mock_msg])
+
+        runner = DeepAgentRunner(graph)
+        result = await runner.invoke("thread-1", "hi")
+
+        assert result.structured_response is None

@@ -1,8 +1,12 @@
-from pydantic import BaseModel, Field, model_validator
+import logging
 from enum import StrEnum
-from typing import Literal, Self
+from typing import Any, Literal, Self
+
+from pydantic import BaseModel, Field, model_validator
 
 from src.domain.entities.mcp_server_config import McpServerConfig
+
+logger = logging.getLogger("composable-agents")
 
 
 class MiddlewareType(StrEnum):
@@ -24,9 +28,7 @@ class BackendConfig(BaseModel):
 
 
 class InterruptRule(BaseModel):
-    allowed_decisions: list[Literal["approve", "edit", "reject"]] = Field(
-        default=["approve", "edit", "reject"]
-    )
+    allowed_decisions: list[Literal["approve", "edit", "reject"]] = Field(default=["approve", "edit", "reject"])
 
 
 class HITLConfig(BaseModel):
@@ -41,10 +43,12 @@ class SubAgentConfig(BaseModel):
     tools: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
+    response_format: dict[str, Any] | None = None
 
 
 class AgentConfig(BaseModel, frozen=True):
     """Schema principal de configuration d'un Deep Agent via YAML."""
+
     name: str = Field(..., min_length=1, max_length=100)
     model: str = Field(default="claude-sonnet-4-5-20250929")
     system_prompt: str | None = None
@@ -57,10 +61,12 @@ class AgentConfig(BaseModel, frozen=True):
     skills: list[str] = Field(default_factory=list)
     subagents: list[SubAgentConfig] = Field(default_factory=list)
     mcp_servers: list[McpServerConfig] = Field(default_factory=list)
+    response_format: dict[str, Any] | None = None
     debug: bool = False
 
     @model_validator(mode="after")
     def check_prompt_exclusivity(self) -> Self:
         if self.system_prompt and self.system_prompt_file:
-            raise ValueError("system_prompt et system_prompt_file sont mutuellement exclusifs")
+            logger.error("system_prompt and system_prompt_file are mutually exclusive")
+            raise ValueError("system_prompt and system_prompt_file are mutually exclusive")
         return self

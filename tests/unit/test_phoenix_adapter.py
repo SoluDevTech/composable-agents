@@ -1,3 +1,8 @@
+"""Tests for PhoenixTracingProvider.
+
+Phoenix and openinference modules are mocked (external tracing service).
+"""
+
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock
@@ -39,8 +44,10 @@ def _mock_phoenix_modules():
     yield mock_register, mock_instrumentor_class, mock_instrumentor_instance
 
     for mod_name in [
-        "phoenix", "phoenix.otel",
-        "openinference", "openinference.instrumentation",
+        "phoenix",
+        "phoenix.otel",
+        "openinference",
+        "openinference.instrumentation",
         "openinference.instrumentation.langchain",
         "src.infrastructure.tracing.phoenix_adapter",
     ]:
@@ -86,14 +93,12 @@ class TestPhoenixTracingProvider:
 
         assert provider.get_callbacks() == []
 
-    @pytest.mark.asyncio
     async def test_flush_does_nothing(self, _mock_phoenix_modules):
         from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
 
         provider = PhoenixTracingProvider()
         await provider.flush()
 
-    @pytest.mark.asyncio
     async def test_shutdown_does_nothing(self, _mock_phoenix_modules):
         from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
 

@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings
 
 load_dotenv()
 
+
 class TracingSettings(BaseSettings):
     provider: str = "none"
     enabled: bool = False
@@ -16,12 +17,10 @@ class TracingSettings(BaseSettings):
     langchain_api_key: str | None = None
     langchain_project: str | None = None
 
+
 class Settings(BaseSettings):
     agents_dir: str = "./agents"
     openai_api_key: str | None = None
-    anthropic_api_key: str | None = None
-    google_api_key: str | None = None
     host: str = "0.0.0.0"
     port: int = 8000
     tracing: TracingSettings = TracingSettings()
-

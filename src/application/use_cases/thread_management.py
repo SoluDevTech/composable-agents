@@ -1,7 +1,11 @@
+import logging
+
+from src.domain.entities.thread import Thread
 from src.domain.exceptions import AgentNotFoundError
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.thread_repository import ThreadRepository
-from src.domain.entities.thread import Thread
+
+logger = logging.getLogger("composable-agents")
 
 
 class CreateThreadUseCase:
@@ -11,8 +15,11 @@ class CreateThreadUseCase:
 
     async def execute(self, agent_name: str) -> Thread:
         if agent_name not in self._registry.list_agents():
-            raise AgentNotFoundError(f"Agent introuvable: {agent_name}")
-        return await self._threads.create(agent_name)
+            logger.error("Agent not found: %s", agent_name)
+            raise AgentNotFoundError(f"Agent not found: {agent_name}")
+        thread = await self._threads.create(agent_name)
+        logger.info("Thread created: id=%s agent=%s", thread.id, agent_name)
+        return thread
 
 
 class GetThreadUseCase:

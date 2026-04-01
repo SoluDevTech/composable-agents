@@ -1,9 +1,13 @@
+import logging
 from pathlib import Path
+
 import yaml
 
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.exceptions import ConfigError, ConfigNotFoundError, ConfigValidationError
 from src.domain.ports.agent_config_loader import AgentConfigLoader
-from src.domain.exceptions import ConfigNotFoundError, ConfigValidationError, ConfigError
+
+logger = logging.getLogger("composable-agents")
 
 
 class YamlAgentConfigLoader(AgentConfigLoader):
@@ -13,23 +17,24 @@ class YamlAgentConfigLoader(AgentConfigLoader):
         path = Path(config_path)
 
         if not path.exists():
-            raise ConfigNotFoundError(f"Fichier introuvable: {path}")
+            logger.error(f"Config file not found: {path}")
+            raise ConfigNotFoundError(f"Config file not found: {path}")
 
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as e:
-            raise ConfigError(f"YAML invalide dans {path}: {e}") from e
+            logger.exception(f"Invalid YAML in {path}")
+            raise ConfigError(f"Invalid YAML in {path}: {e}") from e
 
         if not isinstance(raw, dict):
-            raise ConfigError(
-                f"Le fichier {path} doit contenir un mapping YAML, pas {type(raw).__name__}"
-            )
+            logger.error(f"Config file {path} must contain a YAML mapping, not {type(raw).__name__}")
+            raise ConfigError(f"Config file {path} must contain a YAML mapping, not {type(raw).__name__}")
 
-        # Resoudre system_prompt_file relativement au fichier YAML
         if raw.get("system_prompt_file"):
             prompt_path = path.parent / raw["system_prompt_file"]
             if not prompt_path.exists():
-                raise ConfigNotFoundError(f"Fichier prompt introuvable: {prompt_path}")
+                logger.error(f"Prompt file not found: {prompt_path}")
+                raise ConfigNotFoundError(f"Prompt file not found: {prompt_path}")
             raw["system_prompt"] = prompt_path.read_text(encoding="utf-8")
             raw.pop("system_prompt_file")
 
@@ -37,5 +42,7 @@ class YamlAgentConfigLoader(AgentConfigLoader):
             return AgentConfig.model_validate(raw)
         except Exception as e:
             if hasattr(e, "errors"):
+                logger.exception(f"Validation error in {path}")
                 raise ConfigValidationError(e.errors()) from e
-            raise ConfigError(f"Erreur de validation: {e}") from e
+            logger.exception(f"Validation error in {path}")
+            raise ConfigError(f"Validation error: {e}") from e

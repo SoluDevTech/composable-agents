@@ -1,3 +1,5 @@
+"""Tests for environment variable utilities."""
+
 from src.infrastructure.env_utils import resolve_env_vars, resolve_env_vars_in_dict
 
 
@@ -50,12 +52,14 @@ class TestResolveEnvVarsInDict:
 
     def test_mixed_types(self, monkeypatch):
         monkeypatch.setenv("KEY", "resolved")
-        result = resolve_env_vars_in_dict({
-            "api_key": "${KEY}",
-            "temperature": 0.5,
-            "max_tokens": 1000,
-            "stream": False,
-        })
+        result = resolve_env_vars_in_dict(
+            {
+                "api_key": "${KEY}",
+                "temperature": 0.5,
+                "max_tokens": 1000,
+                "stream": False,
+            }
+        )
         assert result == {
             "api_key": "resolved",
             "temperature": 0.5,

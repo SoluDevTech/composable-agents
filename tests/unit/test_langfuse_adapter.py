@@ -1,3 +1,8 @@
+"""Tests for LangfuseTracingProvider.
+
+Langfuse module is mocked (external tracing service).
+"""
+
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock
@@ -52,7 +57,6 @@ class TestLangfuseTracingProvider:
             host="https://langfuse.example.com",
         )
 
-    @pytest.mark.asyncio
     async def test_flush_calls_handler_flush(self, _mock_langfuse_module):
         mock_handler_class = _mock_langfuse_module
         mock_handler = MagicMock()
@@ -66,7 +70,6 @@ class TestLangfuseTracingProvider:
 
         mock_handler.flush.assert_called_once()
 
-    @pytest.mark.asyncio
     async def test_shutdown_calls_handler_flush(self, _mock_langfuse_module):
         mock_handler_class = _mock_langfuse_module
         mock_handler = MagicMock()

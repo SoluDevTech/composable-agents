@@ -1,5 +1,5 @@
 name: code-reviewer
-model: "claude-sonnet-4-5-20250929"
+model: "openai:anthropic/claude-haiku-4.5:nitro"
 system_prompt: |
   You are an expert code reviewer. Analyze code for correctness,
   performance, security, and maintainability.
