@@ -51,7 +51,7 @@ def _create_response_tool(schema: dict[str, Any]) -> StructuredTool:
         else:
             field_definitions[field_name] = (python_type | None, PydanticField(default=None, description=description))
 
-    schema_hash = hashlib.md5(json.dumps(schema, sort_keys=True).encode()).hexdigest()[:8]
+    schema_hash = hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest()[:8]
     args_model = create_model(f"StructuredResponseArgs_{schema_hash}", **field_definitions)
 
     def _return_structured(**kwargs: Any) -> str:
