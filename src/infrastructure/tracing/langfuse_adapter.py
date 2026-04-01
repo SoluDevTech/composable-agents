@@ -1,5 +1,7 @@
 from typing import Any
 
+from langfuse.callback import CallbackHandler
+
 from src.domain.ports.tracing_provider import TracingProvider
 
 
@@ -13,8 +15,6 @@ class LangfuseTracingProvider(TracingProvider):
     """
 
     def __init__(self, public_key: str, secret_key: str, host: str | None = None):
-        from langfuse.callback import CallbackHandler
-
         self._handler = CallbackHandler(
             public_key=public_key,
             secret_key=secret_key,

@@ -1,4 +1,4 @@
-import pytest
+"""Tests for NoopTracingProvider (real internal implementation)."""
 
 from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 
@@ -8,12 +8,10 @@ class TestNoopTracingProvider:
         provider = NoopTracingProvider()
         assert provider.get_callbacks() == []
 
-    @pytest.mark.asyncio
     async def test_flush_does_nothing(self):
         provider = NoopTracingProvider()
         await provider.flush()
 
-    @pytest.mark.asyncio
     async def test_shutdown_does_nothing(self):
         provider = NoopTracingProvider()
         await provider.shutdown()

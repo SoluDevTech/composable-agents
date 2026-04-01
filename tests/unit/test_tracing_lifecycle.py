@@ -1,46 +1,66 @@
-import pytest
+"""Tests for tracing lifecycle (flush/shutdown via lifespan).
 
-from src.dependencies import flush_tracing, shutdown_tracing, override_dependencies
-from tests.doubles.fake_tracing_provider import FakeTracingProvider
+Uses mock_tracing_provider for verifying flush/shutdown calls (external).
+"""
+
+from unittest.mock import AsyncMock, patch
 
 
 class TestTracingLifecycle:
-    @pytest.mark.asyncio
-    async def test_flush_tracing_calls_provider_flush(self):
-        provider = FakeTracingProvider()
-        override_dependencies(tracing_provider=provider)
+    async def test_lifespan_calls_tracing_flush(self, mock_tracing_provider):
+        """Lifespan shutdown calls flush() on the tracing_provider."""
+        from src.main import lifespan
 
-        await flush_tracing()
+        with (
+            patch("src.main.agent_registry", AsyncMock()),
+            patch("src.main.mcp_tool_loader", AsyncMock()),
+            patch("src.main.tracing_provider", mock_tracing_provider),
+        ):
+            async with lifespan(None):
+                pass  # enter and exit context to trigger cleanup
 
-        assert provider.flush_called is True
+            mock_tracing_provider.flush.assert_awaited_once()
 
-    @pytest.mark.asyncio
-    async def test_shutdown_tracing_calls_provider_shutdown(self):
-        provider = FakeTracingProvider()
-        override_dependencies(tracing_provider=provider)
+    async def test_lifespan_calls_tracing_shutdown(self, mock_tracing_provider):
+        """Lifespan shutdown calls shutdown() on the tracing_provider."""
+        from src.main import lifespan
 
-        await shutdown_tracing()
+        with (
+            patch("src.main.agent_registry", AsyncMock()),
+            patch("src.main.mcp_tool_loader", AsyncMock()),
+            patch("src.main.tracing_provider", mock_tracing_provider),
+        ):
+            async with lifespan(None):
+                pass  # enter and exit context to trigger cleanup
 
-        assert provider.shutdown_called is True
+            mock_tracing_provider.shutdown.assert_awaited_once()
 
-    @pytest.mark.asyncio
-    async def test_flush_tracing_safe_when_not_initialized(self):
-        """flush_tracing should not raise when _tracing_provider is None."""
-        import src.dependencies as deps
-        original = deps._tracing_provider
-        deps._tracing_provider = None
+    async def test_lifespan_flush_before_shutdown(self, mock_tracing_provider):
+        """Lifespan calls flush() before shutdown() on the tracing_provider."""
+        from src.main import lifespan
 
-        await flush_tracing()
+        call_order = []
+        original_flush = mock_tracing_provider.flush
 
-        deps._tracing_provider = original
+        async def track_flush():
+            call_order.append("flush")
+            return await original_flush()
 
-    @pytest.mark.asyncio
-    async def test_shutdown_tracing_safe_when_not_initialized(self):
-        """shutdown_tracing should not raise when _tracing_provider is None."""
-        import src.dependencies as deps
-        original = deps._tracing_provider
-        deps._tracing_provider = None
+        original_shutdown = mock_tracing_provider.shutdown
 
-        await shutdown_tracing()
+        async def track_shutdown():
+            call_order.append("shutdown")
+            return await original_shutdown()
 
-        deps._tracing_provider = original
+        mock_tracing_provider.flush = AsyncMock(side_effect=track_flush)
+        mock_tracing_provider.shutdown = AsyncMock(side_effect=track_shutdown)
+
+        with (
+            patch("src.main.agent_registry", AsyncMock()),
+            patch("src.main.mcp_tool_loader", AsyncMock()),
+            patch("src.main.tracing_provider", mock_tracing_provider),
+        ):
+            async with lifespan(None):
+                pass  # enter and exit context to trigger cleanup
+
+            assert call_order == ["flush", "shutdown"]

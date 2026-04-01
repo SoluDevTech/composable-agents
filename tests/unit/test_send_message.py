@@ -1,69 +1,82 @@
+"""Tests for SendMessageUseCase.
+
+Uses real InMemoryThreadRepository (internal).
+Uses AsyncMock for AgentRunner (external - calls LLM).
+The DeepAgentRegistry is real but with patched factory to avoid LLM calls.
+"""
+
+from unittest.mock import AsyncMock
+
 import pytest
+
 from src.application.requests.chat import ChatRequest
 from src.application.use_cases.send_message import SendMessageUseCase
-from src.infrastructure.memory_thread.adapter import InMemoryThreadRepository
-from tests.doubles.fake_agent_registry import FakeAgentRegistry
+from src.domain.entities.message import Message, MessageRole, MessageStatus
+from src.domain.ports.agent_runner import AgentRunner
 
 
 class TestSendMessageUseCase:
-    @pytest.mark.asyncio
-    async def test_sends_message_and_saves_response(self):
-        registry = FakeAgentRegistry()
-        runner = registry.register("test-agent")
-        runner.set_response("placeholder", "Hello human!")
+    @pytest.fixture
+    def runner(self):
+        """AsyncMock spec'd to AgentRunner, simulating the external LLM adapter."""
+        mock = AsyncMock(spec=AgentRunner)
+        mock.invoke.return_value = Message(role=MessageRole.AI, content="Hello human!", status=MessageStatus.COMPLETED)
+        mock.approve_hitl.return_value = Message(role=MessageRole.AI, content="Action approved.")
+        mock.reject_hitl.return_value = Message(role=MessageRole.AI, content="Action rejected: Too risky")
+        mock.edit_hitl.return_value = Message(role=MessageRole.AI, content="Action edited and approved.")
+        return mock
 
-        threads = InMemoryThreadRepository()
-        thread = await threads.create("test-agent")
-        runner.set_response(thread.id, "Hello human!")
+    @pytest.fixture
+    def registry(self, runner):
+        """AsyncMock for AgentRegistry that returns our mocked runner."""
+        mock = AsyncMock()
+        mock.get_runner.return_value = runner
+        mock.list_agents.return_value = ["test-agent"]
+        return mock
 
-        use_case = SendMessageUseCase(registry, threads)
+    async def test_sends_message_and_saves_response(self, registry, runner, thread_repo):
+        thread = await thread_repo.create("test-agent")
+        use_case = SendMessageUseCase(registry, thread_repo)
+
         response = await use_case.execute(thread.id, ChatRequest(message="Hello agent!"))
 
         assert response.content == "Hello human!"
-        updated_thread = await threads.get(thread.id)
+        runner.invoke.assert_awaited_once_with(thread.id, "Hello agent!")
+        updated_thread = await thread_repo.get(thread.id)
         assert len(updated_thread.messages) == 2  # human + ai
 
-    @pytest.mark.asyncio
-    async def test_approve_hitl_saves_response(self):
-        registry = FakeAgentRegistry()
-        registry.register("test-agent")
-        threads = InMemoryThreadRepository()
-        thread = await threads.create("test-agent")
+    async def test_approve_hitl_saves_response(self, registry, runner, thread_repo):
+        thread = await thread_repo.create("test-agent")
+        use_case = SendMessageUseCase(registry, thread_repo)
 
-        use_case = SendMessageUseCase(registry, threads)
         request = ChatRequest(tool_call_id="tc-1", action="approve")
         response = await use_case.execute(thread.id, request)
 
         assert "approved" in response.content.lower()
-        updated_thread = await threads.get(thread.id)
+        runner.approve_hitl.assert_awaited_once_with(thread.id, "tc-1")
+        updated_thread = await thread_repo.get(thread.id)
         assert len(updated_thread.messages) == 1  # ai only (no human message for HITL)
 
-    @pytest.mark.asyncio
-    async def test_reject_hitl_saves_response(self):
-        registry = FakeAgentRegistry()
-        registry.register("test-agent")
-        threads = InMemoryThreadRepository()
-        thread = await threads.create("test-agent")
+    async def test_reject_hitl_saves_response(self, registry, runner, thread_repo):
+        thread = await thread_repo.create("test-agent")
+        use_case = SendMessageUseCase(registry, thread_repo)
 
-        use_case = SendMessageUseCase(registry, threads)
         request = ChatRequest(tool_call_id="tc-1", action="reject", reason="Too risky")
         response = await use_case.execute(thread.id, request)
 
         assert "rejected" in response.content.lower()
-        updated_thread = await threads.get(thread.id)
+        runner.reject_hitl.assert_awaited_once_with(thread.id, "tc-1", "Too risky")
+        updated_thread = await thread_repo.get(thread.id)
         assert len(updated_thread.messages) == 1
 
-    @pytest.mark.asyncio
-    async def test_edit_hitl_saves_response(self):
-        registry = FakeAgentRegistry()
-        registry.register("test-agent")
-        threads = InMemoryThreadRepository()
-        thread = await threads.create("test-agent")
+    async def test_edit_hitl_saves_response(self, registry, runner, thread_repo):
+        thread = await thread_repo.create("test-agent")
+        use_case = SendMessageUseCase(registry, thread_repo)
 
-        use_case = SendMessageUseCase(registry, threads)
         request = ChatRequest(tool_call_id="tc-1", action="edit", edits={"param": "value"})
         response = await use_case.execute(thread.id, request)
 
         assert "edited" in response.content.lower()
-        updated_thread = await threads.get(thread.id)
+        runner.edit_hitl.assert_awaited_once_with(thread.id, "tc-1", {"param": "value"})
+        updated_thread = await thread_repo.get(thread.id)
         assert len(updated_thread.messages) == 1

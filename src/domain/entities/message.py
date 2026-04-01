@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import StrEnum
+
+from pydantic import BaseModel, Field
 
 
 class MessageRole(StrEnum):
@@ -21,3 +22,4 @@ class Message(BaseModel, frozen=True):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     tool_calls: list[dict] | None = None
     status: MessageStatus | None = None
+    structured_response: dict | None = None

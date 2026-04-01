@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
@@ -17,6 +18,8 @@ from src.dependencies import (
 )
 from src.domain.entities.thread import Thread
 
+logger = logging.getLogger("composable-agents")
+
 router = APIRouter(prefix="/api/v1/threads", tags=["threads"])
 
 
@@ -25,31 +28,19 @@ async def create_thread(
     body: CreateThreadRequest,
     use_case: Annotated[CreateThreadUseCase, Depends(get_create_thread_use_case)],
 ) -> Thread:
-    """Create a new conversation thread.
-
-    Args:
-        body: Request containing the agent name.
-        use_case: Injected CreateThreadUseCase.
-
-    Returns:
-        The newly created Thread.
-    """
-    return await use_case.execute(body.agent_name)
+    logger.info("Creating thread for agent=%s", body.agent_name)
+    thread = await use_case.execute(body.agent_name)
+    logger.info("Thread created: id=%s agent=%s", thread.id, thread.agent_name)
+    return thread
 
 
 @router.get("")
 async def list_threads(
     use_case: Annotated[ListThreadsUseCase, Depends(get_list_threads_use_case)],
 ) -> list[Thread]:
-    """List all conversation threads.
-
-    Args:
-        use_case: Injected ListThreadsUseCase.
-
-    Returns:
-        A list of all threads.
-    """
-    return await use_case.execute()
+    threads = await use_case.execute()
+    logger.debug("Listed %d threads", len(threads))
+    return threads
 
 
 @router.get("/{thread_id}")
@@ -57,18 +48,7 @@ async def get_thread(
     thread_id: str,
     use_case: Annotated[GetThreadUseCase, Depends(get_get_thread_use_case)],
 ) -> Thread:
-    """Get a specific thread by ID.
-
-    Args:
-        thread_id: The thread identifier.
-        use_case: Injected GetThreadUseCase.
-
-    Returns:
-        The requested Thread.
-
-    Raises:
-        ThreadNotFoundError: If the thread does not exist.
-    """
+    logger.debug("Getting thread=%s", thread_id)
     return await use_case.execute(thread_id)
 
 
@@ -77,15 +57,7 @@ async def delete_thread(
     thread_id: str,
     use_case: Annotated[DeleteThreadUseCase, Depends(get_delete_thread_use_case)],
 ) -> None:
-    """Delete a thread by ID.
-
-    Args:
-        thread_id: The thread identifier.
-        use_case: Injected DeleteThreadUseCase.
-
-    Raises:
-        ThreadNotFoundError: If the thread does not exist.
-    """
+    logger.info("Deleting thread=%s", thread_id)
     await use_case.execute(thread_id)
 
 
@@ -94,17 +66,6 @@ async def list_messages(
     thread_id: str,
     use_case: Annotated[GetThreadUseCase, Depends(get_get_thread_use_case)],
 ) -> list:
-    """List all messages in a thread.
-
-    Args:
-        thread_id: The thread identifier.
-        use_case: Injected GetThreadUseCase.
-
-    Returns:
-        A list of messages in the thread.
-
-    Raises:
-        ThreadNotFoundError: If the thread does not exist.
-    """
     thread = await use_case.execute(thread_id)
+    logger.debug("[thread=%s] Listed %d messages", thread_id, len(thread.messages))
     return thread.messages

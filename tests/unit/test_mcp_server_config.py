@@ -1,4 +1,7 @@
+"""Tests for McpServerConfig domain entity."""
+
 import pytest
+from pydantic import ValidationError
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.mcp_server_config import McpServerConfig, McpTransportType
@@ -33,10 +36,8 @@ class TestMcpServerConfig:
             McpServerConfig(name="bad", transport=McpTransportType.HTTP)
 
     def test_frozen_immutability(self):
-        config = McpServerConfig(
-            name="test", transport=McpTransportType.STDIO, command="echo"
-        )
-        with pytest.raises(Exception):
+        config = McpServerConfig(name="test", transport=McpTransportType.STDIO, command="echo")
+        with pytest.raises(ValidationError):
             config.name = "changed"
 
 

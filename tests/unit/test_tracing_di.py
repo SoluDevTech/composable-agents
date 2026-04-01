@@ -1,8 +1,12 @@
+"""Tests for tracing dependency injection (_create_tracing_provider).
+
+Uses real NoopTracingProvider (internal).
+Mocks langfuse/phoenix modules (external tracing services).
+"""
+
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock
-
-import pytest
 
 from src.config import Settings, TracingSettings
 from src.dependencies import _create_tracing_provider
@@ -116,8 +120,10 @@ class TestTracingDependencyInjection:
             assert isinstance(provider, PhoenixTracingProvider)
         finally:
             for mod_name in [
-                "phoenix", "phoenix.otel",
-                "openinference", "openinference.instrumentation",
+                "phoenix",
+                "phoenix.otel",
+                "openinference",
+                "openinference.instrumentation",
                 "openinference.instrumentation.langchain",
                 "src.infrastructure.tracing.phoenix_adapter",
             ]:

@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
+
 from src.domain.entities.agent_config import AgentConfig
 
 

@@ -1,5 +1,8 @@
 from typing import Any
 
+import phoenix.otel
+from openinference.instrumentation.langchain import LangChainInstrumentor
+
 from src.domain.ports.tracing_provider import TracingProvider
 
 
@@ -21,9 +24,6 @@ class PhoenixTracingProvider(TracingProvider):
         api_key: str | None = None,
         project_name: str | None = None,
     ):
-        import phoenix.otel
-        from openinference.instrumentation.langchain import LangChainInstrumentor
-
         phoenix.otel.register(
             endpoint=endpoint or "http://localhost:6006",
             project_name=project_name or "composable-agents",

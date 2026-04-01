@@ -1,9 +1,12 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from src.application.use_cases.stream_message import StreamMessageUseCase
 from src.dependencies import get_stream_message_use_case
+
+logger = logging.getLogger("composable-agents")
 
 router = APIRouter(tags=["websocket"])
 
@@ -14,24 +17,30 @@ async def websocket_chat(
     thread_id: str,
     use_case: StreamMessageUseCase = Depends(get_stream_message_use_case),
 ) -> None:
-    """WebSocket endpoint for streaming chat messages.
-
-    Receives JSON messages with a 'message' field and streams back
-    individual text chunks as the agent responds.
-
-    Args:
-        websocket: The WebSocket connection.
-        thread_id: The conversation thread identifier.
-        use_case: Injected StreamMessageUseCase.
-    """
     await websocket.accept()
+    logger.info("[thread=%s] WebSocket connected", thread_id)
     try:
         while True:
             data = await websocket.receive_text()
-            payload = json.loads(data)
+            try:
+                payload = json.loads(data)
+            except json.JSONDecodeError:
+                logger.error("[thread=%s] Invalid JSON received: %s", thread_id, data[:200])
+                await websocket.send_text(json.dumps({"error": "Invalid JSON"}))
+                continue
             message = payload.get("message", "")
-            async for chunk in use_case.execute(thread_id, message):
-                await websocket.send_text(chunk)
-            await websocket.send_text("[END]")
+            logger.info("[thread=%s] WS message received: %s", thread_id, message[:80])
+            chunk_count = 0
+            try:
+                async for chunk in use_case.execute(thread_id, message):
+                    chunk_count += 1
+                    await websocket.send_text(chunk)
+                await websocket.send_text("[END]")
+                logger.info("[thread=%s] WS stream complete, %d chunks", thread_id, chunk_count)
+            except Exception:
+                logger.exception("[thread=%s] WS stream error after %d chunks", thread_id, chunk_count)
+                await websocket.send_text(json.dumps({"error": "Agent execution error"}))
     except WebSocketDisconnect:
-        pass
+        logger.info("[thread=%s] WebSocket disconnected", thread_id)
+    except Exception:
+        logger.exception("[thread=%s] WebSocket unexpected error", thread_id)

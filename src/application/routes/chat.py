@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -14,6 +15,8 @@ from src.dependencies import (
 )
 from src.domain.entities.message import Message
 
+logger = logging.getLogger("composable-agents")
+
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 
@@ -23,20 +26,10 @@ async def send_message(
     body: ChatRequest,
     use_case: Annotated[SendMessageUseCase, Depends(get_send_message_use_case)],
 ) -> Message:
-    """Send a message or HITL decision to the agent and get the response.
-
-    Args:
-        thread_id: The conversation thread identifier.
-        body: Request containing either a user message or an HITL decision.
-        use_case: Injected SendMessageUseCase.
-
-    Returns:
-        The agent's response Message.
-
-    Raises:
-        ThreadNotFoundError: If the thread does not exist.
-    """
-    return await use_case.execute(thread_id, body)
+    logger.info("[thread=%s] POST /chat - message=%s", thread_id, "HITL" if body.message is None else body.message[:80])
+    result = await use_case.execute(thread_id, body)
+    logger.info("[thread=%s] Response status=%s content_len=%d", thread_id, result.status, len(result.content or ""))
+    return result
 
 
 @router.post("/{thread_id}/stream")
@@ -46,29 +39,18 @@ async def stream_message(
     use_case: Annotated[StreamMessageUseCase, Depends(get_stream_message_use_case)],
     get_thread: Annotated[GetThreadUseCase, Depends(get_get_thread_use_case)],
 ) -> EventSourceResponse:
-    """Send a message and stream the response via SSE.
-
-    The thread is validated before the stream starts so that a missing
-    thread is reported as a 404 instead of failing silently inside the
-    SSE generator.
-
-    Args:
-        thread_id: The conversation thread identifier.
-        body: Request containing the user message.
-        use_case: Injected StreamMessageUseCase.
-        get_thread: Injected GetThreadUseCase used for pre-validation.
-
-    Returns:
-        An EventSourceResponse streaming chunks.
-
-    Raises:
-        ThreadNotFoundError: If the thread does not exist.
-    """
-    # Pre-validate the thread exists before starting the SSE stream.
+    logger.info("[thread=%s] POST /chat/stream - message=%s", thread_id, (body.message or "")[:80])
     await get_thread.execute(thread_id)
 
     async def event_generator():
-        async for chunk in use_case.execute(thread_id, body.message):
-            yield {"data": chunk}
+        chunk_count = 0
+        try:
+            async for chunk in use_case.execute(thread_id, body.message):
+                chunk_count += 1
+                yield {"data": chunk}
+            logger.info("[thread=%s] Stream complete, %d chunks", thread_id, chunk_count)
+        except Exception:
+            logger.exception("[thread=%s] Stream error after %d chunks", thread_id, chunk_count)
+            raise
 
     return EventSourceResponse(event_generator())

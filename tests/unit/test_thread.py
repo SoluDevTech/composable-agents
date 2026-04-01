@@ -1,3 +1,5 @@
+"""Tests for Thread domain entity."""
+
 from src.domain.entities.thread import Thread
 
 

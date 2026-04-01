@@ -1,51 +1,61 @@
 class DomainError(Exception):
-    """Exception de base du domaine."""
+    """Base domain exception."""
+
     pass
 
 
 class ConfigError(DomainError):
-    """Erreur de configuration."""
+    """Configuration error."""
+
     pass
 
 
 class ConfigNotFoundError(ConfigError):
-    """Fichier de configuration introuvable."""
+    """Configuration file not found."""
+
     pass
 
 
 class ConfigValidationError(ConfigError):
-    """Erreur de validation du schema."""
+    """Schema validation error."""
+
     def __init__(self, errors: list[dict]):
         self.errors = errors
         messages = [f"  - {e.get('loc', '?')}: {e.get('msg', '?')}" for e in errors]
-        super().__init__("Erreurs de validation:\n" + "\n".join(messages))
+        super().__init__("Validation errors:\n" + "\n".join(messages))
 
 
 class ThreadNotFoundError(DomainError):
-    """Thread introuvable."""
+    """Thread not found."""
+
     pass
 
 
 class AgentError(DomainError):
-    """Erreur d'execution de l'agent."""
+    """Agent execution error."""
+
     pass
 
 
 class AgentNotFoundError(DomainError):
-    """Agent introuvable."""
+    """Agent not found."""
+
     pass
 
 
 class McpError(DomainError):
-    """Erreur de base pour les operations MCP."""
+    """Base error for MCP operations."""
+
     pass
 
 
 class McpConnectionError(McpError):
-    """Erreur de connexion a un serveur MCP."""
+    """Error connecting to MCP server."""
+
     pass
 
 
 class McpToolLoadError(McpError):
-    """Erreur lors du chargement des outils MCP."""
+    """Error loading MCP tools."""
+
     pass

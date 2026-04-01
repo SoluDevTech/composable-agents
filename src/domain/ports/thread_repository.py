@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+
 from src.domain.entities.thread import Thread
 
 

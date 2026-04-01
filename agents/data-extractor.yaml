@@ -1,0 +1,20 @@
+name: data-extractor
+model: "openai:anthropic/claude-haiku-4.5:nitro"
+system_prompt: "You are a structured data extractor. Extract weather information from user messages."
+
+response_format:
+  type: object
+  properties:
+    temperature:
+      type: number
+      description: "Temperature in Celsius"
+    condition:
+      type: string
+      description: "Weather condition (sunny, cloudy, rainy, snowy, etc.)"
+    location:
+      type: string
+      description: "Location mentioned in the message"
+  required:
+    - temperature
+    - condition
+    - location

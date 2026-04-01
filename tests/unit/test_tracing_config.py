@@ -1,4 +1,8 @@
+"""Tests for TracingConfig domain entity."""
+
 import pytest
+from pydantic import ValidationError
+
 from src.domain.entities.tracing_config import TracingConfig, TracingProviderType
 
 
@@ -20,5 +24,5 @@ class TestTracingConfig:
 
     def test_frozen(self):
         config = TracingConfig()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             config.enabled = True

@@ -9,3 +9,7 @@ dist/
 *.egg-info/
 .claude
 ./workspace
+trivy-report.json
+trivy-report-fixed.json
+coverage.xml
+.scannerwork/

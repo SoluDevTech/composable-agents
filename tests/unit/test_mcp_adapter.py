@@ -1,3 +1,8 @@
+"""Tests for LangchainMcpToolLoader.
+
+MultiServerMCPClient is patched (external MCP server boundary).
+"""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,7 +13,6 @@ from src.infrastructure.mcp.adapter import LangchainMcpToolLoader
 
 
 class TestLoadToolsStdio:
-    @pytest.mark.asyncio
     async def test_load_tools_stdio(self):
         configs = [
             McpServerConfig(
@@ -45,7 +49,6 @@ class TestLoadToolsStdio:
 
 
 class TestLoadToolsHttp:
-    @pytest.mark.asyncio
     async def test_load_tools_http(self):
         configs = [
             McpServerConfig(
@@ -72,14 +75,11 @@ class TestLoadToolsHttp:
             assert "web-search" in call_args
             assert call_args["web-search"]["transport"] == "streamable_http"
             assert call_args["web-search"]["url"] == "http://localhost:3001/mcp"
-            assert call_args["web-search"]["headers"] == {
-                "Authorization": "Bearer my-token"
-            }
+            assert call_args["web-search"]["headers"] == {"Authorization": "Bearer my-token"}
             assert tools == mock_tools
 
 
 class TestConnectionError:
-    @pytest.mark.asyncio
     async def test_connection_error_raises_mcp_connection_error(self):
         configs = [
             McpServerConfig(
@@ -90,9 +90,7 @@ class TestConnectionError:
         ]
 
         mock_client = AsyncMock()
-        mock_client.get_tools = AsyncMock(
-            side_effect=ConnectionError("connection refused")
-        )
+        mock_client.get_tools = AsyncMock(side_effect=ConnectionError("connection refused"))
 
         with patch(
             "src.infrastructure.mcp.adapter.MultiServerMCPClient",
@@ -102,7 +100,6 @@ class TestConnectionError:
             with pytest.raises(McpConnectionError, match="Failed to connect"):
                 await loader.load_tools(configs)
 
-    @pytest.mark.asyncio
     async def test_generic_error_raises_mcp_tool_load_error(self):
         configs = [
             McpServerConfig(
@@ -113,9 +110,7 @@ class TestConnectionError:
         ]
 
         mock_client = AsyncMock()
-        mock_client.get_tools = AsyncMock(
-            side_effect=RuntimeError("unexpected error")
-        )
+        mock_client.get_tools = AsyncMock(side_effect=RuntimeError("unexpected error"))
 
         with patch(
             "src.infrastructure.mcp.adapter.MultiServerMCPClient",
@@ -158,7 +153,6 @@ class TestResolveEnvVars:
 
 
 class TestClose:
-    @pytest.mark.asyncio
     async def test_close_clears_clients(self):
         loader = LangchainMcpToolLoader()
         loader._clients = [MagicMock(), MagicMock()]

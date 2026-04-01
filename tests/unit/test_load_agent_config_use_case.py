@@ -1,23 +1,31 @@
-from src.application.use_cases.load_agent_config import LoadAgentConfigUseCase
-from src.domain.entities.agent_config import AgentConfig
-from src.domain.exceptions import ConfigNotFoundError
-from tests.doubles.fake_agent_config_loader import FakeAgentConfigLoader
+"""Tests for LoadAgentConfigUseCase.
+
+Uses the real YamlAgentConfigLoader with tmp_path (internal component).
+"""
+
 import pytest
+
+from src.application.use_cases.load_agent_config import LoadAgentConfigUseCase
+from src.domain.exceptions import ConfigNotFoundError
+from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 
 
 class TestLoadAgentConfigUseCase:
-    def test_loads_existing_config(self):
-        fake_loader = FakeAgentConfigLoader()
-        config = AgentConfig(name="test-agent")
-        fake_loader.add_config("agents/test.yaml", config)
-        use_case = LoadAgentConfigUseCase(fake_loader)
+    @pytest.fixture
+    def loader(self):
+        return YamlAgentConfigLoader()
 
-        result = use_case.execute("agents/test.yaml")
+    def test_loads_existing_config(self, loader, tmp_path):
+        yaml_file = tmp_path / "test.yaml"
+        yaml_file.write_text("name: test-agent")
+        use_case = LoadAgentConfigUseCase(loader)
+
+        result = use_case.execute(str(yaml_file))
+
         assert result.name == "test-agent"
 
-    def test_raises_on_missing_config(self):
-        fake_loader = FakeAgentConfigLoader()
-        use_case = LoadAgentConfigUseCase(fake_loader)
+    def test_raises_on_missing_config(self, loader):
+        use_case = LoadAgentConfigUseCase(loader)
 
         with pytest.raises(ConfigNotFoundError):
-            use_case.execute("nonexistent.yaml")
+            use_case.execute("/nonexistent/path.yaml")

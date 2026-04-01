@@ -1,6 +1,7 @@
 from pathlib import Path
-from src.domain.ports.agent_config_loader import AgentConfigLoader
+
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.ports.agent_config_loader import AgentConfigLoader
 
 
 class LoadAgentConfigUseCase:
