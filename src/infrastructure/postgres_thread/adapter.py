@@ -108,9 +108,7 @@ class PostgresThreadRepository(ThreadRepository):
         """
         async with AsyncSession(self._engine, expire_on_commit=False) as session:
             try:
-                model = await session.get(
-                    ThreadModel, thread_id, options=[selectinload(ThreadModel.messages)]
-                )
+                model = await session.get(ThreadModel, thread_id, options=[selectinload(ThreadModel.messages)])
                 if model is None:
                     raise ThreadNotFoundError(f"Thread not found: {thread_id}")
                 return _model_to_thread(model)

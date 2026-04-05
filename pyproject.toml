@@ -8,7 +8,7 @@ packages = ["src"]
 [project]
 name = "composable-agents"
 version = "0.1.0"
-description = "Add your description here"
+description = "Composable AI agents with YAML configuration, MCP tool integration, and PostgreSQL persistence"
 requires-python = ">=3.11"
 dependencies = [
     "deepagents>=0.3.12",

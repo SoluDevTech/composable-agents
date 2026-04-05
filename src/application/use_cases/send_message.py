@@ -39,6 +39,8 @@ class SendMessageUseCase:
                     response = await runner.reject_hitl(thread_id, request.tool_call_id, request.reason)
                 case "edit":
                     response = await runner.edit_hitl(thread_id, request.tool_call_id, request.edits)
+                case _:
+                    raise ValueError(f"Unsupported HITL action: {request.action}")
 
         await self._threads.add_message(thread_id, response)
         logger.info(

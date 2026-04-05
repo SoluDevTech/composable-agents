@@ -65,9 +65,17 @@ class LangchainMcpToolLoader(McpToolLoader):
             raise McpToolLoadError(f"Failed to load MCP tools: {e}") from e
 
     async def close(self) -> None:
-        """Ferme toutes les connexions MCP ouvertes."""
-        for _client in self._clients:
-            pass  # MultiServerMCPClient cleanup
+        """Ferme toutes les connexions MCP ouvertes.
+
+        MultiServerMCPClient v0.1.0+ is stateless (no close method).
+        Guard handles future library versions that may add cleanup.
+        """
+        for client in self._clients:
+            close_fn = getattr(client, "close", None)
+            if close_fn and callable(close_fn):
+                result = close_fn()
+                if hasattr(result, "__await__"):
+                    await result
         self._clients.clear()
 
     @staticmethod

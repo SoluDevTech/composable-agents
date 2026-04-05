@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 from miniopy_async import Minio
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from src.application.use_cases.create_agent_config import CreateAgentConfigUseCase

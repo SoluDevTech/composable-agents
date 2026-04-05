@@ -5,7 +5,7 @@ Uses AsyncMock for AgentRunner (external - calls LLM).
 The DeepAgentRegistry is real but with patched factory to avoid LLM calls.
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -80,3 +80,19 @@ class TestSendMessageUseCase:
         runner.edit_hitl.assert_awaited_once_with(thread.id, "tc-1", {"param": "value"})
         updated_thread = await thread_repo.get(thread.id)
         assert len(updated_thread.messages) == 1
+
+    async def test_unsupported_hitl_action_raises_value_error(self, registry, thread_repo):
+        """A HITL request with an unrecognized action should raise ValueError."""
+        thread = await thread_repo.create("test-agent")
+        use_case = SendMessageUseCase(registry, thread_repo)
+
+        # Bypass Pydantic validation to simulate an unexpected action value
+        request = MagicMock(spec=ChatRequest)
+        request.message = None
+        request.action = "unknown_action"
+        request.tool_call_id = "tc-1"
+        request.reason = None
+        request.edits = None
+
+        with pytest.raises(ValueError, match="Unsupported HITL action"):
+            await use_case.execute(thread.id, request)

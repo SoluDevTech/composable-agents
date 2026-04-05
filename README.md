@@ -146,7 +146,6 @@ Every agent is defined by a single YAML file validated against the `AgentConfig`
 |---|---|---|---|
 | `name` | `string` (required) | -- | Unique agent name (1-100 characters). |
 | `model` | `string` | `"claude-sonnet-4-5-20250929"` | LLM model identifier. See [Supported Models](#supported-models). |
-| `model_kwargs` | `dict` | `null` | Extra keyword arguments passed to `init_chat_model()` (e.g. `base_url`, `api_key`). |
 | `system_prompt` | `string` | `null` | Inline system prompt. Mutually exclusive with `system_prompt_file`. |
 | `system_prompt_file` | `string` | `null` | Path to a text file containing the system prompt (resolved relative to the YAML file). Mutually exclusive with `system_prompt`. |
 | `tools` | `list[string]` | `[]` | Python tool references in `module.path:attribute` format. |
@@ -211,7 +210,7 @@ Allowed decisions: `approve`, `edit`, `reject`.
 
 The default model is `claude-sonnet-4-5-20250929`.
 
-For OpenAI-compatible endpoints (OpenRouter, LiteLLM, vLLM, etc.), set the `OPENAI_BASE_URL` environment variable to point to your endpoint. The OpenAI SDK reads this variable automatically. Alternatively, use `model_kwargs` in the YAML to set `base_url` and `api_key` per-agent.
+For OpenAI-compatible endpoints (OpenRouter, LiteLLM, vLLM, etc.), set the `OPENAI_BASE_URL` environment variable to point to your endpoint. The OpenAI SDK reads this variable automatically.
 
 ---
 
