@@ -12,6 +12,17 @@ from src.infrastructure.database.models.agent_config import AgentConfigModel
 logger = logging.getLogger("composable-agents")
 
 
+def _model_to_metadata(model: AgentConfigModel) -> AgentConfigMetadata:
+    return AgentConfigMetadata(
+        name=model.name,
+        model=model.model,
+        minio_path=model.minio_path,
+        is_builtin=model.is_builtin,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
 class PostgresAgentConfigRepository(AgentConfigRepository):
     """Adapter that persists agent configuration metadata in PostgreSQL via SQLAlchemy async.
 
@@ -67,14 +78,7 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
                 model = await session.get(AgentConfigModel, name)
                 if model is None:
                     raise AgentNotFoundError(f"Agent config metadata not found: {name}")
-                return AgentConfigMetadata(
-                    name=model.name,
-                    model=model.model,
-                    minio_path=model.minio_path,
-                    is_builtin=model.is_builtin,
-                    created_at=model.created_at,
-                    updated_at=model.updated_at,
-                )
+                return _model_to_metadata(model)
             except AgentNotFoundError:
                 raise
             except SQLAlchemyError as e:
@@ -93,17 +97,7 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
             try:
                 result = await session.execute(select(AgentConfigModel).order_by(AgentConfigModel.name))
                 models = result.scalars().all()
-                return [
-                    AgentConfigMetadata(
-                        name=m.name,
-                        model=m.model,
-                        minio_path=m.minio_path,
-                        is_builtin=m.is_builtin,
-                        created_at=m.created_at,
-                        updated_at=m.updated_at,
-                    )
-                    for m in models
-                ]
+                return [_model_to_metadata(m) for m in models]
             except SQLAlchemyError as e:
                 raise StorageError(f"Failed to list agent config metadata: {e}") from e
 

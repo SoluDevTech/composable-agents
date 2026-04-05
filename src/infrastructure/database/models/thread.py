@@ -20,7 +20,7 @@ class ThreadModel(Base):
         back_populates="thread",
         cascade="all, delete-orphan",
         order_by="MessageModel.timestamp",
-        lazy="selectin",
+        lazy="raise",
     )
 
 

@@ -171,9 +171,7 @@ class PostgresThreadRepository(ThreadRepository):
         """
         async with AsyncSession(self._engine, expire_on_commit=False) as session:
             try:
-                thread_model = await session.get(
-                    ThreadModel, thread_id, options=[selectinload(ThreadModel.messages)]
-                )
+                thread_model = await session.get(ThreadModel, thread_id)
                 if thread_model is None:
                     raise ThreadNotFoundError(f"Thread not found: {thread_id}")
 
@@ -190,8 +188,11 @@ class PostgresThreadRepository(ThreadRepository):
                 session.add(msg_model)
                 thread_model.updated_at = datetime.now(UTC)
                 await session.commit()
-                await session.refresh(thread_model)
-                return _model_to_thread(thread_model)
+                # Re-fetch with messages to return the updated thread
+                updated_model = await session.get(
+                    ThreadModel, thread_id, options=[selectinload(ThreadModel.messages)]
+                )
+                return _model_to_thread(updated_model)
             except ThreadNotFoundError:
                 raise
             except SQLAlchemyError as e:
