@@ -1,0 +1,98 @@
+services:
+  # ============================================================
+  # Infrastructure
+  # ============================================================
+
+  db:
+    image: postgres:16-alpine
+    container_name: composable-agents-db
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: raganything
+      POSTGRES_PASSWORD: raganything
+      POSTGRES_DB: raganything
+    volumes:
+      - composable-agents-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raganything -d raganything"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - composable-agents-network
+
+  minio:
+    image: minio/minio:latest
+    container_name: composable-agents-minio
+    ports:
+      - "9040:9000"
+      - "9041:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - composable-agents-minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - composable-agents-network
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: composable-agents-minio-init
+    entrypoint: >
+      sh -c "
+        until mc alias set local http://minio:9000 minioadmin minioadmin 2>/dev/null; do sleep 1; done;
+        mc mb --ignore-existing local/composable-agents;
+        echo 'MinIO init done: bucket composable-agents created.';
+      "
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - composable-agents-network
+
+  # ============================================================
+  # Application
+  # ============================================================
+
+  app:
+    build:
+      context: .
+    container_name: composable-agents-app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 5432
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - composable-agents-network
+
+volumes:
+  composable-agents-db-data:
+  composable-agents-minio-data:
+
+networks:
+  composable-agents-network:
+    driver: bridge

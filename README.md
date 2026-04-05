@@ -78,6 +78,60 @@ curl -X POST http://localhost:8000/api/v1/chat/<thread_id> \
 
 ---
 
+## Docker Deployment
+
+composable-agents requires PostgreSQL and MinIO to run. A `docker-compose.yml` is provided to simplify local development.
+
+### Prerequisites
+
+- Docker & Docker Compose v2+
+- An API key for at least one LLM provider
+
+### Run with Docker Compose
+
+```bash
+# Create or update .env with your LLM API key
+cp .env.example .env
+# Edit .env and add OPENAI_API_KEY, ANTHROPIC_API_KEY, or GOOGLE_API_KEY
+
+# Start all services (PostgreSQL, MinIO, composable-agents)
+docker compose up -d
+
+# Wait for health checks (~15 seconds)
+docker compose ps
+
+# Test the API
+curl http://localhost:8000/health
+curl http://localhost:8000/api/v1/agents
+```
+
+### Services
+
+| Service | Port | Role |
+|---------|------|------|
+| `app` | 8000 | FastAPI server |
+| `db` | 5433 | PostgreSQL 16 (agent metadata) |
+| `minio` | 9040 | MinIO server (agent YAML storage) |
+| `minio-init` | — | Init container (creates MinIO bucket) |
+
+### Environment Variables
+
+All PostgreSQL and MinIO credentials are configured in `.env` (or can be overridden via the docker compose `environment` section). See `.env.example` for defaults.
+
+### Stopping the Stack
+
+```bash
+docker compose down
+```
+
+To remove persisted data (database, object storage):
+
+```bash
+docker compose down -v
+```
+
+---
+
 ## Multi-Agent Architecture
 
 composable-agents now supports running **multiple agents simultaneously**. Each agent is defined by a separate YAML file in the `agents/` directory.
