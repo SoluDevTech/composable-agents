@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 import asyncpg
-from miniopy_async import Minio
+from miniopy_async.api import Minio
 
 from src.application.use_cases.create_agent_config import CreateAgentConfigUseCase
 from src.application.use_cases.delete_agent_config import DeleteAgentConfigUseCase

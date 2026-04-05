@@ -54,11 +54,12 @@ class MinioAgentConfigStore(AgentConfigStore):
             AgentNotFoundError: If the object does not exist in MinIO.
         """
         try:
-            await self._client.remove_object(self._bucket, path)
+            await self._client.stat_object(self._bucket, path)
         except S3Error as e:
             if e.code == "NoSuchKey":
                 raise AgentNotFoundError(f"Agent config not found in store: {path}") from e
             raise
+        await self._client.remove_object(self._bucket, path)
         logger.info("Deleted agent config '%s' from MinIO bucket '%s'", path, self._bucket)
 
     async def exists(self, path: str) -> bool:
