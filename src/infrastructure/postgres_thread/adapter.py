@@ -195,11 +195,15 @@ class PostgresThreadRepository(ThreadRepository):
                 session.add(msg_model)
                 thread_model.updated_at = datetime.now(UTC)
                 await session.commit()
-                # Expire cached model so re-fetch actually hits the DB with selectinload
-                session.expire(thread_model)
-                updated_model = await session.get(
-                    ThreadModel, thread_id, options=[selectinload(ThreadModel.messages)]
+                # session.get() with an expired identity-map object does NOT re-apply
+                # selectinload options — use execute(select(...)) to force a real DB query.
+                result = await session.execute(
+                    select(ThreadModel)
+                    .where(ThreadModel.id == thread_id)
+                    .options(selectinload(ThreadModel.messages))
+                    .execution_options(populate_existing=True)
                 )
+                updated_model = result.scalar_one()
                 return _model_to_thread(updated_model)
             except ThreadNotFoundError:
                 raise

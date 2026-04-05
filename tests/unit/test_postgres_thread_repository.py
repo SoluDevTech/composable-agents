@@ -221,8 +221,6 @@ class TestPostgresThreadRepository:
 
         mock_session.get.return_value = thread_model
 
-        # After add_message, get is called again to return updated thread.
-        # Set up the model to include the new message after refresh.
         new_msg = MagicMock(spec=MessageModel)
         new_msg.role = "human"
         new_msg.content = "Hello, world!"
@@ -231,8 +229,16 @@ class TestPostgresThreadRepository:
         new_msg.status = None
         new_msg.structured_response = None
 
-        # After commit + refresh, the thread_model.messages should contain the new message
-        thread_model.messages = [new_msg]
+        # After commit, execute(select(...)) re-fetches with messages loaded
+        updated_model = MagicMock(spec=ThreadModel)
+        updated_model.id = "thread-123"
+        updated_model.agent_name = "test-agent"
+        updated_model.created_at = now
+        updated_model.updated_at = now
+        updated_model.messages = [new_msg]
+        mock_result = MagicMock()
+        mock_result.scalar_one.return_value = updated_model
+        mock_session.execute.return_value = mock_result
 
         result = await repository.add_message("thread-123", message)
 
@@ -272,14 +278,22 @@ class TestPostgresThreadRepository:
         new_msg.tool_calls = None
         new_msg.status = None
         new_msg.structured_response = None
-        thread_model.messages = [new_msg]
+
+        updated_model = MagicMock(spec=ThreadModel)
+        updated_model.id = "thread-123"
+        updated_model.agent_name = "test-agent"
+        updated_model.created_at = old_time
+        updated_model.updated_at = old_time
+        updated_model.messages = [new_msg]
+        mock_result = MagicMock()
+        mock_result.scalar_one.return_value = updated_model
+        mock_session.execute.return_value = mock_result
 
         mock_session.get.return_value = thread_model
 
         await repository.add_message("thread-123", message)
 
         # Verify updated_at was changed on the model (it should not stay at old_time)
-        # The implementation must set thread_model.updated_at to a recent datetime
         assert thread_model.updated_at != old_time
 
     # -- serialization roundtrips ---------------------------------------------
@@ -311,10 +325,17 @@ class TestPostgresThreadRepository:
         msg_model.tool_calls = None
         msg_model.status = "completed"
         msg_model.structured_response = {"score": 95, "label": "pass"}
-        thread_model.messages = [msg_model]
 
-        # First get returns thread without messages (for add_message lookup),
-        # after commit + refresh it has the persisted message
+        updated_model = MagicMock(spec=ThreadModel)
+        updated_model.id = "thread-456"
+        updated_model.agent_name = "analyzer"
+        updated_model.created_at = now
+        updated_model.updated_at = now
+        updated_model.messages = [msg_model]
+        mock_result = MagicMock()
+        mock_result.scalar_one.return_value = updated_model
+        mock_session.execute.return_value = mock_result
+
         mock_session.get.return_value = thread_model
 
         result = await repository.add_message("thread-456", original_message)
@@ -367,7 +388,16 @@ class TestPostgresThreadRepository:
         msg_model.tool_calls = tool_calls_data
         msg_model.status = None
         msg_model.structured_response = None
-        thread_model.messages = [msg_model]
+
+        updated_model = MagicMock(spec=ThreadModel)
+        updated_model.id = "thread-789"
+        updated_model.agent_name = "search-agent"
+        updated_model.created_at = now
+        updated_model.updated_at = now
+        updated_model.messages = [msg_model]
+        mock_result = MagicMock()
+        mock_result.scalar_one.return_value = updated_model
+        mock_session.execute.return_value = mock_result
 
         mock_session.get.return_value = thread_model
 
