@@ -1,9 +1,9 @@
 import asyncio
 import logging
-from pathlib import Path
 
-from src.domain.exceptions import AgentNotFoundError
 from src.domain.ports.agent_config_loader import AgentConfigLoader
+from src.domain.ports.agent_config_repository import AgentConfigRepository
+from src.domain.ports.agent_config_store import AgentConfigStore
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.agent_runner import AgentRunner
 from src.domain.ports.mcp_tool_loader import McpToolLoader
@@ -14,24 +14,37 @@ from src.infrastructure.deepagent.factory import create_agent_from_config
 logger = logging.getLogger("composable-agents")
 
 
-class DeepAgentRegistry(AgentRegistry):
-    """Registre qui cree et cache les agents a la demande depuis un dossier YAML."""
+class PersistentAgentRegistry(AgentRegistry):
+    """Registry that loads agent configs from MinIO/PostgreSQL and caches runners."""
 
     def __init__(
         self,
-        agents_dir: Path,
         config_loader: AgentConfigLoader,
+        config_store: AgentConfigStore,
+        config_repository: AgentConfigRepository,
         mcp_tool_loader: McpToolLoader,
         tracing_provider: TracingProvider | None = None,
     ) -> None:
-        self._agents_dir = agents_dir
         self._config_loader = config_loader
+        self._config_store = config_store
+        self._config_repository = config_repository
         self._mcp_tool_loader = mcp_tool_loader
         self._tracing_provider = tracing_provider
         self._runners: dict[str, AgentRunner] = {}
         self._lock = asyncio.Lock()
 
     async def get_runner(self, agent_name: str) -> AgentRunner:
+        """Return cached runner or build one from persisted config.
+
+        Args:
+            agent_name: Name of the agent.
+
+        Returns:
+            AgentRunner ready for invocation.
+
+        Raises:
+            AgentNotFoundError: If no config exists for this agent.
+        """
         if agent_name in self._runners:
             logger.debug("Agent '%s' loaded from cache", agent_name)
             return self._runners[agent_name]
@@ -40,13 +53,9 @@ class DeepAgentRegistry(AgentRegistry):
             if agent_name in self._runners:
                 return self._runners[agent_name]
 
-            config_path = self._agents_dir / f"{agent_name}.yaml"
-            if not config_path.exists():
-                logger.error("Agent not found: %s", agent_name)
-                raise AgentNotFoundError(f"Agent not found: {agent_name}")
-
-            logger.info("Building agent '%s' from %s", agent_name, config_path)
-            config = self._config_loader.load(config_path)
+            logger.info("Building agent '%s' from persistent store", agent_name)
+            yaml_content = await self._config_store.get(agent_name)
+            config = self._config_loader.load_from_string(yaml_content)
             graph = await create_agent_from_config(config, self._mcp_tool_loader)
             runner = DeepAgentRunner(graph, tracing_provider=self._tracing_provider)
             self._runners[agent_name] = runner
@@ -54,15 +63,17 @@ class DeepAgentRegistry(AgentRegistry):
             return runner
 
     async def list_agents(self) -> list[str]:
-        if not self._agents_dir.exists():
-            return []
-        return sorted(f.stem for f in self._agents_dir.glob("*.yaml"))
+        """List agent names from the metadata repository."""
+        metadata_list = await self._config_repository.list_all()
+        return [m.name for m in metadata_list]
 
     async def invalidate(self, agent_name: str) -> None:
+        """Remove cached runner for the given agent, forcing rebuild on next access."""
         async with self._lock:
             self._runners.pop(agent_name, None)
             logger.info("Invalidated cached agent '%s'", agent_name)
 
     async def close(self) -> None:
-        logger.info("Closing registry, clearing %d cached agents", len(self._runners))
+        """Clear all cached runners."""
+        logger.info("Closing persistent registry, clearing %d cached agents", len(self._runners))
         self._runners.clear()

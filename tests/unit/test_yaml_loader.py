@@ -85,6 +85,42 @@ debug: true
         with pytest.raises(ConfigNotFoundError, match="Prompt file not found"):
             loader.load(yaml_file)
 
+    # -- load_from_string --------------------------------------------------
+
+    def test_load_from_string_valid_yaml(self, loader):
+        """load_from_string should parse valid YAML into an AgentConfig."""
+        yaml_content = (
+            "name: test-agent\n"
+            "model: claude-sonnet-4-5-20250929\n"
+            'system_prompt: "You are a test agent."\n'
+            "tools: []\n"
+            "debug: false\n"
+        )
+        config = loader.load_from_string(yaml_content)
+        assert config.name == "test-agent"
+        assert config.model == "claude-sonnet-4-5-20250929"
+        assert config.system_prompt == "You are a test agent."
+        assert config.tools == []
+        assert config.debug is False
+
+    def test_load_from_string_invalid_yaml(self, loader):
+        """load_from_string should raise ConfigError on malformed YAML."""
+        with pytest.raises(ConfigError):
+            loader.load_from_string(":::invalid yaml{{{}")
+
+    def test_load_from_string_empty_string(self, loader):
+        """load_from_string should raise ConfigError on empty string."""
+        with pytest.raises(ConfigError):
+            loader.load_from_string("")
+
+    def test_load_from_string_with_system_prompt_file(self, loader):
+        """load_from_string should raise ConfigError when YAML references system_prompt_file."""
+        yaml_content = 'name: test-agent\nsystem_prompt_file: "./prompt.md"\n'
+        with pytest.raises(ConfigError, match="system_prompt_file"):
+            loader.load_from_string(yaml_content)
+
+    # -- load (file-based, existing tests) ---------------------------------
+
     def test_loads_real_estate_extractor(self, loader):
         """Verify real-estate-extractor.yaml loads with subagents, response_format, and MCP servers."""
         config = loader.load("agents/real-estate-extractor.yaml")

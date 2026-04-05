@@ -5,11 +5,13 @@ Uses AsyncMock for AgentRunner (external LLM boundary).
 Uses a real DeepAgentRegistry with patched factory for agent creation.
 """
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.exceptions import AgentError
 from src.infrastructure.deepagent.registry import DeepAgentRegistry
@@ -78,8 +80,52 @@ def real_registry(agents_dir, real_loader, mock_mcp_tool_loader):
     )
 
 
+@pytest.fixture
+def mock_config_store(agents_dir):
+    """AsyncMock for AgentConfigStore that reads from the tmp agents_dir."""
+    store = AsyncMock()
+
+    async def _get(name):
+        from pathlib import Path
+
+        path = Path(agents_dir) / f"{name}.yaml"
+        if not path.exists():
+            from src.domain.exceptions import AgentNotFoundError
+
+            raise AgentNotFoundError(f"Agent config not found: {name}")
+        return path.read_text()
+
+    store.get.side_effect = _get
+    return store
+
+
+@pytest.fixture
+def mock_config_repository(agents_dir):
+    """AsyncMock for AgentConfigRepository that lists agents from the tmp agents_dir."""
+    repo = AsyncMock()
+    from pathlib import Path
+
+    now = datetime.now(UTC)
+    metadata_list = []
+    for f in sorted(Path(agents_dir).glob("*.yaml")):
+        metadata_list.append(
+            AgentConfigMetadata(
+                name=f.stem,
+                model="test-model",
+                minio_path=f"{f.stem}.yaml",
+                is_builtin=False,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+    repo.list_all.return_value = metadata_list
+    return repo
+
+
 @pytest.fixture(autouse=True)
-def _wire_dependencies(real_threads, real_registry, real_loader, agents_dir, mock_runner):
+def _wire_dependencies(
+    real_threads, real_registry, real_loader, agents_dir, mock_runner, mock_config_store, mock_config_repository
+):
     """Wire real internal components + mocked runner into the app dependencies."""
     with (
         patch(
@@ -95,6 +141,8 @@ def _wire_dependencies(real_threads, real_registry, real_loader, agents_dir, moc
         patch("src.dependencies.agent_registry", real_registry),
         patch("src.dependencies.agent_config_loader", real_loader),
         patch("src.dependencies.agents_dir", str(agents_dir)),
+        patch("src.dependencies._minio_store", mock_config_store),
+        patch("src.dependencies._pg_repository", mock_config_repository),
     ):
         yield
 

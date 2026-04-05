@@ -1,7 +1,15 @@
 import logging
 from pathlib import Path
 
+import asyncpg
+from miniopy_async import Minio
+
+from src.application.use_cases.create_agent_config import CreateAgentConfigUseCase
+from src.application.use_cases.delete_agent_config import DeleteAgentConfigUseCase
+from src.application.use_cases.get_agent_config import GetAgentConfigUseCase
+from src.application.use_cases.list_agent_configs import ListAgentConfigsUseCase
 from src.application.use_cases.load_agent_config import LoadAgentConfigUseCase
+from src.application.use_cases.seed_agents import SeedAgentsUseCase
 from src.application.use_cases.send_message import SendMessageUseCase
 from src.application.use_cases.stream_message import StreamMessageUseCase
 from src.application.use_cases.thread_management import (
@@ -10,10 +18,16 @@ from src.application.use_cases.thread_management import (
     GetThreadUseCase,
     ListThreadsUseCase,
 )
+from src.application.use_cases.update_agent_config import UpdateAgentConfigUseCase
 from src.config import Settings
+from src.domain.exceptions import StorageError
 from src.infrastructure.deepagent.registry import DeepAgentRegistry
 from src.infrastructure.mcp.adapter import LangchainMcpToolLoader
 from src.infrastructure.memory_thread.adapter import InMemoryThreadRepository
+from src.infrastructure.minio_store.adapter import MinioAgentConfigStore
+from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
+from src.infrastructure.postgres_repository.adapter import PostgresAgentConfigRepository
+from src.infrastructure.postgres_repository.schema import ensure_schema
 from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 
@@ -68,6 +82,7 @@ agent_config_loader = YamlAgentConfigLoader()
 mcp_tool_loader = LangchainMcpToolLoader()
 tracing_provider = _create_tracing_provider(settings)
 
+# Filesystem-based registry (kept for backward compatibility)
 agent_registry = DeepAgentRegistry(
     agents_dir=Path(settings.agents_dir),
     config_loader=agent_config_loader,
@@ -76,6 +91,87 @@ agent_registry = DeepAgentRegistry(
 )
 
 agents_dir = settings.agents_dir
+
+# ============= PERSISTENCE (initialized at startup) =============
+
+_pg_pool: asyncpg.Pool | None = None
+_minio_store: MinioAgentConfigStore | None = None
+_pg_repository: PostgresAgentConfigRepository | None = None
+_persistent_registry: PersistentAgentRegistry | None = None
+
+
+async def init_persistence() -> None:
+    """Initialize persistent infrastructure: asyncpg pool, MinIO store, PostgreSQL repository.
+
+    Must be called during application startup.
+    """
+    global _pg_pool, _minio_store, _pg_repository, _persistent_registry, agent_registry
+
+    logger.info("Initializing persistence layer")
+
+    _pg_pool = await asyncpg.create_pool(
+        host=settings.postgres_host,
+        port=settings.postgres_port,
+        user=settings.postgres_user,
+        password=settings.postgres_password,
+        database=settings.postgres_database,
+    )
+    await ensure_schema(_pg_pool)
+    logger.info("PostgreSQL pool created and schema ensured")
+
+    minio_client = Minio(
+        settings.minio_endpoint,
+        access_key=settings.minio_access_key,
+        secret_key=settings.minio_secret_key,
+        secure=settings.minio_secure,
+    )
+    _minio_store = MinioAgentConfigStore(client=minio_client, bucket=settings.minio_bucket)
+    await _minio_store.ensure_bucket()
+    logger.info("MinIO store initialized (bucket=%s)", settings.minio_bucket)
+
+    _pg_repository = PostgresAgentConfigRepository(pool=_pg_pool)
+
+    _persistent_registry = PersistentAgentRegistry(
+        config_loader=agent_config_loader,
+        config_store=_minio_store,
+        config_repository=_pg_repository,
+        mcp_tool_loader=mcp_tool_loader,
+        tracing_provider=tracing_provider,
+    )
+    agent_registry = _persistent_registry
+
+    logger.info("Persistence layer initialized, agent_registry switched to PersistentAgentRegistry")
+
+
+async def close_persistence() -> None:
+    """Close persistent infrastructure resources.
+
+    Must be called during application shutdown.
+    """
+    if _persistent_registry:
+        await _persistent_registry.close()
+        logger.info("Persistent registry closed")
+
+    if _pg_pool:
+        await _pg_pool.close()
+        logger.info("PostgreSQL pool closed")
+
+
+async def seed_builtin_agents() -> None:
+    """Seed built-in agents from the configured agents directory."""
+    if _minio_store is None or _pg_repository is None:
+        logger.warning("Persistence not initialized, skipping seed")
+        return
+
+    seed_use_case = SeedAgentsUseCase(
+        config_loader=agent_config_loader,
+        config_store=_minio_store,
+        config_repository=_pg_repository,
+    )
+    await seed_use_case.execute(agents_dir=Path(settings.agents_dir))
+    logger.info("Built-in agents seeded from %s", settings.agents_dir)
+
+
 logger.info("Dependencies initialized (agents_dir=%s)", settings.agents_dir)
 
 # ============= USE CASE PROVIDERS =============
@@ -119,3 +215,56 @@ def get_load_agent_config_use_case() -> LoadAgentConfigUseCase:
 def get_agents_dir() -> str:
     """Provide the configured agents directory path."""
     return agents_dir
+
+
+def _require_persistence() -> tuple[MinioAgentConfigStore, PostgresAgentConfigRepository]:
+    """Return persistence adapters or raise StorageError if not initialized."""
+    if _minio_store is None or _pg_repository is None:
+        raise StorageError("Persistence layer not initialized. Check MinIO/PostgreSQL connectivity.")
+    return _minio_store, _pg_repository
+
+
+def get_create_agent_config_use_case() -> CreateAgentConfigUseCase:
+    """Provide a CreateAgentConfigUseCase instance."""
+    store, repo = _require_persistence()
+    return CreateAgentConfigUseCase(
+        config_loader=agent_config_loader,
+        config_store=store,
+        config_repository=repo,
+    )
+
+
+def get_update_agent_config_use_case() -> UpdateAgentConfigUseCase:
+    """Provide an UpdateAgentConfigUseCase instance."""
+    store, repo = _require_persistence()
+    return UpdateAgentConfigUseCase(
+        config_loader=agent_config_loader,
+        config_store=store,
+        config_repository=repo,
+        agent_registry=agent_registry,
+    )
+
+
+def get_delete_agent_config_use_case() -> DeleteAgentConfigUseCase:
+    """Provide a DeleteAgentConfigUseCase instance."""
+    store, repo = _require_persistence()
+    return DeleteAgentConfigUseCase(
+        config_store=store,
+        config_repository=repo,
+        agent_registry=agent_registry,
+    )
+
+
+def get_get_agent_config_use_case() -> GetAgentConfigUseCase:
+    """Provide a GetAgentConfigUseCase instance."""
+    store, _ = _require_persistence()
+    return GetAgentConfigUseCase(
+        config_loader=agent_config_loader,
+        config_store=store,
+    )
+
+
+def get_list_agent_configs_use_case() -> ListAgentConfigsUseCase:
+    """Provide a ListAgentConfigsUseCase instance."""
+    _, repo = _require_persistence()
+    return ListAgentConfigsUseCase(config_repository=repo)

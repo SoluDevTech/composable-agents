@@ -25,7 +25,13 @@ class SendMessageUseCase:
             await self._threads.add_message(thread_id, human_msg)
             response = await runner.invoke(thread_id, request.message)
         else:
-            logger.info("[thread=%s][agent=%s] HITL action=%s tool_call_id=%s", thread_id, thread.agent_name, request.action, request.tool_call_id)
+            logger.info(
+                "[thread=%s][agent=%s] HITL action=%s tool_call_id=%s",
+                thread_id,
+                thread.agent_name,
+                request.action,
+                request.tool_call_id,
+            )
             match request.action:
                 case "approve":
                     response = await runner.approve_hitl(thread_id, request.tool_call_id)
@@ -35,5 +41,11 @@ class SendMessageUseCase:
                     response = await runner.edit_hitl(thread_id, request.tool_call_id, request.edits)
 
         await self._threads.add_message(thread_id, response)
-        logger.info("[thread=%s][agent=%s] Response received, status=%s len=%d", thread_id, thread.agent_name, response.status, len(response.content or ""))
+        logger.info(
+            "[thread=%s][agent=%s] Response received, status=%s len=%d",
+            thread_id,
+            thread.agent_name,
+            response.status,
+            len(response.content or ""),
+        )
         return response

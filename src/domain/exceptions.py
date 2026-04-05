@@ -43,6 +43,18 @@ class AgentNotFoundError(DomainError):
     pass
 
 
+class AgentConfigAlreadyExistsError(DomainError):
+    """Agent configuration already exists."""
+
+    pass
+
+
+class StorageError(DomainError):
+    """Storage infrastructure error."""
+
+    pass
+
+
 class McpError(DomainError):
     """Base error for MCP operations."""
 

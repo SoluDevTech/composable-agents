@@ -29,8 +29,16 @@ class StreamMessageUseCase:
                 full_response.append(chunk)
                 yield chunk
         except Exception:
-            logger.exception("[thread=%s][agent=%s] Stream error after %d chunks", thread_id, thread.agent_name, chunk_count)
+            logger.exception(
+                "[thread=%s][agent=%s] Stream error after %d chunks", thread_id, thread.agent_name, chunk_count
+            )
             raise
         ai_msg = Message(role=MessageRole.AI, content="".join(full_response))
         await self._threads.add_message(thread_id, ai_msg)
-        logger.info("[thread=%s][agent=%s] Stream complete, %d chunks, %d chars", thread_id, thread.agent_name, chunk_count, len(ai_msg.content))
+        logger.info(
+            "[thread=%s][agent=%s] Stream complete, %d chunks, %d chars",
+            thread_id,
+            thread.agent_name,
+            chunk_count,
+            len(ai_msg.content),
+        )
