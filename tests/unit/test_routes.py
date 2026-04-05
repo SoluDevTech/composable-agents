@@ -15,9 +15,9 @@ from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.exceptions import AgentError
 from src.infrastructure.deepagent.registry import DeepAgentRegistry
-from src.infrastructure.memory_thread.adapter import InMemoryThreadRepository
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 from src.main import app
+from tests.fixtures.in_memory_thread_repository import InMemoryThreadRepository
 
 
 @pytest.fixture
