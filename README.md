@@ -14,6 +14,7 @@ The server supports **multi-agent mode**: multiple agents are defined as separat
 
 - Python 3.11+
 - [UV](https://docs.astral.sh/uv/) package manager
+- PostgreSQL 15+ (required for thread and agent config persistence)
 - An API key for at least one LLM provider (Anthropic, OpenAI, or Google)
 
 ### Installation
@@ -25,7 +26,7 @@ uv sync
 cp .env.example .env
 ```
 
-Edit `.env` and add your API key:
+Edit `.env` and add your API key and database credentials:
 
 ```dotenv
 ANTHROPIC_API_KEY=sk-ant-...
@@ -33,6 +34,13 @@ ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 # or
 GOOGLE_API_KEY=...
+
+# PostgreSQL (required)
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5433
+POSTGRES_USER=raganything
+POSTGRES_PASSWORD=raganything
+POSTGRES_DATABASE=raganything
 ```
 
 ### Configure your agents
@@ -57,7 +65,13 @@ uv run python -m src validate agents/my-agent.yaml
 uv run python -m src serve
 ```
 
-The API starts on `http://localhost:8000`. On startup, the server reads the `AGENTS_DIR` environment variable (default: `./agents`) to discover available agents. Agents are not loaded into memory until a thread references them for the first time.
+The API starts on `http://localhost:8000`. On startup, the server:
+
+1. **Runs Alembic migrations** automatically to bring the database schema up to date.
+2. **Initializes persistence** (PostgreSQL engine, MinIO store, agent seeding).
+3. Reads the `AGENTS_DIR` environment variable (default: `./agents`) to discover available agents.
+
+Agents are not loaded into memory until a thread references them for the first time.
 
 ### Test with curl
 
@@ -603,7 +617,8 @@ composable-agents follows a strict **hexagonal architecture** (ports and adapter
     | - DeepAgentRunner  |
     | - DeepAgentRegistry|
     | - YamlConfigLoader |
-    | - InMemoryThreads  |
+    | - PostgresThreads  |
+    | - Alembic (migrate)|
     +--------------------+
 ```
 
@@ -618,9 +633,15 @@ composable-agents/
     research-assistant.yaml            #   Research assistant with tools
     code-reviewer.yaml                 #   Code reviewer with HITL + subagents
   src/
-    main.py                            # FastAPI app creation and lifespan
-    config.py                          # Pydantic Settings (env vars)
+    main.py                            # FastAPI app creation and lifespan (runs migrations)
+    config.py                          # Pydantic Settings (env vars, database_url property)
     dependencies.py                    # Dependency injection wiring
+    alembic.ini                        # Alembic configuration
+    alembic/
+      env.py                           # Alembic env (async engine, model imports)
+      versions/
+        001_create_agent_configs_table.py
+        002_create_threads_and_messages_tables.py
     application/
       requests/
         chat.py                        # Request models (ChatRequest, CreateThreadRequest, HITLDecisionRequest)
@@ -628,32 +649,44 @@ composable-agents/
         health.py                      # GET /health
         threads.py                     # CRUD /api/v1/threads
         chat.py                        # POST /api/v1/chat/{id} and /stream
-        hitl.py                        # POST /api/v1/threads/{id}/hitl
         agents.py                      # GET /api/v1/agents
         websocket.py                   # WS /api/v1/ws/{id}
       use_cases/
         send_message.py                # Invoke agent synchronously
         stream_message.py              # Stream agent response
-        hitl_decision.py               # Approve / reject / edit HITL decisions
+        create_agent_config.py         # Create agent config (MinIO + Postgres)
+        update_agent_config.py         # Update agent config
+        delete_agent_config.py         # Delete agent config
+        get_agent_config.py            # Get agent config from MinIO
+        list_agent_configs.py          # List agent configs from Postgres
         load_agent_config.py           # Load and validate a YAML config
+        seed_agents.py                 # Seed built-in agents from agents/ dir
         thread_management.py           # Create / get / list / delete threads
     domain/
       entities/
         agent_config.py                # AgentConfig, BackendConfig, HITLConfig, SubAgentConfig
+        agent_config_metadata.py       # AgentConfigMetadata
         mcp_server_config.py           # McpServerConfig, McpTransportType
         message.py                     # Message (role, content, timestamp, tool_calls)
         thread.py                      # Thread (id, agent_name, messages, timestamps)
         tracing_config.py              # TracingConfig, TracingProviderType
       ports/
         agent_config_loader.py         # Abstract: load config from file
+        agent_config_repository.py     # Abstract: CRUD for agent config metadata
+        agent_config_store.py          # Abstract: object storage for YAML blobs
         agent_registry.py              # Abstract: get_runner(name), list_agents(), close()
         agent_runner.py                # Abstract: invoke, stream, HITL operations
         mcp_tool_loader.py             # Abstract: load MCP tools
         thread_repository.py           # Abstract: CRUD for threads
         tracing_provider.py            # Abstract: tracing lifecycle
-      exceptions.py                    # DomainError hierarchy (incl. AgentNotFoundError)
+      exceptions.py                    # DomainError hierarchy (incl. AgentNotFoundError, StorageError)
     infrastructure/
       env_utils.py                     # ${VAR_NAME} environment variable resolution
+      database/
+        models/
+          base.py                      # SQLAlchemy DeclarativeBase
+          agent_config.py              # AgentConfigModel (ORM)
+          thread.py                    # ThreadModel + MessageModel (ORM)
       deepagent/
         adapter.py                     # DeepAgentRunner (LangGraph adapter)
         factory.py                     # create_agent_from_config (resolves tools, middleware, backend)
@@ -661,8 +694,15 @@ composable-agents/
         example_tools.py               # Example tools: current_time, word_count
       mcp/
         adapter.py                     # LangchainMcpToolLoader
-      memory_thread/
-        adapter.py                     # InMemoryThreadRepository
+      minio_store/
+        adapter.py                     # MinioAgentConfigStore (YAML blob storage)
+      persistent_registry/
+        adapter.py                     # PersistentAgentRegistry (MinIO + Postgres backed)
+      postgres_repository/
+        adapter.py                     # PostgresAgentConfigRepository
+      postgres_thread/
+        adapter.py                     # PostgresThreadRepository (thread persistence)
+        models.py                      # Re-exports ThreadModel, MessageModel
       yaml_config/
         adapter.py                     # YamlAgentConfigLoader
       tracing/
@@ -671,28 +711,32 @@ composable-agents/
         noop_adapter.py                # No-op tracing provider (default)
   tests/
     conftest.py
-    doubles/
-      fake_agent_runner.py             # FakeAgentRunner for unit tests
-      fake_agent_config_loader.py      # FakeAgentConfigLoader for unit tests
-      fake_agent_registry.py           # FakeAgentRegistry for unit tests
-      fake_mcp_tool_loader.py          # FakeMcpToolLoader for unit tests
-      fake_tracing_provider.py         # FakeTracingProvider for unit tests
+    fixtures/
+      external.py                      # External service fixtures
+      in_memory_thread_repository.py   # In-memory thread repository for tests
     unit/
       test_agent_config.py
+      test_agent_crud.py
       test_deep_agent_runner.py
       test_env_utils.py
       test_factory.py
       test_factory_mcp_integration.py
-      test_hitl.py
       test_langfuse_adapter.py
       test_load_agent_config_use_case.py
       test_mcp_adapter.py
       test_mcp_lifecycle.py
       test_mcp_server_config.py
+      test_message.py
+      test_minio_store.py
       test_noop_tracing.py
+      test_persistent_registry.py
       test_phoenix_adapter.py
+      test_postgres_repository.py
+      test_postgres_thread_repository.py
+      test_registry.py
       test_routes.py
       test_runner_tracing.py
+      test_seed_agents.py
       test_send_message.py
       test_thread.py
       test_thread_management.py
@@ -701,6 +745,7 @@ composable-agents/
       test_tracing_lifecycle.py
       test_yaml_loader.py
   .env.example                         # Environment variable template
+  Dockerfile                           # Container image
   pyproject.toml                       # Project metadata and dependencies
   CONTRIBUTING.md                      # Contributor guide
   uv.lock                             # Lockfile
@@ -797,6 +842,59 @@ subagents:
 
 ---
 
+## Database (PostgreSQL)
+
+Thread and agent config persistence is backed by PostgreSQL, accessed via SQLAlchemy's async ORM (`asyncpg` driver).
+
+### Schema
+
+The database uses a flat normalized schema with two tables for thread persistence:
+
+| Table | Description |
+|---|---|
+| `threads` | One row per conversation thread. Columns: `id` (PK, VARCHAR 36), `agent_name`, `created_at`, `updated_at`. |
+| `messages` | One row per message. Columns: `id` (PK), `thread_id` (FK to `threads.id`, CASCADE delete), `role`, `content`, `timestamp`, `tool_calls` (JSONB), `status`, `structured_response` (JSONB). |
+
+Indexes: `ix_messages_thread_id`, `ix_messages_thread_id_timestamp`, `ix_threads_agent_name`.
+
+A third table, `agent_configs`, stores agent configuration metadata.
+
+### Migrations (Alembic)
+
+Alembic migrations live in `src/alembic/versions/` and run **automatically at startup** (via `asyncio.to_thread()` in the FastAPI lifespan). You never need to run `alembic upgrade` manually in normal operation.
+
+To create a new migration manually:
+
+```bash
+cd src
+uv run alembic revision -m "describe_your_change"
+```
+
+To run migrations manually (useful for debugging):
+
+```bash
+cd src
+uv run alembic upgrade head
+```
+
+To check current migration status:
+
+```bash
+cd src
+uv run alembic current
+```
+
+### Architecture Decisions
+
+- **Hexagonal architecture**: `ThreadRepository` (port) -> `PostgresThreadRepository` (adapter). The domain layer has no knowledge of SQLAlchemy.
+- **Session-per-method**: Each repository method creates its own `AsyncSession` from the engine, ensuring thread-safety for concurrent FastAPI requests.
+- **Connection pooling**: `AsyncAdaptedQueuePool` with `pool_size=20`, `max_overflow=20`, and `pool_pre_ping=True`.
+- **Cascade deletes**: Deleting a thread automatically deletes all its messages via `ON DELETE CASCADE` at both the SQL and ORM level.
+- **Message ordering**: Messages are sorted by `timestamp` (oldest first). The ORM relationship specifies `order_by`, and the adapter applies a defensive Python sort as well.
+- **JSONB columns**: `tool_calls` and `structured_response` are stored as PostgreSQL `JSONB`, allowing structured data without additional join tables.
+
+---
+
 ## Environment Variables
 
 Configured via `.env` file or environment variables. See `.env.example`.
@@ -810,6 +908,28 @@ Configured via `.env` file or environment variables. See `.env.example`.
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL for OpenAI-compatible endpoints. Set to use OpenRouter, LiteLLM, vLLM, etc. |
 | `HOST` | `0.0.0.0` | Server bind host. |
 | `PORT` | `8000` | Server bind port. |
+
+### PostgreSQL Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `POSTGRES_HOST` | `localhost` | PostgreSQL server hostname. |
+| `POSTGRES_PORT` | `5433` | PostgreSQL server port. |
+| `POSTGRES_USER` | `raganything` | Database user. |
+| `POSTGRES_PASSWORD` | `raganything` | Database password. |
+| `POSTGRES_DATABASE` | `raganything` | Database name. |
+
+The async connection URL is built automatically as `postgresql+asyncpg://<user>:<password>@<host>:<port>/<database>`.
+
+### MinIO Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `MINIO_ENDPOINT` | `localhost:9040` | MinIO server endpoint. |
+| `MINIO_ACCESS_KEY` | `minioadmin` | MinIO access key. |
+| `MINIO_SECRET_KEY` | `minioadmin` | MinIO secret key. |
+| `MINIO_BUCKET` | `composable-agents` | Bucket for YAML config blob storage. |
+| `MINIO_SECURE` | `false` | Use HTTPS for MinIO connections. |
 
 ### Tracing Variables
 
