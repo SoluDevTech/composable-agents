@@ -7,8 +7,6 @@ load_dotenv()
 
 
 class TracingSettings(BaseSettings):
-    model_config = {"env_prefix": "TRACING_", "extra": "ignore"}
-
     provider: str = "none"
     enabled: bool = False
     project_name: str = "composable-agents"

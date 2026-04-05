@@ -29,12 +29,14 @@ class TestLifespanMcpCleanup:
         """Lifespan shutdown calls close() on the mcp_tool_loader."""
         from src.main import lifespan
 
+        mock_tracing = AsyncMock()
+
         with (
             patch("src.main.mcp_tool_loader", mock_mcp_tool_loader),
             patch("src.main.close_persistence", AsyncMock()),
             patch("src.main.init_persistence", AsyncMock()),
             patch("src.main.seed_builtin_agents", AsyncMock()),
-            patch("src.main.tracing_provider", AsyncMock()),
+            patch("src.main.tracing_provider", mock_tracing),
         ):
             async with lifespan(None):
                 pass  # enter and exit context to trigger cleanup

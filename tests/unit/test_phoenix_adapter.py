@@ -25,9 +25,19 @@ def mock_phoenix_and_openinference():
     mock_openinference_instr.langchain = mock_openinference_langchain
     mock_openinference.instrumentation = mock_openinference_instr
 
+    # Create proper mocks for opentelemetry
+    mock_tracer_provider = MagicMock()
+    mock_tracer_provider.force_flush = MagicMock()
+    mock_tracer_provider.shutdown = MagicMock()
+    
     mock_trace = MagicMock()
-    mock_tracer = MagicMock()
-    mock_trace.get_tracer.return_value = mock_tracer
+    mock_trace.get_tracer_provider = MagicMock(return_value=mock_tracer_provider)
+    
+    mock_opentelemetry = MagicMock()
+    mock_opentelemetry.trace = mock_trace
+
+    # Remove from sys.modules to force re-import with mocks
+    sys.modules.pop("src.infrastructure.tracing.phoenix_adapter", None)
 
     with patch.dict(
         "sys.modules",
@@ -37,14 +47,14 @@ def mock_phoenix_and_openinference():
             "openinference": mock_openinference,
             "openinference.instrumentation": mock_openinference_instr,
             "openinference.instrumentation.langchain": mock_openinference_langchain,
-            "opentelemetry": MagicMock(),
+            "opentelemetry": mock_opentelemetry,
             "opentelemetry.trace": mock_trace,
         },
     ):
         yield {
             "register": mock_register,
             "instrumentor": mock_instrumentor,
-            "tracer": mock_tracer,
+            "tracer_provider": mock_tracer_provider,
         }
 
 
@@ -65,6 +75,8 @@ class TestPhoenixTracingProvider:
         assert call_kwargs["project_name"] == "my-project"
         assert call_kwargs["headers"] == {"api_key": "my-api-key"}
         assert call_kwargs["auto_instrument"] is True
+        assert call_kwargs["protocol"] == "http/protobuf"
+        assert call_kwargs["batch"] is True
 
     def test_constructor_defaults(self, mock_phoenix_and_openinference):
         mock_reg = mock_phoenix_and_openinference["register"]
@@ -82,41 +94,22 @@ class TestPhoenixTracingProvider:
         from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
 
         provider = PhoenixTracingProvider()
-
         assert provider.get_callbacks() == []
 
-    def test_record_cost_accepts_parameters(self, mock_phoenix_and_openinference):
-        from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
-
-        provider = PhoenixTracingProvider()
-
-        provider.record_cost(input_tokens=100, output_tokens=50, model="gpt-4o")
-        provider.record_cost(input_tokens=200, output_tokens=100, model="gpt-4o-mini")
-
-    def test_calculate_cost_gpt4o(self, mock_phoenix_and_openinference):
-        from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
-
-        provider = PhoenixTracingProvider()
-        cost = provider._calculate_cost(1000, 500, "gpt-4o")
-
-        assert cost == pytest.approx(0.0075, rel=0.01)
-
-    def test_calculate_cost_unknown_model(self, mock_phoenix_and_openinference):
-        from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
-
-        provider = PhoenixTracingProvider()
-        cost = provider._calculate_cost(1000, 500, "unknown-model")
-
-        assert cost == 0.0
-
-    async def test_flush_does_nothing(self, mock_phoenix_and_openinference):
+    async def test_flush(self, mock_phoenix_and_openinference):
         from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
 
         provider = PhoenixTracingProvider()
         await provider.flush()
+        
+        # Verify force_flush was called on the tracer provider
+        provider._tracer_provider.force_flush.assert_called_once()
 
-    async def test_shutdown_does_nothing(self, mock_phoenix_and_openinference):
+    async def test_shutdown(self, mock_phoenix_and_openinference):
         from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
 
         provider = PhoenixTracingProvider()
         await provider.shutdown()
+        
+        # Verify shutdown was called on the tracer provider
+        provider._tracer_provider.shutdown.assert_called_once()

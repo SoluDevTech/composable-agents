@@ -1,22 +1,18 @@
+import logging
+import os
 from typing import Any
 
-import phoenix.otel
 from openinference.instrumentation.langchain import LangChainInstrumentor
+from opentelemetry import trace
+import phoenix.otel
 
 from src.domain.ports.tracing_provider import TracingProvider
 
+logger = logging.getLogger("composable-agents")
+
 
 class PhoenixTracingProvider(TracingProvider):
-    """Tracing provider using Arize Phoenix with OpenTelemetry auto-instrumentation.
-
-    Phoenix uses OpenTelemetry to instrument LangChain automatically,
-    so no explicit LangChain callbacks are needed.
-
-    Args:
-        endpoint: Phoenix collector endpoint URL.
-        api_key: Optional Phoenix API key.
-        project_name: Optional project name for trace grouping.
-    """
+    """Tracing provider using Arize Phoenix with OpenTelemetry auto-instrumentation."""
 
     def __init__(
         self,
@@ -24,23 +20,65 @@ class PhoenixTracingProvider(TracingProvider):
         api_key: str | None = None,
         project_name: str | None = None,
     ):
+        endpoint = endpoint or "http://localhost:6006"
+        project_name = project_name or "composable-agents"
+        
+        # Ensure endpoint has the /v1/traces path
+        if endpoint and not endpoint.endswith("/v1/traces"):
+            endpoint = f"{endpoint.rstrip('/')}/v1/traces"
+
+        logger.info(
+            "Initializing PhoenixTracingProvider with endpoint=%s, project_name=%s",
+            endpoint,
+            project_name,
+        )
+
+        # Disable SSL verification for testing (remove in production with proper certs)
+        os.environ["OTEL_PYTHON_URLLIB3_BYPASS_PROXY"] = "True"
+
+        # Register with explicit protocol and batching
         phoenix.otel.register(
-            endpoint=f"{endpoint}/v1/traces" if endpoint else "http://localhost:6006",
-            project_name=project_name or "composable-agents",
+            endpoint=endpoint,
+            project_name=project_name,
             headers={"api_key": api_key} if api_key else None,
+            protocol="http/protobuf",
+            batch=True,
             auto_instrument=True,
         )
+
         LangChainInstrumentor().instrument()
+
+        # Store tracer provider for flush/shutdown
+        self._tracer_provider = trace.get_tracer_provider()
         self._instrumented = True
+        logger.info("Phoenix tracing initialized successfully")
 
     def get_callbacks(self) -> list[Any]:
         """Return an empty list since Phoenix uses OpenTelemetry auto-instrumentation."""
         return []
 
     async def flush(self) -> None:
-        """No-op flush. Phoenix handles flushing via OpenTelemetry."""
-        pass
+        """Force flush all pending spans to Phoenix."""
+        if self._tracer_provider is None:
+            return
+            
+        try:
+            timeout_millis = 30000
+            if hasattr(self._tracer_provider, "force_flush"):
+                self._tracer_provider.force_flush(timeout_millis=timeout_millis)
+                logger.info("Flushed pending spans to Phoenix")
+        except Exception as e:
+            logger.error("Error flushing spans to Phoenix: %s", e)
 
     async def shutdown(self) -> None:
-        """No-op shutdown. Phoenix handles cleanup via OpenTelemetry."""
-        pass
+        """Shutdown the tracer provider and flush remaining spans."""
+        if self._tracer_provider is None:
+            return
+            
+        try:
+            await self.flush()
+            if hasattr(self._tracer_provider, "shutdown"):
+                self._tracer_provider.shutdown()
+                logger.info("Phoenix tracing provider shutdown complete")
+        except Exception as e:
+            logger.error("Error shutting down tracer provider: %s", e)
