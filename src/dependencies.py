@@ -8,7 +8,6 @@ from src.application.use_cases.create_agent_config import CreateAgentConfigUseCa
 from src.application.use_cases.delete_agent_config import DeleteAgentConfigUseCase
 from src.application.use_cases.get_agent_config import GetAgentConfigUseCase
 from src.application.use_cases.list_agent_configs import ListAgentConfigsUseCase
-from src.application.use_cases.load_agent_config import LoadAgentConfigUseCase
 from src.application.use_cases.seed_agents import SeedAgentsUseCase
 from src.application.use_cases.send_message import SendMessageUseCase
 from src.application.use_cases.stream_message import StreamMessageUseCase
@@ -207,11 +206,6 @@ def get_delete_thread_use_case() -> DeleteThreadUseCase:
     return DeleteThreadUseCase(thread_repository)
 
 
-def get_load_agent_config_use_case() -> LoadAgentConfigUseCase:
-    """Provide a LoadAgentConfigUseCase instance."""
-    return LoadAgentConfigUseCase(agent_config_loader)
-
-
 def get_agents_dir() -> str:
     """Provide the configured agents directory path."""
     return agents_dir
@@ -257,10 +251,11 @@ def get_delete_agent_config_use_case() -> DeleteAgentConfigUseCase:
 
 def get_get_agent_config_use_case() -> GetAgentConfigUseCase:
     """Provide a GetAgentConfigUseCase instance."""
-    store, _ = _require_persistence()
+    store, repo = _require_persistence()
     return GetAgentConfigUseCase(
         config_loader=agent_config_loader,
         config_store=store,
+        config_repository=repo,
     )
 
 

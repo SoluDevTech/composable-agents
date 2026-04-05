@@ -50,7 +50,7 @@ class UpdateAgentConfigUseCase:
         if config.name != name:
             raise ConfigError(f"Agent name in YAML '{config.name}' does not match URL name '{name}'")
 
-        await self._config_store.put(name, yaml_content)
+        await self._config_store.put(metadata.minio_path, yaml_content)
 
         now = datetime.now(UTC)
         updated_metadata = metadata.model_copy(

@@ -2,7 +2,7 @@
 
 Mocks the miniopy-async Minio client at the external boundary.
 Tests verify that the adapter correctly translates domain operations
-into MinIO S3 API calls.
+into MinIO S3 API calls — using full paths (not bare names).
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -20,7 +20,6 @@ class TestMinioAgentConfigStore:
     def mock_minio_client(self):
         """AsyncMock for the miniopy-async Minio client."""
         client = AsyncMock()
-        # list_objects is sync in miniopy-async (returns async iterator), so use MagicMock
         client.list_objects = MagicMock()
         return client
 
@@ -32,12 +31,22 @@ class TestMinioAgentConfigStore:
     # -- put ---------------------------------------------------------------
 
     async def test_put_uploads_yaml_content(self, store, mock_minio_client):
-        """put should call put_object with correct bucket, key, and content."""
-        await store.put("my-agent", "name: my-agent\nmodel: gpt-4o")
+        """put should call put_object with correct bucket, path key, and content."""
+        await store.put("my-agent.yaml", "name: my-agent\nmodel: gpt-4o")
 
         mock_minio_client.put_object.assert_awaited_once()
-        call_kwargs = mock_minio_client.put_object.call_args
-        assert call_kwargs[0][0] == BUCKET or call_kwargs.kwargs.get("bucket_name") == BUCKET
+        call_args = mock_minio_client.put_object.call_args
+        assert call_args[0][0] == BUCKET or call_args.kwargs.get("bucket_name") == BUCKET
+        # The object key should be the path directly (no _key transformation)
+        assert call_args[0][1] == "my-agent.yaml"
+
+    async def test_put_uploads_with_prefix_path(self, store, mock_minio_client):
+        """put should handle paths with directory prefixes correctly."""
+        await store.put("agents/my-agent.yaml", "name: my-agent\nmodel: gpt-4o")
+
+        mock_minio_client.put_object.assert_awaited_once()
+        call_args = mock_minio_client.put_object.call_args
+        assert call_args[0][1] == "agents/my-agent.yaml"
 
     # -- get ---------------------------------------------------------------
 
@@ -49,10 +58,26 @@ class TestMinioAgentConfigStore:
         response_mock.release = AsyncMock()
         mock_minio_client.get_object.return_value = response_mock
 
-        result = await store.get("my-agent")
+        result = await store.get("my-agent.yaml")
 
         assert result == "name: my-agent\nmodel: gpt-4o"
         mock_minio_client.get_object.assert_awaited_once()
+        call_args = mock_minio_client.get_object.call_args
+        assert call_args[0][1] == "my-agent.yaml"
+
+    async def test_get_with_prefix_path(self, store, mock_minio_client):
+        """get should handle paths with directory prefixes."""
+        response_mock = AsyncMock()
+        response_mock.read.return_value = b"name: my-agent\nmodel: gpt-4o"
+        response_mock.close = AsyncMock()
+        response_mock.release = AsyncMock()
+        mock_minio_client.get_object.return_value = response_mock
+
+        result = await store.get("agent-configs/my-agent.yaml")
+
+        assert result == "name: my-agent\nmodel: gpt-4o"
+        call_args = mock_minio_client.get_object.call_args
+        assert call_args[0][1] == "agent-configs/my-agent.yaml"
 
     async def test_get_not_found_raises(self, store, mock_minio_client):
         """get should raise AgentNotFoundError when the object does not exist."""
@@ -69,17 +94,19 @@ class TestMinioAgentConfigStore:
         mock_minio_client.get_object.side_effect = error
 
         with pytest.raises(AgentNotFoundError):
-            await store.get("nonexistent")
+            await store.get("nonexistent.yaml")
 
     # -- delete ------------------------------------------------------------
 
     async def test_delete_removes_object(self, store, mock_minio_client):
-        """delete should call remove_object with correct bucket and key."""
+        """delete should call remove_object with correct bucket and path key."""
         mock_minio_client.stat_object.return_value = MagicMock()
 
-        await store.delete("my-agent")
+        await store.delete("my-agent.yaml")
 
         mock_minio_client.remove_object.assert_awaited_once()
+        call_args = mock_minio_client.remove_object.call_args
+        assert call_args[0][1] == "my-agent.yaml"
 
     async def test_delete_not_found_raises(self, store, mock_minio_client):
         """delete should raise AgentNotFoundError when object does not exist."""
@@ -96,7 +123,7 @@ class TestMinioAgentConfigStore:
         mock_minio_client.stat_object.side_effect = error
 
         with pytest.raises(AgentNotFoundError):
-            await store.delete("nonexistent")
+            await store.delete("nonexistent.yaml")
 
     # -- exists ------------------------------------------------------------
 
@@ -104,10 +131,12 @@ class TestMinioAgentConfigStore:
         """exists should return True when stat_object succeeds."""
         mock_minio_client.stat_object.return_value = MagicMock()
 
-        result = await store.exists("my-agent")
+        result = await store.exists("my-agent.yaml")
 
         assert result is True
         mock_minio_client.stat_object.assert_awaited_once()
+        call_args = mock_minio_client.stat_object.call_args
+        assert call_args[0][1] == "my-agent.yaml"
 
     async def test_exists_returns_false(self, store, mock_minio_client):
         """exists should return False when stat_object raises S3Error."""
@@ -123,30 +152,9 @@ class TestMinioAgentConfigStore:
         )
         mock_minio_client.stat_object.side_effect = error
 
-        result = await store.exists("nonexistent")
+        result = await store.exists("nonexistent.yaml")
 
         assert result is False
-
-    # -- list_all ----------------------------------------------------------
-
-    async def test_list_all_returns_agent_names(self, store, mock_minio_client):
-        """list_all should parse object names and return agent names."""
-        obj1 = MagicMock()
-        obj1.object_name = "my-agent.yaml"
-        obj1.is_dir = False
-        obj2 = MagicMock()
-        obj2.object_name = "coder.yaml"
-        obj2.is_dir = False
-
-        async def _async_iter():
-            for item in [obj1, obj2]:
-                yield item
-
-        mock_minio_client.list_objects.return_value = _async_iter()
-
-        result = await store.list_all()
-
-        assert sorted(result) == ["coder", "my-agent"]
 
     # -- ensure_bucket -----------------------------------------------------
 

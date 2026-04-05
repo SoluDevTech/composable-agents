@@ -54,7 +54,8 @@ class PersistentAgentRegistry(AgentRegistry):
                 return self._runners[agent_name]
 
             logger.info("Building agent '%s' from persistent store", agent_name)
-            yaml_content = await self._config_store.get(agent_name)
+            metadata = await self._config_repository.get(agent_name)
+            yaml_content = await self._config_store.get(metadata.minio_path)
             config = self._config_loader.load_from_string(yaml_content)
             graph = await create_agent_from_config(config, self._mcp_tool_loader)
             runner = DeepAgentRunner(graph, tracing_provider=self._tracing_provider)

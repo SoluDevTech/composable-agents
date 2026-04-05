@@ -2,6 +2,7 @@ import logging
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.ports.agent_config_loader import AgentConfigLoader
+from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.domain.ports.agent_config_store import AgentConfigStore
 
 logger = logging.getLogger("composable-agents")
@@ -14,12 +15,14 @@ class GetAgentConfigUseCase:
         self,
         config_loader: AgentConfigLoader,
         config_store: AgentConfigStore,
+        config_repository: AgentConfigRepository,
     ) -> None:
         self._config_loader = config_loader
         self._config_store = config_store
+        self._config_repository = config_repository
 
     async def execute(self, name: str) -> AgentConfig:
-        """Fetch YAML from MinIO and parse into AgentConfig.
+        """Retrieve agent metadata from PostgreSQL, fetch YAML from MinIO, and parse into AgentConfig.
 
         Args:
             name: Agent name.
@@ -28,10 +31,11 @@ class GetAgentConfigUseCase:
             Validated AgentConfig.
 
         Raises:
-            AgentNotFoundError: If no YAML exists for this agent.
+            AgentNotFoundError: If agent not found in PostgreSQL or YAML missing in MinIO.
             ConfigError: If the YAML is invalid.
         """
-        yaml_content = await self._config_store.get(name)
+        metadata = await self._config_repository.get(name)
+        yaml_content = await self._config_store.get(metadata.minio_path)
         config = self._config_loader.load_from_string(yaml_content)
         logger.debug("Loaded agent config '%s' from store", name)
         return config

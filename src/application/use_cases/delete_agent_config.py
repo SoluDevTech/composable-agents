@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from src.domain.exceptions import ConfigError
@@ -36,8 +37,10 @@ class DeleteAgentConfigUseCase:
         if metadata.is_builtin:
             raise ConfigError(f"Cannot delete built-in agent: {name}")
 
-        await self._config_store.delete(name)
-        await self._config_repository.delete(name)
+        await asyncio.gather(
+            self._config_store.delete(metadata.minio_path),
+            self._config_repository.delete(name),
+        )
         await self._agent_registry.invalidate(name)
 
         logger.info("Deleted agent config '%s'", name)

@@ -67,7 +67,7 @@ class TestCreateAgentConfigUseCase:
         assert result.model == "claude-sonnet-4-5-20250929"
         assert result.system_prompt == "You are a test agent."
         mock_repository.exists.assert_awaited_once_with("test-agent")
-        mock_store.put.assert_awaited_once()
+        mock_store.put.assert_awaited_once_with("test-agent.yaml", VALID_YAML)
         mock_repository.save.assert_awaited_once()
 
     async def test_create_agent_already_exists(self, use_case, mock_repository):
@@ -138,13 +138,13 @@ class TestUpdateAgentConfigUseCase:
         )
 
     async def test_update_agent_success(self, use_case, mock_store, mock_repository, mock_registry, existing_metadata):
-        """Should parse YAML, check exists, store, save, invalidate cache."""
+        """Should parse YAML, check exists, store at minio_path, save, invalidate cache."""
         mock_repository.get.return_value = existing_metadata
 
         result = await use_case.execute(name="test-agent", yaml_content=VALID_YAML)
 
         assert result.name == "test-agent"
-        mock_store.put.assert_awaited_once()
+        mock_store.put.assert_awaited_once_with("agent-configs/test-agent.yaml", VALID_YAML)
         mock_repository.save.assert_awaited_once()
         mock_registry.invalidate.assert_awaited_once_with("test-agent")
 
@@ -223,12 +223,12 @@ class TestDeleteAgentConfigUseCase:
         )
 
     async def test_delete_agent_success(self, use_case, mock_store, mock_repository, mock_registry, existing_metadata):
-        """Should delete from MinIO and PG, then invalidate cache."""
+        """Should delete from MinIO using minio_path and PG, then invalidate cache."""
         mock_repository.get.return_value = existing_metadata
 
         await use_case.execute(name="test-agent")
 
-        mock_store.delete.assert_awaited_once_with("test-agent")
+        mock_store.delete.assert_awaited_once_with("agent-configs/test-agent.yaml")
         mock_repository.delete.assert_awaited_once_with("test-agent")
         mock_registry.invalidate.assert_awaited_once_with("test-agent")
 
@@ -259,14 +259,29 @@ class TestGetAgentConfigUseCase:
         return AsyncMock(spec=AgentConfigStore)
 
     @pytest.fixture
-    def use_case(self, loader, mock_store):
+    def mock_repository(self):
+        return AsyncMock(spec=AgentConfigRepository)
+
+    @pytest.fixture
+    def use_case(self, loader, mock_store, mock_repository):
         return GetAgentConfigUseCase(
             config_loader=loader,
             config_store=mock_store,
+            config_repository=mock_repository,
         )
 
-    async def test_get_agent_success(self, use_case, mock_store):
-        """Should fetch YAML from store, parse via real loader, return AgentConfig."""
+    async def test_get_agent_success(self, use_case, mock_store, mock_repository):
+        """Should query PG for metadata, fetch YAML from MinIO using minio_path, parse, return AgentConfig."""
+        now = datetime.now(UTC)
+        metadata = AgentConfigMetadata(
+            name="test-agent",
+            model="claude-sonnet-4-5-20250929",
+            minio_path="agent-configs/test-agent.yaml",
+            is_builtin=False,
+            created_at=now,
+            updated_at=now,
+        )
+        mock_repository.get.return_value = metadata
         mock_store.get.return_value = VALID_YAML
 
         result = await use_case.execute(name="test-agent")
@@ -274,7 +289,15 @@ class TestGetAgentConfigUseCase:
         assert result.name == "test-agent"
         assert result.model == "claude-sonnet-4-5-20250929"
         assert result.system_prompt == "You are a test agent."
-        mock_store.get.assert_awaited_once_with("test-agent")
+        mock_repository.get.assert_awaited_once_with("test-agent")
+        mock_store.get.assert_awaited_once_with("agent-configs/test-agent.yaml")
+
+    async def test_get_agent_not_found(self, use_case, mock_repository):
+        """Should raise AgentNotFoundError when agent does not exist in repository."""
+        mock_repository.get.side_effect = AgentNotFoundError("not found")
+
+        with pytest.raises(AgentNotFoundError):
+            await use_case.execute(name="nonexistent")
 
 
 class TestListAgentConfigsUseCase:

@@ -1,10 +1,10 @@
+import asyncio
 import logging
-from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
 
-from src.domain.entities.agent_config_metadata import AgentConfigMetadata
+from src.application.utils import create_agent_metadata
 from src.domain.ports.agent_config_loader import AgentConfigLoader
 from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.domain.ports.agent_config_store import AgentConfigStore
@@ -38,32 +38,33 @@ class SeedAgentsUseCase:
             logger.warning("Agents directory does not exist: %s", agents_dir)
             return
 
-        for yaml_file in sorted(agents_dir.glob("*.yaml")):
-            agent_name = yaml_file.stem
+        yaml_files = sorted(agents_dir.glob("*.yaml"))
+        tasks = [self._seed_agent(yaml_file) for yaml_file in yaml_files]
+        await asyncio.gather(*tasks, return_exceptions=False)
 
-            if await self._config_repository.exists(agent_name):
-                logger.debug("Agent '%s' already seeded, skipping", agent_name)
-                continue
+    async def _seed_agent(self, yaml_file: Path) -> None:
+        """Seed a single agent: load from file, inline prompt, upload, and save metadata.
 
-            config = self._config_loader.load(yaml_file)
+        Args:
+            yaml_file: Path to the agent YAML file.
+        """
+        agent_name = yaml_file.stem
 
-            raw = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
-            if raw.get("system_prompt_file"):
-                raw.pop("system_prompt_file")
-                raw["system_prompt"] = config.system_prompt
-            yaml_content = yaml.dump(raw, default_flow_style=False, allow_unicode=True)
+        if await self._config_repository.exists(agent_name):
+            logger.debug("Agent '%s' already seeded, skipping", agent_name)
+            return
 
-            await self._config_store.put(agent_name, yaml_content)
+        config = self._config_loader.load(yaml_file)
+        raw = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
 
-            now = datetime.now(UTC)
-            metadata = AgentConfigMetadata(
-                name=agent_name,
-                model=config.model,
-                minio_path=f"{agent_name}.yaml",
-                is_builtin=True,
-                created_at=now,
-                updated_at=now,
-            )
-            await self._config_repository.save(metadata)
+        if raw.get("system_prompt_file"):
+            raw.pop("system_prompt_file")
+            raw["system_prompt"] = config.system_prompt
 
-            logger.info("Seeded built-in agent '%s'", agent_name)
+        yaml_content = yaml.dump(raw, default_flow_style=False, allow_unicode=True)
+
+        await self._config_store.put(f"{agent_name}.yaml", yaml_content)
+        metadata = create_agent_metadata(agent_name, config, is_builtin=True)
+        await self._config_repository.save(metadata)
+
+        logger.info("Seeded built-in agent '%s'", agent_name)

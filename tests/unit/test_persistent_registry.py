@@ -23,6 +23,15 @@ VALID_YAML = (
     "debug: false\n"
 )
 
+METADATA = AgentConfigMetadata(
+    name="test-agent",
+    model="claude-sonnet-4-5-20250929",
+    minio_path="agent-configs/test-agent.yaml",
+    is_builtin=False,
+    created_at=datetime.now(UTC),
+    updated_at=datetime.now(UTC),
+)
+
 
 class TestPersistentAgentRegistry:
     @pytest.fixture
@@ -63,8 +72,11 @@ class TestPersistentAgentRegistry:
         new_callable=AsyncMock,
     )
     @patch("src.infrastructure.persistent_registry.adapter.DeepAgentRunner")
-    async def test_get_runner_loads_from_store(self, mock_runner_cls, mock_create, registry, mock_store):
-        """get_runner should fetch YAML from MinIO, parse it, create agent, cache runner."""
+    async def test_get_runner_loads_from_store(
+        self, mock_runner_cls, mock_create, registry, mock_store, mock_repository
+    ):
+        """get_runner should fetch metadata from PG, then YAML from MinIO using minio_path."""
+        mock_repository.get.return_value = METADATA
         mock_store.get.return_value = VALID_YAML
         mock_graph = MagicMock()
         mock_create.return_value = mock_graph
@@ -74,7 +86,8 @@ class TestPersistentAgentRegistry:
         runner = await registry.get_runner("test-agent")
 
         assert runner is mock_runner_instance
-        mock_store.get.assert_awaited_once_with("test-agent")
+        mock_repository.get.assert_awaited_once_with("test-agent")
+        mock_store.get.assert_awaited_once_with("agent-configs/test-agent.yaml")
         mock_create.assert_awaited_once()
 
     @patch(
@@ -82,8 +95,9 @@ class TestPersistentAgentRegistry:
         new_callable=AsyncMock,
     )
     @patch("src.infrastructure.persistent_registry.adapter.DeepAgentRunner")
-    async def test_get_runner_cache_hit(self, mock_runner_cls, mock_create, registry, mock_store):
+    async def test_get_runner_cache_hit(self, mock_runner_cls, mock_create, registry, mock_store, mock_repository):
         """Second call should return cached runner without fetching from store again."""
+        mock_repository.get.return_value = METADATA
         mock_store.get.return_value = VALID_YAML
         mock_create.return_value = MagicMock()
         mock_runner_instance = MagicMock()
@@ -93,6 +107,7 @@ class TestPersistentAgentRegistry:
         second = await registry.get_runner("test-agent")
 
         assert first is second
+        assert mock_repository.get.await_count == 1, "Repository should only be called once"
         assert mock_store.get.await_count == 1, "Store should only be called once"
 
     # -- list_agents -------------------------------------------------------
@@ -111,7 +126,7 @@ class TestPersistentAgentRegistry:
             ),
         ]
 
-        result = await registry.list_agents()
+        await registry.list_agents()
 
         mock_repository.list_all.assert_awaited_once()
 
@@ -122,8 +137,9 @@ class TestPersistentAgentRegistry:
         new_callable=AsyncMock,
     )
     @patch("src.infrastructure.persistent_registry.adapter.DeepAgentRunner")
-    async def test_invalidate_clears_cache(self, mock_runner_cls, mock_create, registry, mock_store):
-        """After invalidate, next get_runner should re-fetch from store."""
+    async def test_invalidate_clears_cache(self, mock_runner_cls, mock_create, registry, mock_store, mock_repository):
+        """After invalidate, next get_runner should re-fetch from repository and store."""
+        mock_repository.get.return_value = METADATA
         mock_store.get.return_value = VALID_YAML
         mock_create.return_value = MagicMock()
         runner_a = MagicMock()
@@ -137,6 +153,7 @@ class TestPersistentAgentRegistry:
         assert first is runner_a
         assert second is runner_b
         assert first is not second
+        assert mock_repository.get.await_count == 2, "Repository should be called twice after invalidate"
         assert mock_store.get.await_count == 2, "Store should be called twice after invalidate"
 
     # -- close -------------------------------------------------------------
@@ -146,8 +163,9 @@ class TestPersistentAgentRegistry:
         new_callable=AsyncMock,
     )
     @patch("src.infrastructure.persistent_registry.adapter.DeepAgentRunner")
-    async def test_close_clears_all_runners(self, mock_runner_cls, mock_create, registry, mock_store):
+    async def test_close_clears_all_runners(self, mock_runner_cls, mock_create, registry, mock_store, mock_repository):
         """close should empty the runners cache."""
+        mock_repository.get.return_value = METADATA
         mock_store.get.return_value = VALID_YAML
         mock_create.return_value = MagicMock()
         mock_runner_cls.return_value = MagicMock()

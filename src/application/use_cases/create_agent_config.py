@@ -1,8 +1,7 @@
 import logging
-from datetime import UTC, datetime
 
+from src.application.utils import create_agent_metadata
 from src.domain.entities.agent_config import AgentConfig
-from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.exceptions import AgentConfigAlreadyExistsError, ConfigError
 from src.domain.ports.agent_config_loader import AgentConfigLoader
 from src.domain.ports.agent_config_repository import AgentConfigRepository
@@ -46,17 +45,9 @@ class CreateAgentConfigUseCase:
         if await self._config_repository.exists(name):
             raise AgentConfigAlreadyExistsError(f"Agent config already exists: {name}")
 
-        await self._config_store.put(name, yaml_content)
+        await self._config_store.put(f"{name}.yaml", yaml_content)
 
-        now = datetime.now(UTC)
-        metadata = AgentConfigMetadata(
-            name=name,
-            model=config.model,
-            minio_path=f"{name}.yaml",
-            is_builtin=False,
-            created_at=now,
-            updated_at=now,
-        )
+        metadata = create_agent_metadata(name, config, is_builtin=False)
         await self._config_repository.save(metadata)
 
         logger.info("Created agent config '%s'", name)

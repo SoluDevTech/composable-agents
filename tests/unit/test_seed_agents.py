@@ -71,8 +71,8 @@ class TestSeedAgentsUseCase:
         # Only coder should be uploaded
         assert mock_store.put.await_count == 1
         assert mock_repository.save.await_count == 1
-        put_call_name = mock_store.put.call_args[0][0]
-        assert put_call_name == "coder"
+        put_call_path = mock_store.put.call_args[0][0]
+        assert put_call_path == "coder.yaml"
 
     async def test_seed_inlines_system_prompt_file(self, use_case, mock_store, mock_repository, tmp_path):
         """If YAML references system_prompt_file, should read it and inline the prompt before uploading."""

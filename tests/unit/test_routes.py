@@ -6,6 +6,7 @@ Uses a real DeepAgentRegistry with patched factory for agent creation.
 """
 
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,7 +14,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.entities.message import Message, MessageRole, MessageStatus
-from src.domain.exceptions import AgentError
+from src.domain.exceptions import AgentError, AgentNotFoundError
 from src.infrastructure.deepagent.registry import DeepAgentRegistry
 from src.infrastructure.memory_thread.adapter import InMemoryThreadRepository
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
@@ -82,18 +83,14 @@ def real_registry(agents_dir, real_loader, mock_mcp_tool_loader):
 
 @pytest.fixture
 def mock_config_store(agents_dir):
-    """AsyncMock for AgentConfigStore that reads from the tmp agents_dir."""
+    """AsyncMock for AgentConfigStore that reads YAML files from the tmp agents_dir using paths."""
     store = AsyncMock()
 
-    async def _get(name):
-        from pathlib import Path
-
-        path = Path(agents_dir) / f"{name}.yaml"
-        if not path.exists():
-            from src.domain.exceptions import AgentNotFoundError
-
-            raise AgentNotFoundError(f"Agent config not found: {name}")
-        return path.read_text()
+    async def _get(path):
+        file_path = Path(agents_dir) / path
+        if not file_path.exists():
+            raise AgentNotFoundError(f"Agent config not found: {path}")
+        return file_path.read_text()
 
     store.get.side_effect = _get
     return store
@@ -103,7 +100,6 @@ def mock_config_store(agents_dir):
 def mock_config_repository(agents_dir):
     """AsyncMock for AgentConfigRepository that lists agents from the tmp agents_dir."""
     repo = AsyncMock()
-    from pathlib import Path
 
     now = datetime.now(UTC)
     metadata_list = []
@@ -119,6 +115,14 @@ def mock_config_repository(agents_dir):
             )
         )
     repo.list_all.return_value = metadata_list
+
+    def _get(name):
+        for m in metadata_list:
+            if m.name == name:
+                return m
+        raise AgentNotFoundError(f"Agent not found: {name}")
+
+    repo.get.side_effect = _get
     return repo
 
 

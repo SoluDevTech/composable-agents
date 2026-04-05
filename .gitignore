@@ -13,3 +13,4 @@ trivy-report.json
 trivy-report-fixed.json
 coverage.xml
 .scannerwork/
+.coverage
