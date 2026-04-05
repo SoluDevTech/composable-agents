@@ -3,7 +3,7 @@ from pathlib import Path
 
 from miniopy_async import Minio
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
-from sqlalchemy.pool import QueuePool
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from src.application.use_cases.create_agent_config import CreateAgentConfigUseCase
 from src.application.use_cases.delete_agent_config import DeleteAgentConfigUseCase
@@ -112,12 +112,12 @@ async def init_persistence() -> None:
 
     _async_engine = create_async_engine(
         settings.database_url,
-        poolclass=QueuePool,
+        poolclass=AsyncAdaptedQueuePool,
         pool_size=20,
         max_overflow=20,
         pool_pre_ping=True,
     )
-    logger.info("SQLAlchemy async engine created (pool: QueuePool, size=20, max_overflow=20)")
+    logger.info("SQLAlchemy async engine created (pool: AsyncAdaptedQueuePool, size=20, max_overflow=20)")
 
     _pg_repository = PostgresAgentConfigRepository(engine=_async_engine)
     thread_repository = PostgresThreadRepository(engine=_async_engine)

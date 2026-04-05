@@ -82,7 +82,14 @@ class PostgresThreadRepository(ThreadRepository):
                 )
                 session.add(model)
                 await session.commit()
-                return _model_to_thread(model)
+                # New thread has no messages — construct directly to avoid lazy='raise'
+                return Thread(
+                    id=model.id,
+                    agent_name=model.agent_name,
+                    messages=[],
+                    created_at=model.created_at,
+                    updated_at=model.updated_at,
+                )
             except SQLAlchemyError as e:
                 raise StorageError(f"Failed to create thread: {e}") from e
 
@@ -188,7 +195,8 @@ class PostgresThreadRepository(ThreadRepository):
                 session.add(msg_model)
                 thread_model.updated_at = datetime.now(UTC)
                 await session.commit()
-                # Re-fetch with messages to return the updated thread
+                # Expire cached model so re-fetch actually hits the DB with selectinload
+                session.expire(thread_model)
                 updated_model = await session.get(
                     ThreadModel, thread_id, options=[selectinload(ThreadModel.messages)]
                 )

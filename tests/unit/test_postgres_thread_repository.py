@@ -24,6 +24,7 @@ class TestPostgresThreadRepository:
         """AsyncMock for SQLAlchemy AsyncSession used inside the context manager."""
         session = AsyncMock()
         session.add = MagicMock()
+        session.expire = MagicMock()
         return session
 
     @pytest.fixture
