@@ -28,6 +28,8 @@ dependencies = [
     "uvicorn[standard]>=0.40.0",
     "asyncpg>=0.30.0",
     "miniopy-async>=1.21.0",
+    "sqlalchemy[asyncio]>=2.0.0",
+    "alembic>=1.13.0",
 ]
 
 [project.optional-dependencies]

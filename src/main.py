@@ -1,5 +1,7 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -36,11 +38,29 @@ logging.basicConfig(
 logger = logging.getLogger("composable-agents")
 
 
+def _run_alembic_upgrade() -> None:
+    """Run Alembic migrations to head synchronously.
+
+    Designed to be called via asyncio.to_thread() during startup.
+    """
+    from alembic.config import Config
+
+    from alembic import command
+
+    alembic_dir = Path(__file__).parent
+    cfg = Config(str(alembic_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(alembic_dir / "alembic"))
+    command.upgrade(cfg, "head")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Application lifespan: init persistence on startup, cleanup on shutdown."""
+    """Application lifespan: run migrations, init persistence on startup, cleanup on shutdown."""
     logger.info("Application startup initiated")
     try:
+        logger.info("Running database migrations...")
+        await asyncio.to_thread(_run_alembic_upgrade)
+        logger.info("Database migrations completed")
         await init_persistence()
         await seed_builtin_agents()
         logger.info("Persistence initialized and agents seeded")

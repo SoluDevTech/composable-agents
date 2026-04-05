@@ -25,6 +25,7 @@ COPY agents/ /app/agents/
 # Set Python path and venv
 ENV PYTHONPATH=/app:$PYTHONPATH
 ENV PATH="/app/.venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
 
 # Create non-root user for security
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app

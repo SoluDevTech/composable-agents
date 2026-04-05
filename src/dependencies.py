@@ -1,8 +1,9 @@
 import logging
 from pathlib import Path
 
-import asyncpg
 from miniopy_async import Minio
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from src.application.use_cases.create_agent_config import CreateAgentConfigUseCase
 from src.application.use_cases.delete_agent_config import DeleteAgentConfigUseCase
@@ -21,13 +22,13 @@ from src.application.use_cases.thread_management import (
 from src.application.use_cases.update_agent_config import UpdateAgentConfigUseCase
 from src.config import Settings
 from src.domain.exceptions import StorageError
+from src.domain.ports.thread_repository import ThreadRepository
 from src.infrastructure.deepagent.registry import DeepAgentRegistry
 from src.infrastructure.mcp.adapter import LangchainMcpToolLoader
-from src.infrastructure.memory_thread.adapter import InMemoryThreadRepository
 from src.infrastructure.minio_store.adapter import MinioAgentConfigStore
 from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
 from src.infrastructure.postgres_repository.adapter import PostgresAgentConfigRepository
-from src.infrastructure.postgres_repository.schema import ensure_schema
+from src.infrastructure.postgres_thread.adapter import PostgresThreadRepository
 from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 
@@ -77,7 +78,6 @@ def _create_tracing_provider(settings: Settings):
 
 # ============= ADAPTERS =============
 
-thread_repository = InMemoryThreadRepository()
 agent_config_loader = YamlAgentConfigLoader()
 mcp_tool_loader = LangchainMcpToolLoader()
 tracing_provider = _create_tracing_provider(settings)
@@ -94,30 +94,34 @@ agents_dir = settings.agents_dir
 
 # ============= PERSISTENCE (initialized at startup) =============
 
-_pg_pool: asyncpg.Pool | None = None
+_async_engine: AsyncEngine | None = None
 _minio_store: MinioAgentConfigStore | None = None
 _pg_repository: PostgresAgentConfigRepository | None = None
 _persistent_registry: PersistentAgentRegistry | None = None
+thread_repository: ThreadRepository | None = None
 
 
 async def init_persistence() -> None:
-    """Initialize persistent infrastructure: asyncpg pool, MinIO store, PostgreSQL repository.
+    """Initialize persistent infrastructure: SQLAlchemy engine, MinIO store, PostgreSQL repositories.
 
     Must be called during application startup.
     """
-    global _pg_pool, _minio_store, _pg_repository, _persistent_registry, agent_registry
+    global _async_engine, _minio_store, _pg_repository, _persistent_registry, agent_registry, thread_repository
 
     logger.info("Initializing persistence layer")
 
-    _pg_pool = await asyncpg.create_pool(
-        host=settings.postgres_host,
-        port=settings.postgres_port,
-        user=settings.postgres_user,
-        password=settings.postgres_password,
-        database=settings.postgres_database,
+    _async_engine = create_async_engine(
+        settings.database_url,
+        poolclass=AsyncAdaptedQueuePool,
+        pool_size=20,
+        max_overflow=20,
+        pool_pre_ping=True,
     )
-    await ensure_schema(_pg_pool)
-    logger.info("PostgreSQL pool created and schema ensured")
+    logger.info("SQLAlchemy async engine created (pool: AsyncAdaptedQueuePool, size=20, max_overflow=20)")
+
+    _pg_repository = PostgresAgentConfigRepository(engine=_async_engine)
+    thread_repository = PostgresThreadRepository(engine=_async_engine)
+    logger.info("PostgreSQL repositories initialized")
 
     minio_client = Minio(
         settings.minio_endpoint,
@@ -128,8 +132,6 @@ async def init_persistence() -> None:
     _minio_store = MinioAgentConfigStore(client=minio_client, bucket=settings.minio_bucket)
     await _minio_store.ensure_bucket()
     logger.info("MinIO store initialized (bucket=%s)", settings.minio_bucket)
-
-    _pg_repository = PostgresAgentConfigRepository(pool=_pg_pool)
 
     _persistent_registry = PersistentAgentRegistry(
         config_loader=agent_config_loader,
@@ -152,9 +154,9 @@ async def close_persistence() -> None:
         await _persistent_registry.close()
         logger.info("Persistent registry closed")
 
-    if _pg_pool:
-        await _pg_pool.close()
-        logger.info("PostgreSQL pool closed")
+    if _async_engine:
+        await _async_engine.dispose()
+        logger.info("SQLAlchemy engine disposed")
 
 
 async def seed_builtin_agents() -> None:
@@ -177,34 +179,41 @@ logger.info("Dependencies initialized (agents_dir=%s)", settings.agents_dir)
 # ============= USE CASE PROVIDERS =============
 
 
+def _require_thread_repository() -> ThreadRepository:
+    """Return thread repository or raise StorageError if not initialized."""
+    if thread_repository is None:
+        raise StorageError("Thread repository not initialized. Check PostgreSQL connectivity.")
+    return thread_repository
+
+
 def get_send_message_use_case() -> SendMessageUseCase:
     """Provide a SendMessageUseCase instance."""
-    return SendMessageUseCase(agent_registry, thread_repository)
+    return SendMessageUseCase(agent_registry, _require_thread_repository())
 
 
 def get_stream_message_use_case() -> StreamMessageUseCase:
     """Provide a StreamMessageUseCase instance."""
-    return StreamMessageUseCase(agent_registry, thread_repository)
+    return StreamMessageUseCase(agent_registry, _require_thread_repository())
 
 
 def get_create_thread_use_case() -> CreateThreadUseCase:
     """Provide a CreateThreadUseCase instance."""
-    return CreateThreadUseCase(thread_repository, agent_registry)
+    return CreateThreadUseCase(_require_thread_repository(), agent_registry)
 
 
 def get_get_thread_use_case() -> GetThreadUseCase:
     """Provide a GetThreadUseCase instance."""
-    return GetThreadUseCase(thread_repository)
+    return GetThreadUseCase(_require_thread_repository())
 
 
 def get_list_threads_use_case() -> ListThreadsUseCase:
     """Provide a ListThreadsUseCase instance."""
-    return ListThreadsUseCase(thread_repository)
+    return ListThreadsUseCase(_require_thread_repository())
 
 
 def get_delete_thread_use_case() -> DeleteThreadUseCase:
     """Provide a DeleteThreadUseCase instance."""
-    return DeleteThreadUseCase(thread_repository)
+    return DeleteThreadUseCase(_require_thread_repository())
 
 
 def get_load_agent_config_use_case() -> LoadAgentConfigUseCase:

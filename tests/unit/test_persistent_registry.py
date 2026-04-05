@@ -111,7 +111,7 @@ class TestPersistentAgentRegistry:
             ),
         ]
 
-        result = await registry.list_agents()
+        await registry.list_agents()
 
         mock_repository.list_all.assert_awaited_once()
 

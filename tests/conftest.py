@@ -1,14 +1,14 @@
 """Shared pytest fixtures for the composable-agents test suite.
 
-Uses real internal implementations (InMemoryThreadRepository, YamlAgentConfigLoader,
+Uses real internal implementations (InMemoryThreadRepository for test, YamlAgentConfigLoader,
 NoopTracingProvider). External adapters are provided by tests/fixtures/external.py.
 """
 
 import pytest
 
-from src.infrastructure.memory_thread.adapter import InMemoryThreadRepository
 from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
+from tests.fixtures.in_memory_thread_repository import InMemoryThreadRepository
 
 # Re-export external fixtures so they are available to all tests
 pytest_plugins = ["tests.fixtures.external"]

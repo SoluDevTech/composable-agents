@@ -1,3 +1,5 @@
+from urllib.parse import quote_plus
+
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 
@@ -36,3 +38,11 @@ class Settings(BaseSettings):
     postgres_user: str = "raganything"
     postgres_password: str = "raganything"
     postgres_database: str = "raganything"
+
+    @property
+    def database_url(self) -> str:
+        """Build the async PostgreSQL connection URL for SQLAlchemy."""
+        return (
+            f"postgresql+asyncpg://{quote_plus(self.postgres_user)}:{quote_plus(self.postgres_password)}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
+        )
