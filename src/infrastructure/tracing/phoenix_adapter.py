@@ -25,9 +25,10 @@ class PhoenixTracingProvider(TracingProvider):
         project_name: str | None = None,
     ):
         phoenix.otel.register(
-            endpoint=endpoint or "http://localhost:6006",
+            endpoint=f"{endpoint}/v1/traces" if endpoint else "http://localhost:6006",
             project_name=project_name or "composable-agents",
             headers={"api_key": api_key} if api_key else None,
+            auto_instrument=True,
         )
         LangChainInstrumentor().instrument()
         self._instrumented = True

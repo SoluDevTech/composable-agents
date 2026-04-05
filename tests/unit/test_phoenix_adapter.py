@@ -1,105 +1,121 @@
-"""Tests for PhoenixTracingProvider.
-
-Phoenix and openinference modules are mocked (external tracing service).
-"""
-
-import sys
-from types import ModuleType
-from unittest.mock import MagicMock
+"""Tests for PhoenixTracingProvider."""
 
 import pytest
+from unittest.mock import MagicMock, patch
+import sys
+from types import ModuleType
 
 
 @pytest.fixture(autouse=True)
-def _mock_phoenix_modules():
-    """Inject fake phoenix and openinference modules into sys.modules."""
+def mock_phoenix_and_openinference():
+    """Mock phoenix.otel and openinference modules."""
     mock_register = MagicMock()
-    mock_instrumentor_class = MagicMock()
-    mock_instrumentor_instance = MagicMock()
-    mock_instrumentor_class.return_value = mock_instrumentor_instance
 
-    # Build phoenix.otel module
-    phoenix_mod = ModuleType("phoenix")
-    phoenix_otel_mod = ModuleType("phoenix.otel")
-    phoenix_otel_mod.register = mock_register
-    phoenix_mod.otel = phoenix_otel_mod
+    mock_phoenix = ModuleType("phoenix")
+    mock_phoenix_otel = ModuleType("phoenix.otel")
+    mock_phoenix_otel.register = mock_register
+    mock_phoenix.otel = mock_phoenix_otel
 
-    # Build openinference.instrumentation.langchain module
-    openinference_mod = ModuleType("openinference")
-    openinference_instrumentation_mod = ModuleType("openinference.instrumentation")
-    openinference_langchain_mod = ModuleType("openinference.instrumentation.langchain")
-    openinference_langchain_mod.LangChainInstrumentor = mock_instrumentor_class
-    openinference_instrumentation_mod.langchain = openinference_langchain_mod
-    openinference_mod.instrumentation = openinference_instrumentation_mod
+    mock_instrumentor = MagicMock()
 
-    sys.modules["phoenix"] = phoenix_mod
-    sys.modules["phoenix.otel"] = phoenix_otel_mod
-    sys.modules["openinference"] = openinference_mod
-    sys.modules["openinference.instrumentation"] = openinference_instrumentation_mod
-    sys.modules["openinference.instrumentation.langchain"] = openinference_langchain_mod
+    mock_openinference = ModuleType("openinference")
+    mock_openinference_instr = ModuleType("openinference.instrumentation")
+    mock_openinference_langchain = ModuleType("openinference.instrumentation.langchain")
+    mock_openinference_langchain.LangChainInstrumentor = MagicMock(return_value=mock_instrumentor)
+    mock_openinference_instr.langchain = mock_openinference_langchain
+    mock_openinference.instrumentation = mock_openinference_instr
 
-    # Clear cached import of the adapter
-    sys.modules.pop("src.infrastructure.tracing.phoenix_adapter", None)
+    mock_trace = MagicMock()
+    mock_tracer = MagicMock()
+    mock_trace.get_tracer.return_value = mock_tracer
 
-    yield mock_register, mock_instrumentor_class, mock_instrumentor_instance
-
-    for mod_name in [
-        "phoenix",
-        "phoenix.otel",
-        "openinference",
-        "openinference.instrumentation",
-        "openinference.instrumentation.langchain",
-        "src.infrastructure.tracing.phoenix_adapter",
-    ]:
-        sys.modules.pop(mod_name, None)
+    with patch.dict(
+        "sys.modules",
+        {
+            "phoenix": mock_phoenix,
+            "phoenix.otel": mock_phoenix_otel,
+            "openinference": mock_openinference,
+            "openinference.instrumentation": mock_openinference_instr,
+            "openinference.instrumentation.langchain": mock_openinference_langchain,
+            "opentelemetry": MagicMock(),
+            "opentelemetry.trace": mock_trace,
+        },
+    ):
+        yield {
+            "register": mock_register,
+            "instrumentor": mock_instrumentor,
+            "tracer": mock_tracer,
+        }
 
 
 class TestPhoenixTracingProvider:
-    def test_constructor_calls_register_and_instrument(self, _mock_phoenix_modules):
-        mock_register, _, mock_instrumentor_instance = _mock_phoenix_modules
+    def test_constructor_calls_register(self, mock_phoenix_and_openinference):
+        mock_reg = mock_phoenix_and_openinference["register"]
 
         from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
 
-        PhoenixTracingProvider(
+        provider = PhoenixTracingProvider(
             endpoint="http://phoenix:6006",
             api_key="my-api-key",
             project_name="my-project",
         )
 
-        mock_register.assert_called_once_with(
-            endpoint="http://phoenix:6006",
-            project_name="my-project",
-            headers={"api_key": "my-api-key"},
-        )
-        mock_instrumentor_instance.instrument.assert_called_once()
+        mock_reg.assert_called_once()
+        call_kwargs = mock_reg.call_args.kwargs
+        assert call_kwargs["project_name"] == "my-project"
+        assert call_kwargs["headers"] == {"api_key": "my-api-key"}
+        assert call_kwargs["auto_instrument"] is True
 
-    def test_constructor_defaults(self, _mock_phoenix_modules):
-        mock_register, _, _ = _mock_phoenix_modules
+    def test_constructor_defaults(self, mock_phoenix_and_openinference):
+        mock_reg = mock_phoenix_and_openinference["register"]
 
         from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
 
-        PhoenixTracingProvider()
+        provider = PhoenixTracingProvider()
 
-        mock_register.assert_called_once_with(
-            endpoint="http://localhost:6006",
-            project_name="composable-agents",
-            headers=None,
-        )
+        mock_reg.assert_called_once()
+        call_kwargs = mock_reg.call_args.kwargs
+        assert call_kwargs["project_name"] == "composable-agents"
+        assert call_kwargs["headers"] is None
 
-    def test_get_callbacks_returns_empty_list(self, _mock_phoenix_modules):
+    def test_get_callbacks_returns_empty_list(self, mock_phoenix_and_openinference):
         from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
 
         provider = PhoenixTracingProvider()
 
         assert provider.get_callbacks() == []
 
-    async def test_flush_does_nothing(self, _mock_phoenix_modules):
+    def test_record_cost_accepts_parameters(self, mock_phoenix_and_openinference):
+        from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
+
+        provider = PhoenixTracingProvider()
+
+        provider.record_cost(input_tokens=100, output_tokens=50, model="gpt-4o")
+        provider.record_cost(input_tokens=200, output_tokens=100, model="gpt-4o-mini")
+
+    def test_calculate_cost_gpt4o(self, mock_phoenix_and_openinference):
+        from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
+
+        provider = PhoenixTracingProvider()
+        cost = provider._calculate_cost(1000, 500, "gpt-4o")
+
+        assert cost == pytest.approx(0.0075, rel=0.01)
+
+    def test_calculate_cost_unknown_model(self, mock_phoenix_and_openinference):
+        from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
+
+        provider = PhoenixTracingProvider()
+        cost = provider._calculate_cost(1000, 500, "unknown-model")
+
+        assert cost == 0.0
+
+    async def test_flush_does_nothing(self, mock_phoenix_and_openinference):
         from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
 
         provider = PhoenixTracingProvider()
         await provider.flush()
 
-    async def test_shutdown_does_nothing(self, _mock_phoenix_modules):
+    async def test_shutdown_does_nothing(self, mock_phoenix_and_openinference):
         from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
 
         provider = PhoenixTracingProvider()

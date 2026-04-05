@@ -7,17 +7,16 @@ load_dotenv()
 
 
 class TracingSettings(BaseSettings):
+    model_config = {"env_prefix": "TRACING_", "extra": "ignore"}
+
     provider: str = "none"
     enabled: bool = False
-    endpoint: str | None = None
     project_name: str = "composable-agents"
-    langfuse_host: str | None = None
-    langfuse_public_key: str | None = None
-    langfuse_secret_key: str | None = None
     phoenix_collector_endpoint: str | None = None
     phoenix_api_key: str | None = None
-    langchain_api_key: str | None = None
-    langchain_project: str | None = None
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_host: str | None = None
 
 
 class Settings(BaseSettings):

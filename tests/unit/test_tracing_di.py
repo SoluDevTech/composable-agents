@@ -14,7 +14,14 @@ from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 
 
 class TestTracingDependencyInjection:
-    def test_default_settings_create_noop_provider(self):
+    def test_default_settings_create_noop_provider(self, monkeypatch):
+        monkeypatch.setenv("TRACING_ENABLED", "false")
+        from src.config import Settings
+        from importlib import reload
+        import src.config
+
+        reload(src.config)
+
         settings = Settings(agents_dir="./agents")
         provider = _create_tracing_provider(settings)
 
@@ -81,30 +88,34 @@ class TestTracingDependencyInjection:
 
     def test_enabled_phoenix_creates_phoenix_provider(self):
         """When phoenix is enabled, _create_tracing_provider returns a PhoenixTracingProvider."""
+        import sys
+        from types import ModuleType
+        from unittest.mock import MagicMock, patch
+
         mock_register = MagicMock()
-        mock_instrumentor_class = MagicMock()
-        mock_instrumentor_class.return_value = MagicMock()
+        mock_phoenix = ModuleType("phoenix")
+        mock_phoenix_otel = ModuleType("phoenix.otel")
+        mock_phoenix_otel.register = mock_register
+        mock_phoenix.otel = mock_phoenix_otel
 
-        phoenix_mod = ModuleType("phoenix")
-        phoenix_otel_mod = ModuleType("phoenix.otel")
-        phoenix_otel_mod.register = mock_register
-        phoenix_mod.otel = phoenix_otel_mod
+        mock_instrumentor = MagicMock()
+        mock_openinference = ModuleType("openinference")
+        mock_openinference_instr = ModuleType("openinference.instrumentation")
+        mock_openinference_langchain = ModuleType("openinference.instrumentation.langchain")
+        mock_openinference_langchain.LangChainInstrumentor = MagicMock(return_value=mock_instrumentor)
+        mock_openinference_instr.langchain = mock_openinference_langchain
+        mock_openinference.instrumentation = mock_openinference_instr
 
-        openinference_mod = ModuleType("openinference")
-        openinference_instrumentation_mod = ModuleType("openinference.instrumentation")
-        openinference_langchain_mod = ModuleType("openinference.instrumentation.langchain")
-        openinference_langchain_mod.LangChainInstrumentor = mock_instrumentor_class
-        openinference_instrumentation_mod.langchain = openinference_langchain_mod
-        openinference_mod.instrumentation = openinference_instrumentation_mod
-
-        sys.modules["phoenix"] = phoenix_mod
-        sys.modules["phoenix.otel"] = phoenix_otel_mod
-        sys.modules["openinference"] = openinference_mod
-        sys.modules["openinference.instrumentation"] = openinference_instrumentation_mod
-        sys.modules["openinference.instrumentation.langchain"] = openinference_langchain_mod
-        sys.modules.pop("src.infrastructure.tracing.phoenix_adapter", None)
-
-        try:
+        with patch.dict(
+            "sys.modules",
+            {
+                "phoenix": mock_phoenix,
+                "phoenix.otel": mock_phoenix_otel,
+                "openinference": mock_openinference,
+                "openinference.instrumentation": mock_openinference_instr,
+                "openinference.instrumentation.langchain": mock_openinference_langchain,
+            },
+        ):
             from src.infrastructure.tracing.phoenix_adapter import PhoenixTracingProvider
 
             tracing = TracingSettings(
@@ -118,13 +129,3 @@ class TestTracingDependencyInjection:
             provider = _create_tracing_provider(settings)
 
             assert isinstance(provider, PhoenixTracingProvider)
-        finally:
-            for mod_name in [
-                "phoenix",
-                "phoenix.otel",
-                "openinference",
-                "openinference.instrumentation",
-                "openinference.instrumentation.langchain",
-                "src.infrastructure.tracing.phoenix_adapter",
-            ]:
-                sys.modules.pop(mod_name, None)

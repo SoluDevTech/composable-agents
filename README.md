@@ -936,15 +936,9 @@ The async connection URL is built automatically as `postgresql+asyncpg://<user>:
 | Variable | Default | Description |
 |---|---|---|
 | `TRACING_PROVIDER` | `none` | Tracing backend: `none`, `langfuse`, or `phoenix`. |
-| `TRACING_ENABLED` | `false` | Enable/disable tracing. |
 | `TRACING_PROJECT_NAME` | `composable-agents` | Project name for the tracing backend. |
-| `LANGFUSE_HOST` | `https://cloud.langfuse.com` | Langfuse server URL. |
-| `LANGFUSE_PUBLIC_KEY` | -- | Langfuse public key. |
-| `LANGFUSE_SECRET_KEY` | -- | Langfuse secret key. |
 | `PHOENIX_COLLECTOR_ENDPOINT` | `http://localhost:6006` | Phoenix collector endpoint. |
 | `PHOENIX_API_KEY` | -- | Phoenix API key. |
-| `LANGCHAIN_API_KEY` | -- | LangChain/LangSmith API key. |
-| `LANGCHAIN_PROJECT` | `composable-agents` | LangChain/LangSmith project name. |
 
 ---
 
