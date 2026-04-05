@@ -31,7 +31,9 @@ class TestLifespanMcpCleanup:
 
         with (
             patch("src.main.mcp_tool_loader", mock_mcp_tool_loader),
-            patch("src.main.agent_registry", AsyncMock()),
+            patch("src.main.close_persistence", AsyncMock()),
+            patch("src.main.init_persistence", AsyncMock()),
+            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.tracing_provider", AsyncMock()),
         ):
             async with lifespan(None):
@@ -43,19 +45,21 @@ class TestLifespanMcpCleanup:
         """Lifespan shutdown calls close/flush/shutdown on all singletons."""
         from src.main import lifespan
 
-        mock_registry = AsyncMock()
+        mock_close_persistence = AsyncMock()
         mock_mcp = AsyncMock()
         mock_tracing = AsyncMock()
 
         with (
-            patch("src.main.agent_registry", mock_registry),
+            patch("src.main.close_persistence", mock_close_persistence),
+            patch("src.main.init_persistence", AsyncMock()),
+            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.mcp_tool_loader", mock_mcp),
             patch("src.main.tracing_provider", mock_tracing),
         ):
             async with lifespan(None):
                 pass  # enter and exit context to trigger cleanup
 
-            mock_registry.close.assert_awaited_once()
+            mock_close_persistence.assert_awaited_once()
             mock_mcp.close.assert_awaited_once()
             mock_tracing.flush.assert_awaited_once()
             mock_tracing.shutdown.assert_awaited_once()

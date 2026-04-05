@@ -110,12 +110,12 @@ class TestDeepAgentRegistry:
 
     # -- list_agents -------------------------------------------------------
 
-    def test_list_agents_returns_sorted_yaml_stems(self, registry):
+    async def test_list_agents_returns_sorted_yaml_stems(self, registry):
         """list_agents should return sorted stem names of .yaml files."""
-        result = registry.list_agents()
+        result = await registry.list_agents()
         assert result == ["chatbot", "coder"]
 
-    def test_list_agents_excludes_non_yaml_files(self, agents_dir, config_loader, mock_mcp_tool_loader):
+    async def test_list_agents_excludes_non_yaml_files(self, agents_dir, config_loader, mock_mcp_tool_loader):
         """list_agents should ignore files that are not .yaml."""
         (agents_dir / "notes.txt").write_text("not an agent")
         (agents_dir / "readme.md").write_text("docs")
@@ -124,20 +124,20 @@ class TestDeepAgentRegistry:
             config_loader=config_loader,
             mcp_tool_loader=mock_mcp_tool_loader,
         )
-        result = registry.list_agents()
+        result = await registry.list_agents()
         assert result == ["chatbot", "coder"]
 
-    def test_list_agents_returns_empty_when_dir_missing(self, tmp_path, config_loader, mock_mcp_tool_loader):
+    async def test_list_agents_returns_empty_when_dir_missing(self, tmp_path, config_loader, mock_mcp_tool_loader):
         """list_agents should return [] if agents_dir does not exist."""
         registry = DeepAgentRegistry(
             agents_dir=tmp_path / "nonexistent",
             config_loader=config_loader,
             mcp_tool_loader=mock_mcp_tool_loader,
         )
-        result = registry.list_agents()
+        result = await registry.list_agents()
         assert result == []
 
-    def test_list_agents_returns_empty_when_no_yaml_files(self, tmp_path, config_loader, mock_mcp_tool_loader):
+    async def test_list_agents_returns_empty_when_no_yaml_files(self, tmp_path, config_loader, mock_mcp_tool_loader):
         """list_agents should return [] if the directory has no .yaml files."""
         empty_dir = tmp_path / "empty_agents"
         empty_dir.mkdir()
@@ -146,8 +146,30 @@ class TestDeepAgentRegistry:
             config_loader=config_loader,
             mcp_tool_loader=mock_mcp_tool_loader,
         )
-        result = registry.list_agents()
+        result = await registry.list_agents()
         assert result == []
+
+    # -- invalidate --------------------------------------------------------
+
+    @patch("src.infrastructure.deepagent.registry.create_agent_from_config", new_callable=AsyncMock)
+    @patch("src.infrastructure.deepagent.registry.DeepAgentRunner")
+    async def test_invalidate_removes_cached_runner(self, mock_runner_cls, mock_create, registry):
+        """After invalidate, get_runner should re-build the agent from scratch."""
+        mock_create.return_value = MagicMock()
+        runner_a = MagicMock()
+        runner_b = MagicMock()
+        mock_runner_cls.side_effect = [runner_a, runner_b]
+
+        first = await registry.get_runner("chatbot")
+        assert first is runner_a
+
+        await registry.invalidate("chatbot")
+        assert "chatbot" not in registry._runners, "Cache entry should be removed"
+
+        second = await registry.get_runner("chatbot")
+        assert second is runner_b
+        assert first is not second
+        assert mock_create.await_count == 2
 
     # -- close -------------------------------------------------------------
 

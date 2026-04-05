@@ -12,7 +12,9 @@ class TestTracingLifecycle:
         from src.main import lifespan
 
         with (
-            patch("src.main.agent_registry", AsyncMock()),
+            patch("src.main.close_persistence", AsyncMock()),
+            patch("src.main.init_persistence", AsyncMock()),
+            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.mcp_tool_loader", AsyncMock()),
             patch("src.main.tracing_provider", mock_tracing_provider),
         ):
@@ -26,7 +28,9 @@ class TestTracingLifecycle:
         from src.main import lifespan
 
         with (
-            patch("src.main.agent_registry", AsyncMock()),
+            patch("src.main.close_persistence", AsyncMock()),
+            patch("src.main.init_persistence", AsyncMock()),
+            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.mcp_tool_loader", AsyncMock()),
             patch("src.main.tracing_provider", mock_tracing_provider),
         ):
@@ -56,7 +60,9 @@ class TestTracingLifecycle:
         mock_tracing_provider.shutdown = AsyncMock(side_effect=track_shutdown)
 
         with (
-            patch("src.main.agent_registry", AsyncMock()),
+            patch("src.main.close_persistence", AsyncMock()),
+            patch("src.main.init_persistence", AsyncMock()),
+            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.mcp_tool_loader", AsyncMock()),
             patch("src.main.tracing_provider", mock_tracing_provider),
         ):

@@ -9,14 +9,22 @@ from src.application.routes.chat import router as chat_router
 from src.application.routes.health import router as health_router
 from src.application.routes.threads import router as threads_router
 from src.application.routes.websocket import router as websocket_router
-from src.dependencies import agent_registry, mcp_tool_loader, tracing_provider
+from src.dependencies import (
+    close_persistence,
+    init_persistence,
+    mcp_tool_loader,
+    seed_builtin_agents,
+    tracing_provider,
+)
 from src.domain.exceptions import (
+    AgentConfigAlreadyExistsError,
     AgentError,
     AgentNotFoundError,
     ConfigError,
     ConfigNotFoundError,
     ConfigValidationError,
     DomainError,
+    StorageError,
     ThreadNotFoundError,
 )
 
@@ -30,15 +38,22 @@ logger = logging.getLogger("composable-agents")
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Application lifespan: cleanup on shutdown."""
+    """Application lifespan: init persistence on startup, cleanup on shutdown."""
+    logger.info("Application startup initiated")
+    try:
+        await init_persistence()
+        await seed_builtin_agents()
+        logger.info("Persistence initialized and agents seeded")
+    except Exception:
+        logger.exception("Failed to initialize persistence, falling back to filesystem registry")
     logger.info("Application startup complete")
     yield
     logger.info("Application shutdown initiated")
     try:
-        await agent_registry.close()
-        logger.info("Agent registry closed")
+        await close_persistence()
+        logger.info("Persistence closed")
     except Exception:
-        logger.exception("Error closing agent registry")
+        logger.exception("Error closing persistence")
     try:
         await mcp_tool_loader.close()
         logger.info("MCP tool loader closed")
@@ -65,6 +80,18 @@ app.include_router(threads_router)
 app.include_router(chat_router)
 app.include_router(agents_router)
 app.include_router(websocket_router)
+
+
+@app.exception_handler(AgentConfigAlreadyExistsError)
+async def agent_config_already_exists_handler(_request: Request, exc: AgentConfigAlreadyExistsError) -> JSONResponse:
+    logger.warning("Agent config already exists: %s", exc)
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+@app.exception_handler(StorageError)
+async def storage_error_handler(_request: Request, exc: StorageError) -> JSONResponse:
+    logger.error("Storage error: %s", exc)
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 @app.exception_handler(AgentNotFoundError)

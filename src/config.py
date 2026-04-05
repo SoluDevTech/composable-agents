@@ -24,3 +24,15 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     tracing: TracingSettings = TracingSettings()
+
+    minio_endpoint: str = "localhost:9040"
+    minio_access_key: str = "minioadmin"
+    minio_secret_key: str = "minioadmin"
+    minio_bucket: str = "composable-agents"
+    minio_secure: bool = False
+
+    postgres_host: str = "localhost"
+    postgres_port: int = 5433
+    postgres_user: str = "raganything"
+    postgres_password: str = "raganything"
+    postgres_database: str = "raganything"

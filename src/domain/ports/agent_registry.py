@@ -16,8 +16,13 @@ class AgentRegistry(ABC):
         ...
 
     @abstractmethod
-    def list_agents(self) -> list[str]:
+    async def list_agents(self) -> list[str]:
         """Liste les noms des agents disponibles."""
+        ...
+
+    @abstractmethod
+    async def invalidate(self, agent_name: str) -> None:
+        """Invalide le runner cache pour l'agent donne."""
         ...
 
     @abstractmethod
