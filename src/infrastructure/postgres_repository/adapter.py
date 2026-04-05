@@ -1,8 +1,8 @@
 import logging
 
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-from sqlalchemy.future import select
 
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.exceptions import AgentNotFoundError, StorageError

@@ -18,7 +18,7 @@ class MessageStatus(StrEnum):
 
 class Message(BaseModel, frozen=True):
     role: MessageRole
-    content: str
+    content: str | None = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     tool_calls: list[dict] | None = None
     status: MessageStatus | None = None

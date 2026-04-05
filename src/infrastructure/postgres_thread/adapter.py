@@ -2,9 +2,10 @@ import logging
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.entities.thread import Thread
@@ -100,7 +101,9 @@ class PostgresThreadRepository(ThreadRepository):
         """
         async with AsyncSession(self._engine, expire_on_commit=False) as session:
             try:
-                model = await session.get(ThreadModel, thread_id)
+                model = await session.get(
+                    ThreadModel, thread_id, options=[selectinload(ThreadModel.messages)]
+                )
                 if model is None:
                     raise ThreadNotFoundError(f"Thread not found: {thread_id}")
                 return _model_to_thread(model)
@@ -120,7 +123,11 @@ class PostgresThreadRepository(ThreadRepository):
         """
         async with AsyncSession(self._engine, expire_on_commit=False) as session:
             try:
-                result = await session.execute(select(ThreadModel))
+                result = await session.execute(
+                    select(ThreadModel)
+                    .options(selectinload(ThreadModel.messages))
+                    .order_by(ThreadModel.created_at.desc())
+                )
                 models = result.scalars().all()
                 return [_model_to_thread(model) for model in models]
             except SQLAlchemyError as e:
@@ -164,7 +171,9 @@ class PostgresThreadRepository(ThreadRepository):
         """
         async with AsyncSession(self._engine, expire_on_commit=False) as session:
             try:
-                thread_model = await session.get(ThreadModel, thread_id)
+                thread_model = await session.get(
+                    ThreadModel, thread_id, options=[selectinload(ThreadModel.messages)]
+                )
                 if thread_model is None:
                     raise ThreadNotFoundError(f"Thread not found: {thread_id}")
 
