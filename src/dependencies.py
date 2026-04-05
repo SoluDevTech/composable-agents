@@ -1,7 +1,6 @@
 import logging
-from pathlib import Path
 
-from miniopy_async import Minio
+from miniopy_async.api import Minio
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
@@ -9,8 +8,6 @@ from src.application.use_cases.create_agent_config import CreateAgentConfigUseCa
 from src.application.use_cases.delete_agent_config import DeleteAgentConfigUseCase
 from src.application.use_cases.get_agent_config import GetAgentConfigUseCase
 from src.application.use_cases.list_agent_configs import ListAgentConfigsUseCase
-from src.application.use_cases.load_agent_config import LoadAgentConfigUseCase
-from src.application.use_cases.seed_agents import SeedAgentsUseCase
 from src.application.use_cases.send_message import SendMessageUseCase
 from src.application.use_cases.stream_message import StreamMessageUseCase
 from src.application.use_cases.thread_management import (
@@ -23,7 +20,6 @@ from src.application.use_cases.update_agent_config import UpdateAgentConfigUseCa
 from src.config import Settings
 from src.domain.exceptions import StorageError
 from src.domain.ports.thread_repository import ThreadRepository
-from src.infrastructure.deepagent.registry import DeepAgentRegistry
 from src.infrastructure.mcp.adapter import LangchainMcpToolLoader
 from src.infrastructure.minio_store.adapter import MinioAgentConfigStore
 from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
@@ -82,15 +78,7 @@ agent_config_loader = YamlAgentConfigLoader()
 mcp_tool_loader = LangchainMcpToolLoader()
 tracing_provider = _create_tracing_provider(settings)
 
-# Filesystem-based registry (kept for backward compatibility)
-agent_registry = DeepAgentRegistry(
-    agents_dir=Path(settings.agents_dir),
-    config_loader=agent_config_loader,
-    mcp_tool_loader=mcp_tool_loader,
-    tracing_provider=tracing_provider,
-)
-
-agents_dir = settings.agents_dir
+agent_registry: PersistentAgentRegistry | None = None
 
 # ============= PERSISTENCE (initialized at startup) =============
 
@@ -159,23 +147,6 @@ async def close_persistence() -> None:
         logger.info("SQLAlchemy engine disposed")
 
 
-async def seed_builtin_agents() -> None:
-    """Seed built-in agents from the configured agents directory."""
-    if _minio_store is None or _pg_repository is None:
-        logger.warning("Persistence not initialized, skipping seed")
-        return
-
-    seed_use_case = SeedAgentsUseCase(
-        config_loader=agent_config_loader,
-        config_store=_minio_store,
-        config_repository=_pg_repository,
-    )
-    await seed_use_case.execute(agents_dir=Path(settings.agents_dir))
-    logger.info("Built-in agents seeded from %s", settings.agents_dir)
-
-
-logger.info("Dependencies initialized (agents_dir=%s)", settings.agents_dir)
-
 # ============= USE CASE PROVIDERS =============
 
 
@@ -186,19 +157,26 @@ def _require_thread_repository() -> ThreadRepository:
     return thread_repository
 
 
+def _require_agent_registry() -> PersistentAgentRegistry:
+    """Return agent registry or raise StorageError if not initialized."""
+    if agent_registry is None:
+        raise StorageError("Agent registry not initialized. Check persistence connectivity.")
+    return agent_registry
+
+
 def get_send_message_use_case() -> SendMessageUseCase:
     """Provide a SendMessageUseCase instance."""
-    return SendMessageUseCase(agent_registry, _require_thread_repository())
+    return SendMessageUseCase(_require_agent_registry(), _require_thread_repository())
 
 
 def get_stream_message_use_case() -> StreamMessageUseCase:
     """Provide a StreamMessageUseCase instance."""
-    return StreamMessageUseCase(agent_registry, _require_thread_repository())
+    return StreamMessageUseCase(_require_agent_registry(), _require_thread_repository())
 
 
 def get_create_thread_use_case() -> CreateThreadUseCase:
     """Provide a CreateThreadUseCase instance."""
-    return CreateThreadUseCase(_require_thread_repository(), agent_registry)
+    return CreateThreadUseCase(_require_thread_repository(), _require_agent_registry())
 
 
 def get_get_thread_use_case() -> GetThreadUseCase:
@@ -214,16 +192,6 @@ def get_list_threads_use_case() -> ListThreadsUseCase:
 def get_delete_thread_use_case() -> DeleteThreadUseCase:
     """Provide a DeleteThreadUseCase instance."""
     return DeleteThreadUseCase(_require_thread_repository())
-
-
-def get_load_agent_config_use_case() -> LoadAgentConfigUseCase:
-    """Provide a LoadAgentConfigUseCase instance."""
-    return LoadAgentConfigUseCase(agent_config_loader)
-
-
-def get_agents_dir() -> str:
-    """Provide the configured agents directory path."""
-    return agents_dir
 
 
 def _require_persistence() -> tuple[MinioAgentConfigStore, PostgresAgentConfigRepository]:
@@ -250,7 +218,7 @@ def get_update_agent_config_use_case() -> UpdateAgentConfigUseCase:
         config_loader=agent_config_loader,
         config_store=store,
         config_repository=repo,
-        agent_registry=agent_registry,
+        agent_registry=_require_agent_registry(),
     )
 
 
@@ -260,7 +228,7 @@ def get_delete_agent_config_use_case() -> DeleteAgentConfigUseCase:
     return DeleteAgentConfigUseCase(
         config_store=store,
         config_repository=repo,
-        agent_registry=agent_registry,
+        agent_registry=_require_agent_registry(),
     )
 
 

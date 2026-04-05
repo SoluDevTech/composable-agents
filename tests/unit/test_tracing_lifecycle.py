@@ -14,7 +14,6 @@ class TestTracingLifecycle:
         with (
             patch("src.main.close_persistence", AsyncMock()),
             patch("src.main.init_persistence", AsyncMock()),
-            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.mcp_tool_loader", AsyncMock()),
             patch("src.main.tracing_provider", mock_tracing_provider),
         ):
@@ -30,7 +29,6 @@ class TestTracingLifecycle:
         with (
             patch("src.main.close_persistence", AsyncMock()),
             patch("src.main.init_persistence", AsyncMock()),
-            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.mcp_tool_loader", AsyncMock()),
             patch("src.main.tracing_provider", mock_tracing_provider),
         ):
@@ -62,7 +60,6 @@ class TestTracingLifecycle:
         with (
             patch("src.main.close_persistence", AsyncMock()),
             patch("src.main.init_persistence", AsyncMock()),
-            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.mcp_tool_loader", AsyncMock()),
             patch("src.main.tracing_provider", mock_tracing_provider),
         ):

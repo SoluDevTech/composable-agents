@@ -15,28 +15,28 @@ from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 
 class TestTracingDependencyInjection:
     def test_default_settings_create_noop_provider(self):
-        settings = Settings(agents_dir="./agents")
+        settings = Settings()
         provider = _create_tracing_provider(settings)
 
         assert isinstance(provider, NoopTracingProvider)
 
     def test_disabled_langfuse_creates_noop_provider(self):
         tracing = TracingSettings(provider="langfuse", enabled=False)
-        settings = Settings(agents_dir="./agents", tracing=tracing)
+        settings = Settings(tracing=tracing)
         provider = _create_tracing_provider(settings)
 
         assert isinstance(provider, NoopTracingProvider)
 
     def test_disabled_phoenix_creates_noop_provider(self):
         tracing = TracingSettings(provider="phoenix", enabled=False)
-        settings = Settings(agents_dir="./agents", tracing=tracing)
+        settings = Settings(tracing=tracing)
         provider = _create_tracing_provider(settings)
 
         assert isinstance(provider, NoopTracingProvider)
 
     def test_unknown_provider_creates_noop(self):
         tracing = TracingSettings(provider="unknown", enabled=True)
-        settings = Settings(agents_dir="./agents", tracing=tracing)
+        settings = Settings(tracing=tracing)
         provider = _create_tracing_provider(settings)
 
         assert isinstance(provider, NoopTracingProvider)
@@ -65,7 +65,7 @@ class TestTracingDependencyInjection:
                 langfuse_secret_key="sk-test",
                 langfuse_host="https://langfuse.example.com",
             )
-            settings = Settings(agents_dir="./agents", tracing=tracing)
+            settings = Settings(tracing=tracing)
             provider = _create_tracing_provider(settings)
 
             assert isinstance(provider, LangfuseTracingProvider)
@@ -114,7 +114,7 @@ class TestTracingDependencyInjection:
                 phoenix_api_key="my-key",
                 project_name="my-project",
             )
-            settings = Settings(agents_dir="./agents", tracing=tracing)
+            settings = Settings(tracing=tracing)
             provider = _create_tracing_provider(settings)
 
             assert isinstance(provider, PhoenixTracingProvider)

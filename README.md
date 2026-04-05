@@ -2,9 +2,9 @@
 
 Configure Deep Agent LangGraph agents in YAML and expose them via FastAPI.
 
-**composable-agents** is a Python framework that lets you declare AI agents as simple YAML files and instantly expose them as a full-featured HTTP API. It is built on [deepagents](https://pypi.org/project/deepagents/) (LangGraph-based Deep Agent) with a strict hexagonal architecture, making every component testable and replaceable.
+**composable-agents** is a Python framework that lets you declare AI agents as YAML configurations and instantly expose them as a full-featured HTTP API. It is built on [deepagents](https://pypi.org/project/deepagents/) (LangGraph-based Deep Agent) with a strict hexagonal architecture, making every component testable and replaceable.
 
-The server supports **multi-agent mode**: multiple agents are defined as separate YAML files in an `agents/` directory, each thread is bound to a specific agent at creation time, and agents are lazily instantiated on first use.
+The server supports **multi-agent mode**: agents are created and managed via a REST API (backed by MinIO for YAML blob storage and PostgreSQL for metadata), each thread is bound to a specific agent at creation time, and agents are lazily instantiated on first use.
 
 ---
 
@@ -15,6 +15,7 @@ The server supports **multi-agent mode**: multiple agents are defined as separat
 - Python 3.11+
 - [UV](https://docs.astral.sh/uv/) package manager
 - PostgreSQL 15+ (required for thread and agent config persistence)
+- MinIO (required for YAML config blob storage)
 - An API key for at least one LLM provider (Anthropic, OpenAI, or Google)
 
 ### Installation
@@ -43,20 +44,12 @@ POSTGRES_PASSWORD=raganything
 POSTGRES_DATABASE=raganything
 ```
 
-### Configure your agents
+### Create your first agent
 
-Each agent is a standalone YAML file inside the `agents/` directory. A minimal agent only needs a name. Create `agents/my-agent.yaml`:
+Agents are created via the REST API by uploading a YAML configuration. A minimal agent only needs a name:
 
 ```yaml
 name: my-agent
-```
-
-Or use one of the provided examples in the `agents/` directory (see [Examples](#examples)).
-
-### Validate the configuration
-
-```bash
-uv run python -m src validate agents/my-agent.yaml
 ```
 
 ### Launch the server
@@ -68,8 +61,7 @@ uv run python -m src serve
 The API starts on `http://localhost:8000`. On startup, the server:
 
 1. **Runs Alembic migrations** automatically to bring the database schema up to date.
-2. **Initializes persistence** (PostgreSQL engine, MinIO store, agent seeding).
-3. Reads the `AGENTS_DIR` environment variable (default: `./agents`) to discover available agents.
+2. **Initializes persistence** (PostgreSQL engine, MinIO store, agent registry).
 
 Agents are not loaded into memory until a thread references them for the first time.
 
@@ -79,7 +71,12 @@ Agents are not loaded into memory until a thread references them for the first t
 # Health check
 curl http://localhost:8000/health
 
-# Create a thread bound to an agent (agent_name must match a YAML filename in agents/)
+# Create an agent by uploading a YAML file
+curl -X POST http://localhost:8000/api/v1/agents \
+  -F "agent_name=my-agent" \
+  -F "file=@my-agent.yaml"
+
+# Create a thread bound to the agent
 curl -X POST http://localhost:8000/api/v1/threads \
   -H "Content-Type: application/json" \
   -d '{"agent_name": "my-agent"}'
@@ -94,12 +91,12 @@ curl -X POST http://localhost:8000/api/v1/chat/<thread_id> \
 
 ## Multi-Agent Architecture
 
-composable-agents now supports running **multiple agents simultaneously**. Each agent is defined by a separate YAML file in the `agents/` directory.
+composable-agents supports running **multiple agents simultaneously**. Each agent is defined by a YAML configuration stored in MinIO, with metadata tracked in PostgreSQL.
 
 ### How it works
 
-1. **Discovery** -- On startup, the server scans `AGENTS_DIR` (default: `./agents`) for `.yaml` files. The filename (without extension) becomes the agent name.
-2. **Thread creation** -- When creating a thread via `POST /api/v1/threads`, you specify an `agent_name`. If no matching YAML file exists, the API returns `404`.
+1. **Agent creation** -- Agents are created via `POST /api/v1/agents` by uploading a YAML file. The configuration is stored in MinIO, and metadata is saved to PostgreSQL.
+2. **Thread creation** -- When creating a thread via `POST /api/v1/threads`, you specify an `agent_name`. If no matching agent exists in the registry, the API returns `404`.
 3. **Lazy loading** -- The agent (LangGraph graph + runner) is created only when a thread first sends a message to it. Subsequent requests reuse the cached runner.
 4. **Per-thread binding** -- Each thread is permanently bound to its agent. Different threads can use different agents.
 
@@ -108,12 +105,22 @@ composable-agents now supports running **multiple agents simultaneously**. Each 
 | Component | Location | Role |
 |---|---|---|
 | `AgentRegistry` (port) | `src/domain/ports/agent_registry.py` | Abstract interface for retrieving agent runners by name. |
-| `DeepAgentRegistry` (adapter) | `src/infrastructure/deepagent/registry.py` | Scans `agents/` directory, creates and caches runners on demand. |
-| `AgentNotFoundError` | `src/domain/exceptions.py` | Raised when a requested agent name has no corresponding YAML file. |
+| `PersistentAgentRegistry` (adapter) | `src/infrastructure/persistent_registry/adapter.py` | MinIO + PostgreSQL backed registry, creates and caches runners on demand. |
+| `AgentNotFoundError` | `src/domain/exceptions.py` | Raised when a requested agent name has no corresponding config. |
 
 ### Example: two agents, two threads
 
 ```bash
+# Create the research-assistant agent
+curl -X POST http://localhost:8000/api/v1/agents \
+  -F "agent_name=research-assistant" \
+  -F "file=@research-assistant.yaml"
+
+# Create the code-reviewer agent
+curl -X POST http://localhost:8000/api/v1/agents \
+  -F "agent_name=code-reviewer" \
+  -F "file=@code-reviewer.yaml"
+
 # Create a thread using the research assistant agent
 curl -X POST http://localhost:8000/api/v1/threads \
   -H "Content-Type: application/json" \
@@ -146,8 +153,8 @@ Every agent is defined by a single YAML file validated against the `AgentConfig`
 |---|---|---|---|
 | `name` | `string` (required) | -- | Unique agent name (1-100 characters). |
 | `model` | `string` | `"claude-sonnet-4-5-20250929"` | LLM model identifier. See [Supported Models](#supported-models). |
-| `system_prompt` | `string` | `null` | Inline system prompt. Mutually exclusive with `system_prompt_file`. |
-| `system_prompt_file` | `string` | `null` | Path to a text file containing the system prompt (resolved relative to the YAML file). Mutually exclusive with `system_prompt`. |
+| `system_prompt` | `string` | `null` | Inline system prompt. Use this for all agents created via the REST API. |
+| `system_prompt_file` | `string` | `null` | Path to a text file containing the system prompt (only works with filesystem-based loading; **rejected** by the persistent MinIO-backed registry -- inline the prompt in `system_prompt` instead). Mutually exclusive with `system_prompt`. |
 | `tools` | `list[string]` | `[]` | Python tool references in `module.path:attribute` format. |
 | `middleware` | `list[MiddlewareType]` | `[]` | Middleware to attach. See [Middlewares](#middlewares). |
 | `backend` | `BackendConfig` | `{"type": "state"}` | Persistence backend. See [Backends](#backends). |
@@ -269,6 +276,11 @@ All endpoints are prefixed appropriately. The server runs on `http://localhost:8
 | Method | Path | Description | Success Status |
 |---|---|---|---|
 | `GET` | `/health` | Health check | `200` |
+| `POST` | `/api/v1/agents` | Create a new agent (upload YAML via multipart form) | `201` |
+| `GET` | `/api/v1/agents` | List all agent config metadata | `200` |
+| `GET` | `/api/v1/agents/{agent_name}` | Get a specific agent configuration | `200` |
+| `PUT` | `/api/v1/agents/{agent_name}` | Update an existing agent (upload YAML via multipart form) | `200` |
+| `DELETE` | `/api/v1/agents/{agent_name}` | Delete an agent configuration | `204` |
 | `POST` | `/api/v1/threads` | Create a new conversation thread (bound to an agent) | `201` |
 | `GET` | `/api/v1/threads` | List all threads | `200` |
 | `GET` | `/api/v1/threads/{thread_id}` | Get a specific thread | `200` |
@@ -277,19 +289,19 @@ All endpoints are prefixed appropriately. The server runs on `http://localhost:8
 | `POST` | `/api/v1/chat/{thread_id}` | Send a message and get the full response | `200` |
 | `POST` | `/api/v1/chat/{thread_id}/stream` | Send a message and stream the response (SSE) | `200` |
 | `POST` | `/api/v1/threads/{thread_id}/hitl` | Submit a human-in-the-loop decision | `200` |
-| `GET` | `/api/v1/agents` | List all agent configs from `agents/` directory | `200` |
-| `GET` | `/api/v1/agents/{agent_name}` | Get a specific agent configuration | `200` |
 | `WS` | `/api/v1/ws/{thread_id}` | WebSocket endpoint for streaming chat | -- |
 
 ### Error Responses
 
 | Status | Condition |
 |---|---|
-| `400` | General configuration error |
-| `404` | Thread not found, agent not found, or config file not found |
+| `400` | General configuration error, invalid agent name, file too large |
+| `404` | Thread not found, agent not found, or config not found |
+| `409` | Agent config already exists (on create) |
 | `422` | Validation error (bad request body, invalid config schema) |
 | `502` | Agent execution error (LLM failure) |
 | `500` | Unexpected domain error |
+| `503` | Storage error (MinIO or PostgreSQL unavailable) |
 
 ---
 
@@ -307,7 +319,37 @@ Response:
 {"status": "ok"}
 ```
 
-### 2. List Available Agents
+### 2. Create an Agent
+
+Upload a YAML configuration file to create a new agent:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/agents \
+  -F "agent_name=example-agent" \
+  -F "file=@example-agent.yaml"
+```
+
+Response (`201`):
+
+```json
+{
+  "name": "example-agent",
+  "model": "openai:anthropic/claude-haiku-4.5:nitro",
+  "system_prompt": "You are a helpful assistant.",
+  "system_prompt_file": null,
+  "tools": [],
+  "middleware": [],
+  "backend": {"type": "state", "root_dir": null},
+  "hitl": {"rules": {}},
+  "memory": [],
+  "skills": [],
+  "subagents": [],
+  "mcp_servers": [],
+  "debug": false
+}
+```
+
+### 3. List Available Agents
 
 ```bash
 curl http://localhost:8000/api/v1/agents
@@ -319,28 +361,18 @@ Response (`200`):
 [
   {
     "name": "code-reviewer",
-    "model": "claude-sonnet-4-5-20250929",
-    "system_prompt": "You are an expert code reviewer...",
-    "tools": [],
-    "middleware": ["filesystem", "sub_agent"],
-    "backend": {"type": "state", "root_dir": null},
-    "hitl": {"rules": {"write_file": true, "execute": {"allowed_decisions": ["approve", "reject"]}}},
-    "subagents": [...]
+    "created_at": "2025-01-15T10:00:00.000000",
+    "updated_at": "2025-01-15T10:00:00.000000"
   },
   {
     "name": "example-agent",
-    "model": "openai:anthropic/claude-haiku-4.5:nitro",
-    "system_prompt": "You are a helpful assistant.",
-    "tools": [],
-    "middleware": [],
-    "backend": {"type": "state", "root_dir": null},
-    "hitl": {"rules": {}},
-    "subagents": []
+    "created_at": "2025-01-15T10:05:00.000000",
+    "updated_at": "2025-01-15T10:05:00.000000"
   }
 ]
 ```
 
-### 3. Get a Specific Agent Configuration
+### 4. Get a Specific Agent Configuration
 
 ```bash
 curl http://localhost:8000/api/v1/agents/example-agent
@@ -375,12 +407,31 @@ curl http://localhost:8000/api/v1/agents/nonexistent
 Response (`404`):
 
 ```json
-{"detail": "Fichier de configuration introuvable: agents/nonexistent.yaml"}
+{"detail": "Agent introuvable: nonexistent"}
 ```
 
-### 4. Create a Thread
+### 5. Update an Agent
 
-The `agent_name` must match an existing YAML filename (without the `.yaml` extension) in the `agents/` directory.
+Upload a new YAML file to replace an existing agent's configuration:
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/agents/example-agent \
+  -F "file=@example-agent-v2.yaml"
+```
+
+Response (`200`): returns the updated `AgentConfig`.
+
+### 6. Delete an Agent
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/agents/example-agent
+```
+
+Response: `204 No Content`
+
+### 7. Create a Thread
+
+The `agent_name` must match an existing agent in the persistent registry (created via `POST /api/v1/agents`).
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/threads \
@@ -400,7 +451,7 @@ Response (`201`):
 }
 ```
 
-If the agent name does not match any YAML file:
+If the agent name does not match any registered agent:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/threads \
@@ -414,7 +465,7 @@ Response (`404`):
 {"detail": "Agent introuvable: nonexistent-agent"}
 ```
 
-### 5. Send a Message
+### 8. Send a Message
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
@@ -434,7 +485,7 @@ Response (`200`):
 }
 ```
 
-### 6. Stream a Message (SSE)
+### 9. Stream a Message (SSE)
 
 ```bash
 curl -N -X POST http://localhost:8000/api/v1/chat/a1b2c3d4-e5f6-7890-abcd-ef1234567890/stream \
@@ -452,7 +503,7 @@ data:  align
 data: ...
 ```
 
-### 7. List All Threads
+### 10. List All Threads
 
 ```bash
 curl http://localhost:8000/api/v1/threads
@@ -479,13 +530,13 @@ Response (`200`):
 ]
 ```
 
-### 8. Get a Specific Thread
+### 11. Get a Specific Thread
 
 ```bash
 curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890
 ```
 
-### 9. List Messages in a Thread
+### 12. List Messages in a Thread
 
 ```bash
 curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/messages
@@ -512,7 +563,7 @@ Response (`200`):
 ]
 ```
 
-### 10. HITL -- Approve a Pending Tool Call
+### 13. HITL -- Approve a Pending Tool Call
 
 When the agent is configured with HITL rules and a tool call is interrupted, submit a decision:
 
@@ -537,7 +588,7 @@ Response (`200`):
 }
 ```
 
-### 11. HITL -- Reject a Pending Tool Call
+### 14. HITL -- Reject a Pending Tool Call
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/hitl \
@@ -549,7 +600,7 @@ curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234
   }'
 ```
 
-### 12. HITL -- Edit and Approve a Pending Tool Call
+### 15. HITL -- Edit and Approve a Pending Tool Call
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/hitl \
@@ -561,7 +612,7 @@ curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234
   }'
 ```
 
-### 13. Delete a Thread
+### 16. Delete a Thread
 
 ```bash
 curl -X DELETE http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890
@@ -614,8 +665,9 @@ composable-agents follows a strict **hexagonal architecture** (ports and adapter
     | (adapters)         |
     +--------------------+
     | - DeepAgentRunner  |
-    | - DeepAgentRegistry|
+    | - PersistentRegistry|
     | - YamlConfigLoader |
+    | - MinioConfigStore |
     | - PostgresThreads  |
     | - Alembic (migrate)|
     +--------------------+
@@ -625,12 +677,6 @@ composable-agents follows a strict **hexagonal architecture** (ports and adapter
 
 ```
 composable-agents/
-  agents/                              # YAML agent configuration files
-    example-agent.yaml                 #   Basic example agent
-    minimal.yaml                       #   Minimal agent (name only)
-    mcp-agent.yaml                     #   Agent with MCP server tools
-    research-assistant.yaml            #   Research assistant with tools
-    code-reviewer.yaml                 #   Code reviewer with HITL + subagents
   src/
     main.py                            # FastAPI app creation and lifespan (runs migrations)
     config.py                          # Pydantic Settings (env vars, database_url property)
@@ -648,7 +694,7 @@ composable-agents/
         health.py                      # GET /health
         threads.py                     # CRUD /api/v1/threads
         chat.py                        # POST /api/v1/chat/{id} and /stream
-        agents.py                      # GET /api/v1/agents
+        agents.py                      # CRUD /api/v1/agents (create, list, get, update, delete)
         websocket.py                   # WS /api/v1/ws/{id}
       use_cases/
         send_message.py                # Invoke agent synchronously
@@ -658,8 +704,6 @@ composable-agents/
         delete_agent_config.py         # Delete agent config
         get_agent_config.py            # Get agent config from MinIO
         list_agent_configs.py          # List agent configs from Postgres
-        load_agent_config.py           # Load and validate a YAML config
-        seed_agents.py                 # Seed built-in agents from agents/ dir
         thread_management.py           # Create / get / list / delete threads
     domain/
       entities/
@@ -670,7 +714,7 @@ composable-agents/
         thread.py                      # Thread (id, agent_name, messages, timestamps)
         tracing_config.py              # TracingConfig, TracingProviderType
       ports/
-        agent_config_loader.py         # Abstract: load config from file
+        agent_config_loader.py         # Abstract: load config from file or string
         agent_config_repository.py     # Abstract: CRUD for agent config metadata
         agent_config_store.py          # Abstract: object storage for YAML blobs
         agent_registry.py              # Abstract: get_runner(name), list_agents(), close()
@@ -689,7 +733,6 @@ composable-agents/
       deepagent/
         adapter.py                     # DeepAgentRunner (LangGraph adapter)
         factory.py                     # create_agent_from_config (resolves tools, middleware, backend)
-        registry.py                    # DeepAgentRegistry (lazy loading + caching from agents/ dir)
         example_tools.py               # Example tools: current_time, word_count
       mcp/
         adapter.py                     # LangchainMcpToolLoader
@@ -721,7 +764,6 @@ composable-agents/
       test_factory.py
       test_factory_mcp_integration.py
       test_langfuse_adapter.py
-      test_load_agent_config_use_case.py
       test_mcp_adapter.py
       test_mcp_lifecycle.py
       test_mcp_server_config.py
@@ -732,10 +774,8 @@ composable-agents/
       test_phoenix_adapter.py
       test_postgres_repository.py
       test_postgres_thread_repository.py
-      test_registry.py
       test_routes.py
       test_runner_tracing.py
-      test_seed_agents.py
       test_send_message.py
       test_thread.py
       test_thread_management.py
@@ -754,9 +794,11 @@ composable-agents/
 
 ## Examples
 
+Below are example YAML configurations you can upload via `POST /api/v1/agents`. Save each to a file and use `curl -F "agent_name=..." -F "file=@your-file.yaml"`.
+
 ### Minimal Agent
 
-`agents/minimal.yaml` -- the simplest possible agent. Uses all defaults (Claude Sonnet, no tools, state backend).
+The simplest possible agent. Uses all defaults (Claude Sonnet, no tools, state backend).
 
 ```yaml
 name: minimal-agent
@@ -764,7 +806,7 @@ name: minimal-agent
 
 ### Example Agent (OpenAI-compatible endpoint)
 
-`agents/example-agent.yaml` -- a basic agent using an OpenAI-compatible model via OpenRouter.
+A basic agent using an OpenAI-compatible model via OpenRouter.
 
 ```yaml
 name: example-agent
@@ -774,7 +816,7 @@ system_prompt: "You are a helpful assistant."
 
 ### MCP Agent
 
-`agents/mcp-agent.yaml` -- an agent connected to an MCP filesystem server.
+An agent connected to an MCP filesystem server.
 
 ```yaml
 name: mcp-agent
@@ -789,7 +831,7 @@ mcp_servers:
 
 ### Research Assistant with Tools
 
-`agents/research-assistant.yaml` -- an agent with custom tools and filesystem persistence.
+An agent with custom tools and filesystem persistence.
 
 ```yaml
 name: research-assistant
@@ -810,7 +852,7 @@ debug: false
 
 ### Code Reviewer with HITL and Subagents
 
-`agents/code-reviewer.yaml` -- a multi-agent system with human-in-the-loop approval.
+A multi-agent system with human-in-the-loop approval.
 
 ```yaml
 name: code-reviewer
@@ -900,7 +942,6 @@ Configured via `.env` file or environment variables. See `.env.example`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `AGENTS_DIR` | `./agents` | Directory containing agent YAML configuration files. |
 | `ANTHROPIC_API_KEY` | -- | API key for Anthropic models. |
 | `OPENAI_API_KEY` | -- | API key for OpenAI models. |
 | `GOOGLE_API_KEY` | -- | API key for Google models. |
@@ -977,12 +1018,6 @@ uv run ruff check .
 
 ```bash
 uv run mypy src/
-```
-
-### Validate all agent YAML files
-
-```bash
-for f in agents/*.yaml; do uv run python -m src validate "$f"; done
 ```
 
 ---

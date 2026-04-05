@@ -1,8 +1,10 @@
 """Tests for thread management use cases.
 
 Uses real InMemoryThreadRepository (internal).
-Uses AsyncMock for AgentRegistry.get_runner (external dependency boundary).
+Uses AsyncMock for AgentRegistry (external dependency boundary).
 """
+
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -13,26 +15,16 @@ from src.application.use_cases.thread_management import (
     ListThreadsUseCase,
 )
 from src.domain.exceptions import AgentNotFoundError, ThreadNotFoundError
-from src.infrastructure.deepagent.registry import DeepAgentRegistry
-from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
+from src.domain.ports.agent_registry import AgentRegistry
 
 
 class TestCreateThreadUseCase:
     @pytest.fixture
-    def agents_dir(self, tmp_path):
-        d = tmp_path / "agents"
-        d.mkdir()
-        (d / "test-agent.yaml").write_text("name: test-agent")
-        return d
-
-    @pytest.fixture
-    def registry(self, agents_dir, mock_mcp_tool_loader):
-        """Real DeepAgentRegistry with real YAML files."""
-        return DeepAgentRegistry(
-            agents_dir=agents_dir,
-            config_loader=YamlAgentConfigLoader(),
-            mcp_tool_loader=mock_mcp_tool_loader,
-        )
+    def registry(self):
+        """AsyncMock spec'd to AgentRegistry port."""
+        mock = AsyncMock(spec=AgentRegistry)
+        mock.list_agents.return_value = ["test-agent"]
+        return mock
 
     async def test_create_thread(self, thread_repo, registry):
         use_case = CreateThreadUseCase(thread_repo, registry)

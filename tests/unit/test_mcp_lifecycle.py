@@ -17,10 +17,6 @@ class TestModuleLevelMcpWiring:
         """The module-level mcp_tool_loader is a LangchainMcpToolLoader."""
         assert isinstance(dependencies.mcp_tool_loader, LangchainMcpToolLoader)
 
-    def test_agent_registry_received_mcp_tool_loader(self):
-        """The agent_registry was constructed with the mcp_tool_loader."""
-        assert dependencies.agent_registry._mcp_tool_loader is dependencies.mcp_tool_loader
-
 
 class TestLifespanMcpCleanup:
     """Tests for lifespan MCP cleanup."""
@@ -33,7 +29,6 @@ class TestLifespanMcpCleanup:
             patch("src.main.mcp_tool_loader", mock_mcp_tool_loader),
             patch("src.main.close_persistence", AsyncMock()),
             patch("src.main.init_persistence", AsyncMock()),
-            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.tracing_provider", AsyncMock()),
         ):
             async with lifespan(None):
@@ -52,7 +47,6 @@ class TestLifespanMcpCleanup:
         with (
             patch("src.main.close_persistence", mock_close_persistence),
             patch("src.main.init_persistence", AsyncMock()),
-            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.mcp_tool_loader", mock_mcp),
             patch("src.main.tracing_provider", mock_tracing),
         ):

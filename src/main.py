@@ -15,7 +15,6 @@ from src.dependencies import (
     close_persistence,
     init_persistence,
     mcp_tool_loader,
-    seed_builtin_agents,
     tracing_provider,
 )
 from src.domain.exceptions import (
@@ -57,16 +56,11 @@ def _run_alembic_upgrade() -> None:
 async def lifespan(_app: FastAPI):
     """Application lifespan: run migrations, init persistence on startup, cleanup on shutdown."""
     logger.info("Application startup initiated")
-    try:
-        logger.info("Running database migrations...")
-        await asyncio.to_thread(_run_alembic_upgrade)
-        logger.info("Database migrations completed")
-        await init_persistence()
-        await seed_builtin_agents()
-        logger.info("Persistence initialized and agents seeded")
-    except Exception:
-        logger.exception("Failed to initialize persistence, falling back to filesystem registry")
-    logger.info("Application startup complete")
+    logger.info("Running database migrations...")
+    await asyncio.to_thread(_run_alembic_upgrade)
+    logger.info("Database migrations completed")
+    await init_persistence()
+    logger.info("Persistence initialized")
     yield
     logger.info("Application shutdown initiated")
     try:

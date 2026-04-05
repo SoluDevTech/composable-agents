@@ -2,7 +2,7 @@
 
 Uses real InMemoryThreadRepository and YamlAgentConfigLoader (internal).
 Uses AsyncMock for AgentRunner (external LLM boundary).
-Uses a real DeepAgentRegistry with patched factory for agent creation.
+Uses a real PersistentAgentRegistry with patched factory for agent creation.
 """
 
 from datetime import UTC, datetime
@@ -14,7 +14,7 @@ from httpx import ASGITransport, AsyncClient
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.exceptions import AgentError
-from src.infrastructure.deepagent.registry import DeepAgentRegistry
+from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 from src.main import app
 from tests.fixtures.in_memory_thread_repository import InMemoryThreadRepository
@@ -72,10 +72,11 @@ def real_loader():
 
 
 @pytest.fixture
-def real_registry(agents_dir, real_loader, mock_mcp_tool_loader):
-    return DeepAgentRegistry(
-        agents_dir=agents_dir,
+def real_registry(mock_config_store, mock_config_repository, real_loader, mock_mcp_tool_loader):
+    return PersistentAgentRegistry(
         config_loader=real_loader,
+        config_store=mock_config_store,
+        config_repository=mock_config_repository,
         mcp_tool_loader=mock_mcp_tool_loader,
     )
 
@@ -124,23 +125,22 @@ def mock_config_repository(agents_dir):
 
 @pytest.fixture(autouse=True)
 def _wire_dependencies(
-    real_threads, real_registry, real_loader, agents_dir, mock_runner, mock_config_store, mock_config_repository
+    real_threads, real_registry, real_loader, mock_runner, mock_config_store, mock_config_repository
 ):
     """Wire real internal components + mocked runner into the app dependencies."""
     with (
         patch(
-            "src.infrastructure.deepagent.registry.create_agent_from_config",
+            "src.infrastructure.persistent_registry.adapter.create_agent_from_config",
             new_callable=AsyncMock,
             return_value=MagicMock(),
         ),
         patch(
-            "src.infrastructure.deepagent.registry.DeepAgentRunner",
+            "src.infrastructure.persistent_registry.adapter.DeepAgentRunner",
             return_value=mock_runner,
         ),
         patch("src.dependencies.thread_repository", real_threads),
         patch("src.dependencies.agent_registry", real_registry),
         patch("src.dependencies.agent_config_loader", real_loader),
-        patch("src.dependencies.agents_dir", str(agents_dir)),
         patch("src.dependencies._minio_store", mock_config_store),
         patch("src.dependencies._pg_repository", mock_config_repository),
     ):

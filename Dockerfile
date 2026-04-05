@@ -18,9 +18,8 @@ WORKDIR /app
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy application source and agent configs
+# Copy application source
 COPY src/ /app/src/
-COPY agents/ /app/agents/
 
 # Set Python path and venv
 ENV PYTHONPATH=/app:$PYTHONPATH
