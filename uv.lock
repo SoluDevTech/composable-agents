@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -248,6 +248,24 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/74/cd/15777dfde1c29d96de7f18edf4cc94c385646852e7c7b0320aa91ccca583/argon2_cffi_bindings-25.1.0-cp39-abi3-win32.whl", hash = "sha256:473bcb5f82924b1becbb637b63303ec8d10e84c8d241119419897a26116515d2", size = 27180, upload-time = "2025-07-30T10:01:57.759Z" },
     { url = "https://files.pythonhosted.org/packages/e2/c6/a759ece8f1829d1f162261226fbfd2c6832b3ff7657384045286d2afa384/argon2_cffi_bindings-25.1.0-cp39-abi3-win_amd64.whl", hash = "sha256:a98cd7d17e9f7ce244c0803cad3c23a7d379c301ba618a5fa76a67d116618b98", size = 31715, upload-time = "2025-07-30T10:01:58.56Z" },
     { url = "https://files.pythonhosted.org/packages/42/b9/f8d6fa329ab25128b7e98fd83a3cb34d9db5b059a9847eddb840a0af45dd/argon2_cffi_bindings-25.1.0-cp39-abi3-win_arm64.whl", hash = "sha256:b0fdbcf513833809c882823f98dc2f931cf659d9a1429616ac3adebb49f5db94", size = 27149, upload-time = "2025-07-30T10:01:59.329Z" },
+]
+
+[[package]]
+name = "arize-phoenix-client"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-sdk" },
+    { name = "tqdm" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3a/81/8f6fd4b7aeeddff6a0995038b075ed00d79119bc50284f0eda8bc2638a6a/arize_phoenix_client-2.3.0.tar.gz", hash = "sha256:06c5fdc947420cff14f5f2f35f6e8ba6074700033d3add6ea8ede61aa6b4da95", size = 177724, upload-time = "2026-04-03T16:16:12.368Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/d5/2e988e732ab2bb1e345fe52e8dae69a5f26ba232e3fbb964f7fe90b26049/arize_phoenix_client-2.3.0-py3-none-any.whl", hash = "sha256:0761a327dcb0b61177c86d8f3000aec40748849a3873b04670afee78dd7b987b", size = 173715, upload-time = "2026-04-03T16:16:10.872Z" },
 ]
 
 [[package]]
@@ -548,10 +566,12 @@ langfuse = [
     { name = "langfuse" },
 ]
 phoenix = [
+    { name = "arize-phoenix-client" },
     { name = "arize-phoenix-otel" },
     { name = "openinference-instrumentation-langchain" },
 ]
 tracing = [
+    { name = "arize-phoenix-client" },
     { name = "arize-phoenix-otel" },
     { name = "langfuse" },
     { name = "openinference-instrumentation-langchain" },
@@ -570,6 +590,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.13.0" },
+    { name = "arize-phoenix-client", marker = "extra == 'phoenix'", specifier = ">=2.3.0" },
+    { name = "arize-phoenix-client", marker = "extra == 'tracing'", specifier = ">=2.3.0" },
     { name = "arize-phoenix-otel", marker = "extra == 'phoenix'", specifier = ">=0.1.0" },
     { name = "arize-phoenix-otel", marker = "extra == 'tracing'", specifier = ">=0.1.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },

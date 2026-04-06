@@ -34,8 +34,8 @@ dependencies = [
 
 [project.optional-dependencies]
 langfuse = ["langfuse>=2.0.0"]
-phoenix = ["arize-phoenix-otel>=0.1.0", "openinference-instrumentation-langchain>=0.1.0"]
-tracing = ["langfuse>=2.0.0", "arize-phoenix-otel>=0.1.0", "openinference-instrumentation-langchain>=0.1.0"]
+phoenix = ["arize-phoenix-otel>=0.1.0", "openinference-instrumentation-langchain>=0.1.0", "arize-phoenix-client>=2.3.0"]
+tracing = ["langfuse>=2.0.0", "arize-phoenix-otel>=0.1.0", "openinference-instrumentation-langchain>=0.1.0", "arize-phoenix-client>=2.3.0"]
 
 [dependency-groups]
 dev = [

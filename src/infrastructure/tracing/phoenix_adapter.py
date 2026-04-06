@@ -1,10 +1,9 @@
 import logging
-import os
 from typing import Any
 
+import phoenix.otel
 from openinference.instrumentation.langchain import LangChainInstrumentor
 from opentelemetry import trace
-import phoenix.otel
 
 from src.domain.ports.tracing_provider import TracingProvider
 
@@ -22,7 +21,7 @@ class PhoenixTracingProvider(TracingProvider):
     ):
         endpoint = endpoint or "http://localhost:6006"
         project_name = project_name or "composable-agents"
-        
+
         # Ensure endpoint has the /v1/traces path
         if endpoint and not endpoint.endswith("/v1/traces"):
             endpoint = f"{endpoint.rstrip('/')}/v1/traces"
@@ -32,9 +31,6 @@ class PhoenixTracingProvider(TracingProvider):
             endpoint,
             project_name,
         )
-
-        # Disable SSL verification for testing (remove in production with proper certs)
-        os.environ["OTEL_PYTHON_URLLIB3_BYPASS_PROXY"] = "True"
 
         # Register with explicit protocol and batching
         phoenix.otel.register(
@@ -61,7 +57,7 @@ class PhoenixTracingProvider(TracingProvider):
         """Force flush all pending spans to Phoenix."""
         if self._tracer_provider is None:
             return
-            
+
         try:
             timeout_millis = 30000
             if hasattr(self._tracer_provider, "force_flush"):
@@ -74,7 +70,7 @@ class PhoenixTracingProvider(TracingProvider):
         """Shutdown the tracer provider and flush remaining spans."""
         if self._tracer_provider is None:
             return
-            
+
         try:
             await self.flush()
             if hasattr(self._tracer_provider, "shutdown"):

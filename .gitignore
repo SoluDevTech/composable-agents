@@ -14,3 +14,5 @@ trivy-report-fixed.json
 coverage.xml
 .coverage
 .scannerwork/
+opencode.json
+.vscode/

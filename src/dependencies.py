@@ -22,6 +22,7 @@ from src.application.use_cases.thread_management import (
 from src.application.use_cases.update_agent_config import UpdateAgentConfigUseCase
 from src.config import Settings
 from src.domain.exceptions import StorageError
+from src.domain.ports.prompt_manager import PromptManager
 from src.domain.ports.thread_repository import ThreadRepository
 from src.infrastructure.deepagent.registry import DeepAgentRegistry
 from src.infrastructure.mcp.adapter import LangchainMcpToolLoader
@@ -30,6 +31,7 @@ from src.infrastructure.persistent_registry.adapter import PersistentAgentRegist
 from src.infrastructure.postgres_repository.adapter import PostgresAgentConfigRepository
 from src.infrastructure.postgres_thread.adapter import PostgresThreadRepository
 from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
+from src.infrastructure.tracing.phoenix_prompt_manager_impl import PhoenixPromptManagerImpl
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 
 logger = logging.getLogger("composable-agents")
@@ -74,6 +76,15 @@ def _create_tracing_provider(settings: Settings):
 
     logger.info("Tracing disabled, using NoopTracingProvider")
     return NoopTracingProvider()
+
+
+def get_prompt_manager() -> PromptManager:
+    """Provide PromptManager implementation."""
+    tracing = settings.tracing
+    return PhoenixPromptManagerImpl(
+        base_url=tracing.phoenix_collector_endpoint,
+        api_key=tracing.phoenix_api_key,
+    )
 
 
 # ============= ADAPTERS =============
