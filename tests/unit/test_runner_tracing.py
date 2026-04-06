@@ -73,7 +73,8 @@ class TestDeepAgentRunnerTracing:
         async def mock_astream(*_args, **_kwargs):
             mock_msg = MagicMock()
             mock_msg.content = "chunk"
-            yield ("ai", mock_msg)
+            mock_msg.type = "AIMessageChunk"
+            yield (mock_msg, {"langgraph_node": "agent"})
 
         mock_graph.astream = mock_astream
 
