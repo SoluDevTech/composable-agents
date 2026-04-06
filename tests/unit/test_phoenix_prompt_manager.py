@@ -6,22 +6,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 from phoenix.client.resources.prompts import PromptVersion as PhoenixPromptVersion
 
-from src.infrastructure.tracing.phoenix_prompt_manager_impl import PhoenixPromptManagerImpl
+from src.infrastructure.tracing.phoenix_prompt_manager import PhoenixPromptManagerImpl
 
 
 class TestPhoenixPromptManagerImpl:
     @pytest.fixture
-    def mock_phoenix_client(self):
-        with patch("src.infrastructure.tracing.phoenix_prompt_manager_impl.Client") as mock_client:
-            yield mock_client
-
-    @pytest.fixture
-    def manager(self, mock_phoenix_client):
-        with patch("src.infrastructure.tracing.phoenix_prompt_manager_impl.Client"):
+    def manager(self):
+        with patch("src.infrastructure.tracing.phoenix_prompt_manager.Client"):
             return PhoenixPromptManagerImpl(base_url="http://localhost:6006", api_key="test-key")
 
     @pytest.mark.asyncio
-    async def test_create_prompt_success(self, manager, mock_phoenix_client):
+    async def test_create_prompt_success(self, manager):
         mock_prompt_obj = MagicMock(spec=PhoenixPromptVersion)
         mock_prompt_obj.id = "v1"
         mock_prompt_obj._description = "Test description"
@@ -45,7 +40,7 @@ class TestPhoenixPromptManagerImpl:
         manager._client.prompts.create.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_prompt_with_tags(self, manager, mock_phoenix_client):
+    async def test_create_prompt_with_tags(self, manager):
         mock_prompt_obj = MagicMock()
         mock_prompt_obj.name = "test-prompt"
         mock_prompt_obj.description = None

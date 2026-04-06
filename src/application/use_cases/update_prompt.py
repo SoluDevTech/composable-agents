@@ -1,9 +1,8 @@
 import logging
 
-from src.domain.entities.prompt import Prompt
-from src.domain.ports.prompt_manager import PromptManager
-
 from phoenix.client.resources.prompts import PromptVersion
+
+from src.domain.ports.prompt_manager import PromptManager
 
 logger = logging.getLogger("composable-agents")
 

@@ -1,6 +1,5 @@
 import logging
 import os
-from datetime import datetime
 
 from phoenix.client import Client
 from phoenix.client.resources.prompts import PromptVersion as PhoenixPromptVersion
@@ -46,6 +45,24 @@ class PhoenixPromptManagerImpl(PromptManager):
             if not prompt_obj:
                 raise ValueError(f"Prompt not found: {identifier}")
             return self._to_domain_prompt(prompt_obj, identifier=identifier, description=prompt_obj._description)
+        except Exception as e:
+            logger.error(f"Error getting prompt {identifier}: {e}")
+            raise
+
+    async def get_prompt_content(self, identifier: str, version_id: str | None = None, tag: str | None = None) -> dict[str, str]:
+        """Get the content of a prompt."""
+        if not self._client:
+            raise RuntimeError("Phoenix client not initialized")
+
+        try:
+            prompt_obj: PhoenixPromptVersion = self._client.prompts.get(
+                prompt_identifier=identifier,
+                prompt_version_id=version_id,
+                tag=tag,
+            )
+            if not prompt_obj:
+                raise ValueError(f"Prompt not found: {identifier}")
+            return prompt_obj._template.get("messages", [])[0] if isinstance(prompt_obj._template, dict) else {}
         except Exception as e:
             logger.error(f"Error getting prompt {identifier}: {e}")
             raise

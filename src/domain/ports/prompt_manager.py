@@ -19,6 +19,11 @@ class PromptManager(ABC):
         ...
 
     @abstractmethod
+    async def get_prompt_content(self, identifier: str, version_id: str | None = None, tag: str | None = None) -> dict:
+        """Retrieve the content of a prompt by identifier, version, or tag."""
+        ...
+
+    @abstractmethod
     async def create_prompt(
         self,
         identifier: str,

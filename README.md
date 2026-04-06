@@ -742,7 +742,7 @@ Prompt management follows the **Clean Architecture** pattern:
 - **Use Cases** (`src/application/use_cases/`): `CreatePromptUseCase`, `GetPromptUseCase`, `SearchPromptsUseCase`, `UpdatePromptUseCase`
 - **Request DTOs** (`src/application/requests/prompt.py`): Request models for each endpoint
 - **Routes** (`src/application/routes/prompts.py`): FastAPI endpoint handlers
-- **Infrastructure Adapter** (`src/infrastructure/tracing/phoenix_prompt_manager_impl.py`): Phoenix REST API implementation
+- **Infrastructure Adapter** (`src/infrastructure/tracing/phoenix_prompt_manager.py`): Phoenix REST API implementation
 
 All prompt management operations are async and fully integrated with the FastAPI dependency injection system.
 
