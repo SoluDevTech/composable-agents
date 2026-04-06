@@ -110,14 +110,13 @@ class DeepAgentRunner(AgentRunner):
         config = self._build_config(thread_id)
         logger.info("[thread=%s] Streaming agent response", thread_id)
         try:
-            async for event in self._graph.astream(
+            async for chunk, _metadata in self._graph.astream(
                 {"messages": [{"role": "human", "content": message}]},
                 config=config,
-                stream_mode="messages-tuple",
+                stream_mode="messages",
             ):
-                msg_type, msg = event
-                if msg_type == "ai" and hasattr(msg, "content") and msg.content:
-                    yield msg.content
+                if hasattr(chunk, "content") and chunk.content and chunk.type == "AIMessageChunk":
+                    yield chunk.content
         except Exception as e:
             logger.exception("[thread=%s] Streaming error", thread_id)
             raise AgentError(f"Streaming error: {e}") from e
