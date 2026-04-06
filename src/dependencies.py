@@ -99,6 +99,7 @@ agent_registry = DeepAgentRegistry(
     config_loader=agent_config_loader,
     mcp_tool_loader=mcp_tool_loader,
     tracing_provider=tracing_provider,
+    prompt_manager=get_prompt_manager(),
 )
 
 agents_dir = settings.agents_dir
@@ -150,6 +151,7 @@ async def init_persistence() -> None:
         config_repository=_pg_repository,
         mcp_tool_loader=mcp_tool_loader,
         tracing_provider=tracing_provider,
+        prompt_manager=get_prompt_manager(),
     )
     agent_registry = _persistent_registry
 

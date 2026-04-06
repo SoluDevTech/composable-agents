@@ -7,6 +7,7 @@ from src.domain.ports.agent_config_loader import AgentConfigLoader
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.agent_runner import AgentRunner
 from src.domain.ports.mcp_tool_loader import McpToolLoader
+from src.domain.ports.prompt_manager import PromptManager
 from src.domain.ports.tracing_provider import TracingProvider
 from src.infrastructure.deepagent.adapter import DeepAgentRunner
 from src.infrastructure.deepagent.factory import create_agent_from_config
@@ -23,11 +24,13 @@ class DeepAgentRegistry(AgentRegistry):
         config_loader: AgentConfigLoader,
         mcp_tool_loader: McpToolLoader,
         tracing_provider: TracingProvider | None = None,
+        prompt_manager: PromptManager | None = None,
     ) -> None:
         self._agents_dir = agents_dir
         self._config_loader = config_loader
         self._mcp_tool_loader = mcp_tool_loader
         self._tracing_provider = tracing_provider
+        self._prompt_manager = prompt_manager
         self._runners: dict[str, AgentRunner] = {}
         self._lock = asyncio.Lock()
 
@@ -47,7 +50,7 @@ class DeepAgentRegistry(AgentRegistry):
 
             logger.info("Building agent '%s' from %s", agent_name, config_path)
             config = self._config_loader.load(config_path)
-            graph = await create_agent_from_config(config, self._mcp_tool_loader)
+            graph = await create_agent_from_config(config, self._mcp_tool_loader, self._prompt_manager)
             runner = DeepAgentRunner(graph, tracing_provider=self._tracing_provider)
             self._runners[agent_name] = runner
             logger.info("Agent '%s' ready and cached", agent_name)
