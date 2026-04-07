@@ -1,6 +1,7 @@
 import logging
 import os
 
+from cachetools import TTLCache, cached
 from phoenix.client import Client
 from phoenix.client.resources.prompts import PromptVersion as PhoenixPromptVersion
 
@@ -10,7 +11,7 @@ from src.domain.ports.prompt_manager import PromptManager
 logger = logging.getLogger("composable-agents")
 
 
-class PhoenixPromptManagerImpl(PromptManager):
+class PhoenixPromptManagerProvider(PromptManager):
     """Phoenix implementation of PromptManager port."""
 
     def __init__(self, base_url: str | None = None, api_key: str | None = None):
@@ -21,7 +22,7 @@ class PhoenixPromptManagerImpl(PromptManager):
                 base_url=base_url,
                 api_key=api_key,
             )
-            logger.info(f"PhoenixPromptManagerImpl initialized with base_url={base_url}")
+            logger.info(f"PhoenixPromptManagerProvider initialized with base_url={base_url}")
         except Exception as e:
             logger.error(f"Failed to initialize Phoenix client: {e}")
             self._client = None
@@ -49,22 +50,27 @@ class PhoenixPromptManagerImpl(PromptManager):
             logger.error(f"Error getting prompt {identifier}: {e}")
             raise
 
-    async def get_prompt_content(self, identifier: str, version_id: str | None = None, tag: str | None = None) -> dict[str, str]:
-        """Get the content of a prompt."""
+    @cached(cache=TTLCache(maxsize=10, ttl=300))
+    async def get_prompt_content(
+        self,
+        identifier: str,
+        version_id: str | None = None,
+        tag: str | None = None,
+    ) -> dict[str, str]:
         if not self._client:
             raise RuntimeError("Phoenix client not initialized")
-
         try:
-            prompt_obj: PhoenixPromptVersion = self._client.prompts.get(
+            prompt_obj = self._client.prompts.get(
                 prompt_identifier=identifier,
                 prompt_version_id=version_id,
                 tag=tag,
             )
-            if not prompt_obj:
-                raise ValueError(f"Prompt not found: {identifier}")
-            return prompt_obj._template.get("messages", [])[0] if isinstance(prompt_obj._template, dict) else {}
+            domain = self._to_domain_prompt(prompt_obj, identifier=identifier)
+            # Return first message (system prompt) or empty
+            messages = domain.current_version.content
+            return messages[0] if messages else {}
         except Exception as e:
-            logger.error(f"Error getting prompt {identifier}: {e}")
+            logger.error(f"Error getting prompt content {identifier}: {e}")
             raise
 
     async def create_prompt(
@@ -136,29 +142,41 @@ class PhoenixPromptManagerImpl(PromptManager):
             logger.error(f"Error adding tag: {e}")
             raise
 
-    def _to_domain_prompt(self, phoenix_prompt, identifier: str | None = None, description: str | None = None) -> Prompt:
+    def _to_domain_prompt(
+        self,
+        phoenix_prompt,
+        identifier: str | None = None,
+        description: str | None = None,
+    ) -> Prompt:
         """Convert Phoenix PromptVersion to domain entity."""
-        # Extract messages from the internal template
+
         template = getattr(phoenix_prompt, "_template", {})
-        messages = template.get("messages", []) if isinstance(template, dict) else []
+        raw_messages = template.get("messages", []) if isinstance(template, dict) else []
 
-        # Extract model name
-        model_name = getattr(phoenix_prompt, "_model_name", "")
-
-        # Extract description
-        desc = description or getattr(phoenix_prompt, "_description", None)
-
-        # Extract version id
-        version_id = phoenix_prompt.id or "v1"
-
-        domain_version = PromptVersion(
-            version_id=version_id,
-            content=messages,
-            model_name=model_name,
-        )
+        # Normalize Phoenix message format → domain format
+        messages = []
+        for msg in raw_messages:
+            role = msg.get("role", "")
+            raw_content = msg.get("content", "")
+            # Phoenix stores content as list of blocks or plain string
+            if isinstance(raw_content, list):
+                text = " ".join(
+                    block.get("text", "") for block in raw_content
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+            else:
+                text = str(raw_content)
+            messages.append({"role": role, "content": text})
 
         return Prompt(
             identifier=identifier or "",
-            description=desc,
-            current_version=domain_version
+            description=description or getattr(phoenix_prompt, "_description", None),
+            current_version=PromptVersion(
+                version_id=phoenix_prompt.id or "v1",
+                content=messages,
+                model_name=getattr(phoenix_prompt, "_model_name", ""),
+                tags=[],
+            ),
+            created_at=None,
+            updated_at=None,
         )

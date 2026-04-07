@@ -30,6 +30,7 @@ dependencies = [
     "miniopy-async>=1.21.0",
     "sqlalchemy[asyncio]>=2.0.0",
     "alembic>=1.13.0",
+    "cachetools>=7.0.5",
 ]
 
 [project.optional-dependencies]

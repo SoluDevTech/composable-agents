@@ -10,6 +10,7 @@ class PromptVersion(BaseModel):
     content: list[dict[str, str]] = Field(..., description="Messages with role/content")
     model_name: str
     tags: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None  # optional, Phoenix doesn't always return this
 
 
 class Prompt(BaseModel):

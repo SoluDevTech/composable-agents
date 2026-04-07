@@ -1,4 +1,4 @@
-"""Tests for PhoenixPromptManagerImpl."""
+"""Tests for PhoenixPromptManagerProvider."""
 
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -6,14 +6,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from phoenix.client.resources.prompts import PromptVersion as PhoenixPromptVersion
 
-from src.infrastructure.tracing.phoenix_prompt_manager import PhoenixPromptManagerImpl
+from src.infrastructure.prompt_management.phoenix_prompt_adapter import PhoenixPromptManagerProvider
 
 
-class TestPhoenixPromptManagerImpl:
+class TestPhoenixPromptManagerProvider:
     @pytest.fixture
     def manager(self):
-        with patch("src.infrastructure.tracing.phoenix_prompt_manager.Client"):
-            return PhoenixPromptManagerImpl(base_url="http://localhost:6006", api_key="test-key")
+        with patch("src.infrastructure.prompt_management.phoenix_prompt_adapter.Client"):
+            return PhoenixPromptManagerProvider(base_url="http://localhost:6006", api_key="test-key")
 
     @pytest.mark.asyncio
     async def test_create_prompt_success(self, manager):

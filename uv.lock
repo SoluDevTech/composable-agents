@@ -363,6 +363,15 @@ wheels = [
 ]
 
 [[package]]
+name = "cachetools"
+version = "7.0.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/af/dd/57fe3fdb6e65b25a5987fd2cdc7e22db0aef508b91634d2e57d22928d41b/cachetools-7.0.5.tar.gz", hash = "sha256:0cd042c24377200c1dcd225f8b7b12b0ca53cc2c961b43757e774ebe190fd990", size = 37367, upload-time = "2026-03-09T20:51:29.451Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/f3/39cf3367b8107baa44f861dc802cbf16263c945b62d8265d36034fc07bea/cachetools-7.0.5-py3-none-any.whl", hash = "sha256:46bc8ebefbe485407621d0a4264b23c080cedd913921bad7ac3ed2f26c183114", size = 13918, upload-time = "2026-03-09T20:51:27.33Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2025.11.12"
 source = { registry = "https://pypi.org/simple" }
@@ -542,6 +551,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
+    { name = "cachetools" },
     { name = "cryptography" },
     { name = "deepagents" },
     { name = "fastapi" },
@@ -595,6 +605,7 @@ requires-dist = [
     { name = "arize-phoenix-otel", marker = "extra == 'phoenix'", specifier = ">=0.1.0" },
     { name = "arize-phoenix-otel", marker = "extra == 'tracing'", specifier = ">=0.1.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
+    { name = "cachetools", specifier = ">=7.0.5" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "deepagents", specifier = ">=0.3.12" },
     { name = "fastapi", specifier = ">=0.128.4" },

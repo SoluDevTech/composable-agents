@@ -31,7 +31,7 @@ from src.infrastructure.persistent_registry.adapter import PersistentAgentRegist
 from src.infrastructure.postgres_repository.adapter import PostgresAgentConfigRepository
 from src.infrastructure.postgres_thread.adapter import PostgresThreadRepository
 from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
-from src.infrastructure.tracing.phoenix_prompt_manager import PhoenixPromptManagerImpl
+from src.infrastructure.prompt_management.phoenix_prompt_adapter import PhoenixPromptManagerProvider
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 
 logger = logging.getLogger("composable-agents")
@@ -81,7 +81,7 @@ def _create_tracing_provider(settings: Settings):
 def get_prompt_manager() -> PromptManager:
     """Provide PromptManager implementation."""
     tracing = settings.tracing
-    return PhoenixPromptManagerImpl(
+    return PhoenixPromptManagerProvider(
         base_url=tracing.phoenix_collector_endpoint,
         api_key=tracing.phoenix_api_key,
     )

@@ -22,7 +22,6 @@ class CreatePromptUseCase:
     ) -> PromptVersion:
         """Create a new prompt."""
         logger.info(f"Creating prompt: {identifier}")
-        print(identifier, content, model_name, description, tags)
         prompt = await self._prompt_manager.create_prompt(
             identifier=identifier,
             content=content,
