@@ -122,6 +122,7 @@ def _resolve_interrupt_on(config: AgentConfig) -> dict | None:
 async def _resolve_subagents(
     config: AgentConfig,
     mcp_tool_loader: McpToolLoader | None = None,
+    prompt_manager: PromptManager | None = None,
 ) -> list | None:
     """Convertit les configs de sous-agents.
 
@@ -143,6 +144,14 @@ async def _resolve_subagents(
         all_tools = (local_tools or []) + mcp_tools if (local_tools or mcp_tools) else None
 
         instructions = sa.instructions
+        if prompt_manager:
+            try:
+                content = await prompt_manager.get_prompt_content(sa.name)
+                instructions = content.get("content")
+            except Exception:
+                logger.warning(f"Could not load system prompt for sub-agent '{sa.name}' from Phoenix, using YAML instructions if available.")
+                instructions = sa.instructions
+
         if sa.response_format:
             response_tool = _create_response_tool(sa.response_format)
             all_tools = (all_tools or []) + [response_tool]
@@ -232,7 +241,7 @@ async def create_agent_from_config(
     if config.response_format:
         kwargs["response_format"] = ProviderStrategy(config.response_format)
 
-    subagents = await _resolve_subagents(config, mcp_tool_loader)
+    subagents = await _resolve_subagents(config, mcp_tool_loader, prompt_manager)
     if subagents:
         kwargs["subagents"] = subagents
         logger.info("Agent '%s' has %d subagents", config.name, len(subagents))

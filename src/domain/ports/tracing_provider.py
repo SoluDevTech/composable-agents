@@ -17,7 +17,3 @@ class TracingProvider(ABC):
     async def shutdown(self) -> None:
         """Clean shutdown of the tracing provider."""
         ...
-
-    def record_cost(self, input_tokens: int = 0, output_tokens: int = 0, model: str = "unknown") -> None:
-        """Record token usage and cost for a request."""
-        pass
