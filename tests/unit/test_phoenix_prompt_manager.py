@@ -52,7 +52,7 @@ class TestPhoenixPromptManagerProvider:
         mock_prompt_obj.tags = []
 
         manager._client.prompts.create = MagicMock(return_value=mock_prompt_obj)
-        manager._client.prompts.tag = MagicMock()
+        manager._client.prompts.tag.create = MagicMock()
 
         await manager.create_prompt(
             identifier="test-prompt",
@@ -61,7 +61,7 @@ class TestPhoenixPromptManagerProvider:
             tags=["tag1", "tag2"],
         )
 
-        assert manager._client.prompts.tag.call_count == 2
+        assert manager._client.prompts.tags.create.call_count == 2
 
     @pytest.mark.asyncio
     async def test_get_prompt_not_found(self, manager):

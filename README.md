@@ -588,7 +588,8 @@ curl -X POST http://localhost:8000/prompts/create \
     ],
     "model_name": "claude-sonnet-4-5-20250929",
     "description": "Prompt for general customer support queries",
-    "tags": ["support", "production"]
+    "tags": ["production"],
+    "metadata": {"project_name": "composable-agents", "agent_type": "deep_agent"}
   }'
 ```
 
@@ -663,7 +664,9 @@ curl -X PUT http://localhost:8000/prompts/update/customer-support \
       }
     ],
     "model_name": "claude-sonnet-4-5-20250929",
-    "description": "Updated prompt for customer support (more detailed)"
+    "description": "Updated prompt for customer support (more detailed)",
+    "tags": ["production"],
+    "metadata": {"project_name": "composable-agents", "agent_type": "deep_agent"}
   }'
 ```
 

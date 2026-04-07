@@ -31,6 +31,7 @@ class PromptManager(ABC):
         model_name: str,
         description: str | None = None,
         tags: list[str] | None = None,
+        metadata: dict | None = None,
     ) -> PromptVersion:
         """Create a new prompt."""
         ...
@@ -42,6 +43,7 @@ class PromptManager(ABC):
         content: list[dict[str, str]] | None = None,
         model_name: str | None = None,
         description: str | None = None,
+        metadata: dict | None = None,
     ) -> PromptVersion:
         """Update an existing prompt (creates new version)."""
         ...

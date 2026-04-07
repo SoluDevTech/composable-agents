@@ -19,6 +19,7 @@ class UpdatePromptUseCase:
         content: list[dict[str, str]] | None = None,
         model_name: str | None = None,
         description: str | None = None,
+        metadata: dict | None = None,
     ) -> PromptVersion:
         """Update a prompt."""
         logger.info(f"Updating prompt: {identifier}")
@@ -27,6 +28,7 @@ class UpdatePromptUseCase:
             content=content,
             model_name=model_name,
             description=description,
+            metadata=metadata,
         )
         logger.info(f"Prompt updated successfully: {identifier}")
         return prompt

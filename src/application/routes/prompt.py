@@ -31,6 +31,7 @@ async def create_prompt(
             model_name=request.model_name,
             description=request.description,
             tags=request.tags,
+            metadata=request.metadata,
         )
         return {"status": "success", "prompt": prompt}
     except Exception as e:
@@ -73,6 +74,7 @@ async def update_prompt(
             content=request.content,
             model_name=request.model_name,
             description=request.description,
+            metadata=request.metadata,
         )
         return {"status": "success", "prompt": prompt}
     except Exception as e:

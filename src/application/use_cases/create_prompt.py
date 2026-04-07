@@ -19,6 +19,7 @@ class CreatePromptUseCase:
         model_name: str,
         description: str | None = None,
         tags: list[str] | None = None,
+        metadata: dict | None = None,
     ) -> PromptVersion:
         """Create a new prompt."""
         logger.info(f"Creating prompt: {identifier}")
@@ -28,6 +29,7 @@ class CreatePromptUseCase:
             model_name=model_name,
             description=description,
             tags=tags,
+            metadata=metadata,
         )
         logger.info(f"Prompt created successfully: {identifier}")
         return prompt

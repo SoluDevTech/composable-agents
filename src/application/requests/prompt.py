@@ -7,9 +7,11 @@ class CreatePromptRequest(BaseModel):
     model_name: str
     description: str | None = None
     tags: list[str] | None = None
+    metadata : dict | None = None
 
 
 class UpdatePromptRequest(BaseModel):
     content: list[dict[str, str]] | None = None
     model_name: str | None = None
     description: str | None = None
+    metadata : dict | None = None

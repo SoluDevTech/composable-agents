@@ -80,6 +80,7 @@ class PhoenixPromptManagerProvider(PromptManager):
         model_name: str,
         description: str | None = None,
         tags: list[str] | None = None,
+        metadata: dict | None = None,
     ) -> PhoenixPromptVersion:
         """Create a new prompt in Phoenix."""
         if not self._client:
@@ -90,12 +91,16 @@ class PhoenixPromptManagerProvider(PromptManager):
                 name=identifier,
                 version=PhoenixPromptVersion(content, model_name=model_name),
                 prompt_description=description,
+                prompt_metadata=metadata,
             )
 
-            if tags:
+            if tags and prompt_obj.id:
                 for tag in tags:
                     try:
-                        self._client.prompts.tag(prompt_identifier=identifier, tag=tag)
+                        self._client.prompts.tags.create(
+                            prompt_version_id=prompt_obj.id,
+                            name=tag,
+                        )
                     except Exception as tag_error:
                         logger.warning(f"Failed to add tag {tag}: {tag_error}")
 
