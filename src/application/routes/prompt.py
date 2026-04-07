@@ -38,6 +38,7 @@ async def create_prompt(
         logger.error(f"Error creating prompt: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/get/{identifier}")
 async def get_prompt(
     identifier: str,
@@ -57,7 +58,6 @@ async def get_prompt(
     except Exception as e:
         logger.error(f"Error getting prompt: {e}")
         raise HTTPException(status_code=404, detail=str(e))
-
 
 
 @router.put("/update/{identifier}")

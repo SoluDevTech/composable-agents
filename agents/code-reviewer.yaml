@@ -17,8 +17,10 @@ hitl:
         - reject
 subagents:
   - name: security-auditor
+    model: "openai:anthropic/claude-haiku-4.5:nitro"
     description: "Specialized in security vulnerability analysis"
     instructions: "Focus on OWASP Top 10 and common security patterns"
   - name: performance-analyst
+    model: "openai:anthropic/claude-haiku-4.5:nitro"
     description: "Specialized in performance optimization"
     instructions: "Analyze time complexity, memory usage, and bottlenecks"

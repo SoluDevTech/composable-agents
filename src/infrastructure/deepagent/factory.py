@@ -245,8 +245,11 @@ async def create_agent_from_config(
     if subagents:
         kwargs["subagents"] = subagents
         logger.info("Agent '%s' has %d subagents", config.name, len(subagents))
-
-    graph = create_deep_agent(**kwargs)
+    try:
+        graph = create_deep_agent(**kwargs)
+    except Exception as e:
+        logger.error(f"Error creating agent '{config.name}': {e}")
+        raise
     logger.info("Agent '%s' created successfully", config.name)
     return graph
 
