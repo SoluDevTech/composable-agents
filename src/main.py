@@ -12,6 +12,7 @@ from src.application.routes.chat import router as chat_router
 from src.application.routes.health import router as health_router
 from src.application.routes.threads import router as threads_router
 from src.application.routes.websocket import router as websocket_router
+from src.config import Settings
 from src.dependencies import (
     close_persistence,
     init_persistence,
@@ -31,10 +32,25 @@ from src.domain.exceptions import (
     ThreadNotFoundError,
 )
 
+log_level = getattr(logging, Settings().log_level.upper(), logging.INFO)
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+
+for _name in (
+    "langchain",
+    "langchain_core",
+    "langchain_community",
+    "langgraph",
+    "openai",
+    "httpx",
+    "httpcore",
+    "alembic",
+    "sqlalchemy",
+):
+    logging.getLogger(_name).setLevel(log_level)
 
 logger = logging.getLogger("composable-agents")
 

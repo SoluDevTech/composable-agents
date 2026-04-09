@@ -1,0 +1,110 @@
+name: real-estate-single-haikuv4-property
+model: openai:anthropic/claude-haiku-4.5:nitro
+system_prompt: |
+  Tu es un extracteur de données spécialisé dans les documents immobiliers (crowdfunding).
+
+  ## Objectif
+
+  L'utilisateur te donne un identifiant de projet (working_dir). Tu dois extraire toutes les données
+  factuelles des documents de ce projet en utilisant l'outil query_knowledge_base.
+
+  ## Règles STRICTES
+
+  - Retourne UNIQUEMENT les données trouvées dans les documents.
+  - Si une donnée n'est pas trouvée, retourne null.
+  - Normalise les montants en nombres : "450K €" → 450000, "1,2 M€" → 1200000.
+  - Normalise les surfaces : "120 m²" → 120.
+  - Pour les durées : "18 mois" → 18, "2 ans" → 24.
+
+  ## Méthode
+
+  Utilise l'outil query_knowledge_base avec le working_dir fourni.
+  Fais plusieurs requêtes thématiques :
+  1. "prix acquisition vente montant financement prêt garantie apport travaux"
+  2. "durée projet calendrier planning mois"
+  3. "surface habitable adresse bien immobilier localisation type appartement maison immeuble"
+  4. "loyer mensuel charges locatives lots unités nombre"
+  5. "année construction étage ascenseur pièces salles bain terrain jardin balcon terrasse DPE"
+  6. "bilan comptable résultat net exercice chiffre affaires"
+  7. "capitaux propres dette endettement ancienneté société création"
+
+response_format:
+  title: RealEstateExtraction
+  type: object
+  properties:
+    property:
+      type: object
+      properties:
+        living_area:
+          type: number
+          description: "Surface habitable en m²"
+        address:
+          type: string
+          description: "Adresse complète du bien"
+        property_type:
+          type: string
+          description: "Type : appartement, maison, immeuble, terrain, local commercial, parking"
+        monthly_rent_excluding_tax:
+          type: number
+          description: "Loyer mensuel hors taxes en EUR"
+        annual_charges:
+          type: number
+          description: "Charges annuelles en EUR"
+        presold_units:
+          type: integer
+          description: "Nombre de lots pré-commercialisés"
+        total_units:
+          type: integer
+          description: "Nombre total de lots/unités"
+        lots:
+          type: string
+          description: "Description textuelle des lots (ex: 3 T2 + 2 T3)"
+        lots_detail:
+          type: array
+          description: "Détail structuré des lots"
+          items:
+            type: object
+            properties:
+              lot_type:
+                type: string
+                description: "Type de lot : studio, T1, T2, T3, T4, T5, local commercial"
+              living_area:
+                type: number
+                description: "Surface habitable du lot en m²"
+        building_year:
+          type: integer
+          description: "Année de construction"
+        number_of_rooms:
+          type: integer
+          description: "Nombre de pièces principales"
+        condition:
+          type: string
+          description: "État : neuf, rénové récemment, bon état, à rénover"
+        land_area:
+          type: number
+          description: "Surface du terrain en m²"
+        floor_number:
+          type: integer
+          description: "Étage (0 = rez-de-chaussée)"
+        has_lift:
+          type: boolean
+          description: "Présence d'un ascenseur"
+        number_of_bathrooms:
+          type: integer
+          description: "Nombre de salles de bain/eau"
+        garden_area:
+          type: number
+          description: "Surface du jardin en m²"
+        balcony_area:
+          type: number
+          description: "Surface balcon/terrasse en m²"
+        energy_label:
+          type: string
+          description: "DPE : A, B, C, D, E, F, G"
+  required:
+    - property
+mcp_servers:
+  - name: raganything
+    transport: http
+    url: http://raganything-api:8000/mcp/
+    auth_token: ""

@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 from collections.abc import AsyncIterator
 
 from langgraph.types import Command
@@ -89,34 +90,49 @@ class DeepAgentRunner(AgentRunner):
         )
 
     async def invoke(self, thread_id: str, message: str) -> Message:
-        """Envoie un message et retourne la reponse complete."""
         config = self._build_config(thread_id)
         logger.info("[thread=%s] Invoking agent", thread_id)
         logger.debug("[thread=%s] Message: %s", thread_id, message[:200])
         try:
+            start = time.monotonic()
             result = await self._graph.ainvoke(
                 {"messages": [{"role": "human", "content": message}]},
                 config=config,
             )
+            elapsed = time.monotonic() - start
             response = self._build_response(result, config)
-            logger.info("[thread=%s] Invoke complete, status=%s", thread_id, response.status)
+            logger.info("[thread=%s] Invoke complete, status=%s, elapsed=%.2fs", thread_id, response.status, elapsed)
             return response
         except Exception as e:
             logger.exception("[thread=%s] Agent execution error", thread_id)
             raise AgentError(f"Agent execution error: {e}") from e
 
     async def stream(self, thread_id: str, message: str) -> AsyncIterator[str]:
-        """Envoie un message et streame la reponse par chunks."""
         config = self._build_config(thread_id)
         logger.info("[thread=%s] Streaming agent response", thread_id)
         try:
+            start = time.monotonic()
+            first_chunk = True
+            chunk_count = 0
             async for chunk, _metadata in self._graph.astream(
                 {"messages": [{"role": "human", "content": message}]},
                 config=config,
                 stream_mode="messages",
             ):
                 if hasattr(chunk, "content") and chunk.content and chunk.type == "AIMessageChunk":
+                    if first_chunk:
+                        logger.info(
+                            "[thread=%s] First chunk received, elapsed=%.2fs", thread_id, time.monotonic() - start
+                        )
+                        first_chunk = False
+                    chunk_count += 1
                     yield chunk.content
+            logger.info(
+                "[thread=%s] Stream complete, %d chunks, elapsed=%.2fs",
+                thread_id,
+                chunk_count,
+                time.monotonic() - start,
+            )
         except Exception as e:
             logger.exception("[thread=%s] Streaming error", thread_id)
             raise AgentError(f"Streaming error: {e}") from e
@@ -125,11 +141,15 @@ class DeepAgentRunner(AgentRunner):
         config = self._build_config(thread_id)
         logger.info("[thread=%s] HITL approve", thread_id)
         try:
+            start = time.monotonic()
             result = await self._graph.ainvoke(
                 Command(resume={"decisions": [{"type": "approve"}]}),
                 config=config,
             )
-            return self._build_response(result, config)
+            elapsed = time.monotonic() - start
+            response = self._build_response(result, config)
+            logger.info("[thread=%s] HITL approve complete, elapsed=%.2fs", thread_id, elapsed)
+            return response
         except Exception as e:
             logger.exception("HITL approve error")
             raise AgentError(f"HITL approve error: {e}") from e
@@ -138,11 +158,15 @@ class DeepAgentRunner(AgentRunner):
         config = self._build_config(thread_id)
         logger.info("[thread=%s] HITL reject, reason=%s", thread_id, reason)
         try:
+            start = time.monotonic()
             result = await self._graph.ainvoke(
                 Command(resume={"decisions": [{"type": "reject", "message": reason or ""}]}),
                 config=config,
             )
-            return self._build_response(result, config)
+            elapsed = time.monotonic() - start
+            response = self._build_response(result, config)
+            logger.info("[thread=%s] HITL reject complete, elapsed=%.2fs", thread_id, elapsed)
+            return response
         except Exception as e:
             logger.exception("HITL reject error")
             raise AgentError(f"HITL reject error: {e}") from e
@@ -151,9 +175,9 @@ class DeepAgentRunner(AgentRunner):
         config = self._build_config(thread_id)
         logger.info("[thread=%s] HITL edit, tool_call_id=%s", thread_id, tool_call_id)
         try:
-            # Resolve tool name from graph state
+            start = time.monotonic()
             state = self._graph.get_state(config)
-            tool_name = tool_call_id  # fallback
+            tool_name = tool_call_id
             for msg in state.values.get("messages", []):
                 if hasattr(msg, "tool_calls"):
                     for tc in msg.tool_calls:
@@ -164,7 +188,10 @@ class DeepAgentRunner(AgentRunner):
                 Command(resume={"decisions": [{"type": "edit", "edited_action": {"name": tool_name, "args": edits}}]}),
                 config=config,
             )
-            return self._build_response(result, config)
+            elapsed = time.monotonic() - start
+            response = self._build_response(result, config)
+            logger.info("[thread=%s] HITL edit complete, elapsed=%.2fs", thread_id, elapsed)
+            return response
         except Exception as e:
             logger.exception("HITL edit error")
             raise AgentError(f"HITL edit error: {e}") from e

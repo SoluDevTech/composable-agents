@@ -1,4 +1,5 @@
 import logging
+import time
 
 from src.application.requests.chat import ChatRequest
 from src.domain.entities.message import Message, MessageRole
@@ -23,7 +24,17 @@ class SendMessageUseCase:
             logger.info("[thread=%s][agent=%s] Sending human message", thread_id, thread.agent_name)
             human_msg = Message(role=MessageRole.HUMAN, content=request.message)
             await self._threads.add_message(thread_id, human_msg)
+            start = time.monotonic()
             response = await runner.invoke(thread_id, request.message)
+            elapsed = time.monotonic() - start
+            logger.info(
+                "[thread=%s][agent=%s] Invoke elapsed=%.2fs, status=%s, len=%d",
+                thread_id,
+                thread.agent_name,
+                elapsed,
+                response.status,
+                len(response.content or ""),
+            )
         else:
             logger.info(
                 "[thread=%s][agent=%s] HITL action=%s tool_call_id=%s",
@@ -32,6 +43,7 @@ class SendMessageUseCase:
                 request.action,
                 request.tool_call_id,
             )
+            start = time.monotonic()
             match request.action:
                 case "approve":
                     response = await runner.approve_hitl(thread_id, request.tool_call_id)
@@ -41,13 +53,14 @@ class SendMessageUseCase:
                     response = await runner.edit_hitl(thread_id, request.tool_call_id, request.edits)
                 case _:
                     raise ValueError(f"Unsupported HITL action: {request.action}")
+            elapsed = time.monotonic() - start
+            logger.info(
+                "[thread=%s][agent=%s] HITL elapsed=%.2fs, status=%s",
+                thread_id,
+                thread.agent_name,
+                elapsed,
+                response.status,
+            )
 
         await self._threads.add_message(thread_id, response)
-        logger.info(
-            "[thread=%s][agent=%s] Response received, status=%s len=%d",
-            thread_id,
-            thread.agent_name,
-            response.status,
-            len(response.content or ""),
-        )
         return response

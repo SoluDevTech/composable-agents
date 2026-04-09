@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     host: str = "0.0.0.0"
     port: int = 8000
+    log_level: str = "INFO"
     tracing: TracingSettings = TracingSettings()
 
     minio_endpoint: str = "localhost:9040"

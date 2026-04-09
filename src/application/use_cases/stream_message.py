@@ -1,4 +1,5 @@
 import logging
+import time
 from collections.abc import AsyncGenerator
 
 from src.domain.entities.message import Message, MessageRole
@@ -20,6 +21,7 @@ class StreamMessageUseCase:
         human_msg = Message(role=MessageRole.HUMAN, content=message)
         await self._threads.add_message(thread_id, human_msg)
         runner = await self._registry.get_runner(thread.agent_name)
+        start = time.monotonic()
         logger.info("[thread=%s][agent=%s] Stream started", thread_id, thread.agent_name)
         full_response = []
         chunk_count = 0
@@ -33,12 +35,14 @@ class StreamMessageUseCase:
                 "[thread=%s][agent=%s] Stream error after %d chunks", thread_id, thread.agent_name, chunk_count
             )
             raise
+        elapsed = time.monotonic() - start
         ai_msg = Message(role=MessageRole.AI, content="".join(full_response))
         await self._threads.add_message(thread_id, ai_msg)
         logger.info(
-            "[thread=%s][agent=%s] Stream complete, %d chunks, %d chars",
+            "[thread=%s][agent=%s] Stream complete, %d chunks, %d chars, elapsed=%.2fs",
             thread_id,
             thread.agent_name,
             chunk_count,
             len(ai_msg.content),
+            elapsed,
         )
