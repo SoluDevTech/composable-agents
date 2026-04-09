@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from src.application.routes.agents import router as agents_router
 from src.application.routes.chat import router as chat_router
 from src.application.routes.health import router as health_router
+from src.application.routes.prompt import router as prompt_router
 from src.application.routes.threads import router as threads_router
 from src.application.routes.websocket import router as websocket_router
 from src.config import Settings
@@ -125,6 +126,7 @@ app.include_router(threads_router)
 app.include_router(chat_router)
 app.include_router(agents_router)
 app.include_router(websocket_router)
+app.include_router(prompt_router)
 
 
 @app.exception_handler(AgentConfigAlreadyExistsError)
@@ -179,3 +181,8 @@ async def agent_error_handler(_request: Request, exc: AgentError) -> JSONRespons
 async def domain_error_handler(_request: Request, exc: DomainError) -> JSONResponse:
     logger.error("Domain error: %s", exc)
     return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

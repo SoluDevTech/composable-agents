@@ -29,11 +29,7 @@ cp .env.example .env
 Edit `.env` and add your API key and database credentials:
 
 ```dotenv
-ANTHROPIC_API_KEY=sk-ant-...
-# or
 OPENAI_API_KEY=sk-...
-# or
-GOOGLE_API_KEY=...
 
 # PostgreSQL (required)
 POSTGRES_HOST=localhost
@@ -62,7 +58,7 @@ uv run python -m src validate agents/my-agent.yaml
 ### Launch the server
 
 ```bash
-uv run python -m src serve
+uv run python -m src.main serve
 ```
 
 The API starts on `http://localhost:8000`. On startup, the server:
@@ -280,6 +276,9 @@ All endpoints are prefixed appropriately. The server runs on `http://localhost:8
 | `GET` | `/api/v1/agents` | List all agent configs from `agents/` directory | `200` |
 | `GET` | `/api/v1/agents/{agent_name}` | Get a specific agent configuration | `200` |
 | `WS` | `/api/v1/ws/{thread_id}` | WebSocket endpoint for streaming chat | -- |
+| `POST` | `/prompts/create` | Create a new prompt | `200` |
+| `GET` | `/prompts/get/{identifier}` | Get a specific prompt by identifier, version, or tag | `200` |
+| `PUT` | `/prompts/update/{identifier}` | Update an existing prompt (creates new version) | `200` |
 
 ### Error Responses
 
@@ -569,6 +568,127 @@ curl -X DELETE http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef12
 
 Response: `204 No Content`
 
+### 14. Prompt Management
+
+Prompts are managed via a dedicated registry backed by Phoenix. Enable prompt management by setting `TRACING_PROVIDER=phoenix` and `PHOENIX_PROMPT_ENABLED=true` in your `.env`.
+
+#### 14.1 Create a Prompt
+
+```bash
+curl -X POST http://localhost:8000/prompts/create \
+  -H "Content-Type: application/json" \
+  -d '{
+    "identifier": "customer-support",
+    "content": [
+      {
+        "role": "system",
+        "content": "You are a helpful customer support agent. Be polite and professional."
+      }
+    ],
+    "model_name": "claude-sonnet-4-5-20250929",
+    "description": "Prompt for general customer support queries",
+    "tags": ["production"],
+    "metadata": {"project_name": "composable-agents", "agent_type": "deep_agent"}
+  }'
+```
+
+Response (`200`):
+
+```json
+{
+  "status": "success",
+  "prompt": {
+    "identifier": "customer-support",
+    "description": "Prompt for general customer support queries",
+    "current_version": {
+      "version_id": "v1",
+      "content": [...],
+      "model_name": "claude-sonnet-4-5-20250929",
+      "created_at": "2025-01-15T10:30:00.000000",
+      "tags": ["support", "production"]
+    },
+    "created_at": "2025-01-15T10:30:00.000000",
+    "updated_at": "2025-01-15T10:30:00.000000"
+  }
+}
+```
+
+#### 14.2 List All Prompts
+
+```bash
+curl http://localhost:8000/prompts/customer-support
+```
+
+Optional query parameters:
+- `version_id`: Get a specific version
+- `tag`: Get the prompt with a specific tag
+
+Response (`200`):
+
+```json
+{
+    "status": "success",
+    "prompt": {
+        "identifier": "customer-support",
+        "description": "",
+        "current_version": {
+            "version_id": "UHJvbXB0VmVyc2lvbjo4Mw==",
+            "content": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful customer support agent. Be polite and professional."
+                }
+            ],
+            "model_name": "claude-sonnet-4-5-20250929",
+            "tags": []
+        },
+        "created_at": null,
+        "updated_at": null
+    }
+}
+```
+
+#### 14.3 Update a Prompt
+
+Create a new version of an existing prompt:
+
+```bash
+curl -X PUT http://localhost:8000/prompts/update/customer-support \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": [
+      {
+        "role": "system",
+        "content": "You are a knowledgeable customer support agent. Be polite, professional, and thorough in your responses."
+      }
+    ],
+    "model_name": "claude-sonnet-4-5-20250929",
+    "description": "Updated prompt for customer support (more detailed)",
+    "tags": ["production"],
+    "metadata": {"project_name": "composable-agents", "agent_type": "deep_agent"}
+  }'
+```
+
+Response (`200`):
+
+```json
+{
+  "status": "success",
+  "prompt": {
+    "identifier": "customer-support",
+    "description": "Updated prompt for customer support (more detailed)",
+    "current_version": {
+      "version_id": "v2",
+      "content": [...],
+      "model_name": "claude-sonnet-4-5-20250929",
+      "created_at": "2025-01-15T10:31:00.000000",
+      "tags": ["support", "production"]
+    }
+  },
+  "message": "Prompt 'customer-support' updated successfully"
+}
+```
+
 ### WebSocket
 
 Connect to the WebSocket endpoint and send JSON messages:
@@ -584,6 +704,49 @@ ws.onmessage = (event) => {
   }
 };
 ```
+
+---
+
+## Prompt Management Setup
+
+To enable prompt management in Phoenix:
+
+### 1. Install Optional Dependencies
+
+```bash
+uv sync --extra phoenix
+```
+
+Or add to `pyproject.toml`:
+```toml
+arize-phoenix-otel = ">=0.1.0"
+openinference-instrumentation-langchain = ">=0.1.0"
+httpx = ">=0.27.0"
+```
+
+### 2. Configure Environment Variables
+
+Add to `.env`:
+
+```dotenv
+PROVIDER=phoenix
+PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006
+PHOENIX_PROMPT_ENABLED=true
+PHOENIX_API_KEY=your-api-key-here
+```
+
+### 3. Architecture
+
+Prompt management follows the **Clean Architecture** pattern:
+
+- **Domain Entity** (`src/domain/entities/prompt.py`): `Prompt`, `PromptVersion`
+- **Domain Port** (`src/domain/ports/prompt_manager.py`): `PromptManager` interface
+- **Use Cases** (`src/application/use_cases/`): `CreatePromptUseCase`, `GetPromptUseCase`, `SearchPromptsUseCase`, `UpdatePromptUseCase`
+- **Request DTOs** (`src/application/requests/prompt.py`): Request models for each endpoint
+- **Routes** (`src/application/routes/prompts.py`): FastAPI endpoint handlers
+- **Infrastructure Adapter** (`src/infrastructure/tracing/phoenix_prompt_manager.py`): Phoenix REST API implementation
+
+All prompt management operations are async and fully integrated with the FastAPI dependency injection system.
 
 ---
 
@@ -901,9 +1064,7 @@ Configured via `.env` file or environment variables. See `.env.example`.
 | Variable | Default | Description |
 |---|---|---|
 | `AGENTS_DIR` | `./agents` | Directory containing agent YAML configuration files. |
-| `ANTHROPIC_API_KEY` | -- | API key for Anthropic models. |
 | `OPENAI_API_KEY` | -- | API key for OpenAI models. |
-| `GOOGLE_API_KEY` | -- | API key for Google models. |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL for OpenAI-compatible endpoints. Set to use OpenRouter, LiteLLM, vLLM, etc. |
 | `HOST` | `0.0.0.0` | Server bind host. |
 | `PORT` | `8000` | Server bind port. |
@@ -935,15 +1096,9 @@ The async connection URL is built automatically as `postgresql+asyncpg://<user>:
 | Variable | Default | Description |
 |---|---|---|
 | `TRACING_PROVIDER` | `none` | Tracing backend: `none`, `langfuse`, or `phoenix`. |
-| `TRACING_ENABLED` | `false` | Enable/disable tracing. |
 | `TRACING_PROJECT_NAME` | `composable-agents` | Project name for the tracing backend. |
-| `LANGFUSE_HOST` | `https://cloud.langfuse.com` | Langfuse server URL. |
-| `LANGFUSE_PUBLIC_KEY` | -- | Langfuse public key. |
-| `LANGFUSE_SECRET_KEY` | -- | Langfuse secret key. |
 | `PHOENIX_COLLECTOR_ENDPOINT` | `http://localhost:6006` | Phoenix collector endpoint. |
 | `PHOENIX_API_KEY` | -- | Phoenix API key. |
-| `LANGCHAIN_API_KEY` | -- | LangChain/LangSmith API key. |
-| `LANGCHAIN_PROJECT` | `composable-agents` | LangChain/LangSmith project name. |
 
 ---
 
