@@ -72,8 +72,11 @@ class TestPhoenixPromptManagerProvider:
 
     @pytest.mark.asyncio
     async def test_add_tag(self, manager):
-        manager._client.prompts.tag = MagicMock()
+        manager._client.prompts.tag.create = MagicMock()
 
         await manager.add_tag("test-prompt", "new-tag")
 
-        manager._client.prompts.tag.assert_called_once_with(prompt_identifier="test-prompt", tag="new-tag")
+        manager._client.prompts.tags.create.assert_called_once_with(
+            prompt_version_id="test-prompt",
+            name="new-tag",
+        )

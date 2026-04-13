@@ -34,7 +34,7 @@ dependencies = [
     "arize-phoenix-otel==0.15.0",
     "openinference-instrumentation-langchain==0.1.62",
     "arize-phoenix-client==2.3.0",
-
+    "tenacity>=8.0.0"
 ]
 [dependency-groups]
 dev = [
