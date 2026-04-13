@@ -15,6 +15,7 @@ from pydantic import create_model
 
 from src.domain.entities.agent_config import AgentConfig, BackendType
 from src.domain.ports.mcp_tool_loader import McpToolLoader
+from src.domain.ports.prompt_manager import PromptManager
 
 logger = logging.getLogger("composable-agents")
 
@@ -121,6 +122,7 @@ def _resolve_interrupt_on(config: AgentConfig) -> dict | None:
 async def _resolve_subagents(
     config: AgentConfig,
     mcp_tool_loader: McpToolLoader | None = None,
+    prompt_manager: PromptManager | None = None,
 ) -> list | None:
     """Convertit les configs de sous-agents.
 
@@ -142,6 +144,14 @@ async def _resolve_subagents(
         all_tools = (local_tools or []) + mcp_tools if (local_tools or mcp_tools) else None
 
         instructions = sa.instructions
+        if prompt_manager:
+            try:
+                content = await prompt_manager.get_prompt_content(sa.name)
+                instructions = content.get("content")
+            except Exception:
+                logger.warning(f"Could not load system prompt for sub-agent '{sa.name}' from Phoenix, using YAML instructions if available.")
+                instructions = sa.instructions
+
         if sa.response_format:
             response_tool = _create_response_tool(sa.response_format)
             all_tools = (all_tools or []) + [response_tool]
@@ -175,6 +185,7 @@ def _resolve_tools_list(tool_paths: list[str]) -> list | None:
 async def create_agent_from_config(
     config: AgentConfig,
     mcp_tool_loader: McpToolLoader | None = None,
+    prompt_manager: PromptManager | None = None,
 ):
     """Create a compiled Deep Agent from configuration.
 
@@ -189,6 +200,7 @@ async def create_agent_from_config(
     checkpointer = MemorySaver()
     store = InMemoryStore()
     interrupt_on = _resolve_interrupt_on(config)
+    system_prompt = None
 
     local_tools = _resolve_tools(config)
     mcp_tools: list = []
@@ -199,10 +211,14 @@ async def create_agent_from_config(
     all_tools = (local_tools or []) + mcp_tools if (local_tools or mcp_tools) else None
     logger.debug("Agent '%s' tools: %d total", config.name, len(all_tools) if all_tools else 0)
 
+    if prompt_manager:
+        system_prompt = await get_system_prompt_from_phoenix(config.name, prompt_manager)
+
     kwargs = {
         "name": config.name,
         "model": config.model,
-        "system_prompt": config.system_prompt,
+        # Fall back to YAML system_prompt
+        "system_prompt": system_prompt if system_prompt else config.system_prompt,
         "tools": all_tools,
         "middleware": [],
         "checkpointer": checkpointer,
@@ -225,11 +241,26 @@ async def create_agent_from_config(
     if config.response_format:
         kwargs["response_format"] = ProviderStrategy(config.response_format)
 
-    subagents = await _resolve_subagents(config, mcp_tool_loader)
+    subagents = await _resolve_subagents(config, mcp_tool_loader, prompt_manager)
     if subagents:
         kwargs["subagents"] = subagents
         logger.info("Agent '%s' has %d subagents", config.name, len(subagents))
-
-    graph = create_deep_agent(**kwargs)
+    try:
+        graph = create_deep_agent(**kwargs)
+    except Exception as e:
+        logger.error(f"Error creating agent '{config.name}': {e}")
+        raise
     logger.info("Agent '%s' created successfully", config.name)
     return graph
+
+
+# helper to get system_prompt from Phoenix
+async def get_system_prompt_from_phoenix(agent_name: str, prompt_manager: PromptManager | None = None) -> str | None:
+    """Get system_prompt from Phoenix for a given agent name."""
+    if not prompt_manager:
+        return None
+    try:
+        content = await prompt_manager.get_prompt_content(agent_name)
+        return content.get("content") if content else None
+    except Exception:
+        return None

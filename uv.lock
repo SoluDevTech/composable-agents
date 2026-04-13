@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -251,6 +251,24 @@ wheels = [
 ]
 
 [[package]]
+name = "arize-phoenix-client"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "openinference-instrumentation" },
+    { name = "openinference-semantic-conventions" },
+    { name = "opentelemetry-exporter-otlp" },
+    { name = "opentelemetry-sdk" },
+    { name = "tqdm" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3a/81/8f6fd4b7aeeddff6a0995038b075ed00d79119bc50284f0eda8bc2638a6a/arize_phoenix_client-2.3.0.tar.gz", hash = "sha256:06c5fdc947420cff14f5f2f35f6e8ba6074700033d3add6ea8ede61aa6b4da95", size = 177724, upload-time = "2026-04-03T16:16:12.368Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/d5/2e988e732ab2bb1e345fe52e8dae69a5f26ba232e3fbb964f7fe90b26049/arize_phoenix_client-2.3.0-py3-none-any.whl", hash = "sha256:0761a327dcb0b61177c86d8f3000aec40748849a3873b04670afee78dd7b987b", size = 173715, upload-time = "2026-04-03T16:16:10.872Z" },
+]
+
+[[package]]
 name = "arize-phoenix-otel"
 version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
@@ -342,6 +360,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/63/9a/fec38644694abfaaeca2798b58e276a8e61de49e2e37494ace423395febc/bracex-2.6.tar.gz", hash = "sha256:98f1347cd77e22ee8d967a30ad4e310b233f7754dbf31ff3fceb76145ba47dc7", size = 26642, upload-time = "2025-06-22T19:12:31.254Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9d/2a/9186535ce58db529927f6cf5990a849aa9e052eea3e2cfefe20b9e1802da/bracex-2.6-py3-none-any.whl", hash = "sha256:0b0049264e7340b3ec782b5cb99beb325f36c3782a32e36e876452fd49a09952", size = 11508, upload-time = "2025-06-22T19:12:29.781Z" },
+]
+
+[[package]]
+name = "cachetools"
+version = "7.0.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/af/dd/57fe3fdb6e65b25a5987fd2cdc7e22db0aef508b91634d2e57d22928d41b/cachetools-7.0.5.tar.gz", hash = "sha256:0cd042c24377200c1dcd225f8b7b12b0ca53cc2c961b43757e774ebe190fd990", size = 37367, upload-time = "2026-03-09T20:51:29.451Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/f3/39cf3367b8107baa44f861dc802cbf16263c945b62d8265d36034fc07bea/cachetools-7.0.5-py3-none-any.whl", hash = "sha256:46bc8ebefbe485407621d0a4264b23c080cedd913921bad7ac3ed2f26c183114", size = 13918, upload-time = "2026-03-09T20:51:27.33Z" },
 ]
 
 [[package]]
@@ -524,6 +551,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
+    { name = "cachetools" },
     { name = "cryptography" },
     { name = "deepagents" },
     { name = "fastapi" },
@@ -548,10 +576,12 @@ langfuse = [
     { name = "langfuse" },
 ]
 phoenix = [
+    { name = "arize-phoenix-client" },
     { name = "arize-phoenix-otel" },
     { name = "openinference-instrumentation-langchain" },
 ]
 tracing = [
+    { name = "arize-phoenix-client" },
     { name = "arize-phoenix-otel" },
     { name = "langfuse" },
     { name = "openinference-instrumentation-langchain" },
@@ -570,9 +600,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.13.0" },
+    { name = "arize-phoenix-client", marker = "extra == 'phoenix'", specifier = ">=2.3.0" },
+    { name = "arize-phoenix-client", marker = "extra == 'tracing'", specifier = ">=2.3.0" },
     { name = "arize-phoenix-otel", marker = "extra == 'phoenix'", specifier = ">=0.1.0" },
     { name = "arize-phoenix-otel", marker = "extra == 'tracing'", specifier = ">=0.1.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
+    { name = "cachetools", specifier = ">=7.0.5" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "deepagents", specifier = ">=0.3.12" },
     { name = "fastapi", specifier = ">=0.128.4" },
