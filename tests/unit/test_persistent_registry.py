@@ -105,7 +105,6 @@ class TestPersistentAgentRegistry:
                 name="agent-a",
                 model="gpt-4o",
                 minio_path="agent-configs/agent-a.yaml",
-                is_builtin=False,
                 created_at=now,
                 updated_at=now,
             ),

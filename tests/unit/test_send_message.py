@@ -2,7 +2,6 @@
 
 Uses real InMemoryThreadRepository (internal).
 Uses AsyncMock for AgentRunner (external - calls LLM).
-The DeepAgentRegistry is real but with patched factory to avoid LLM calls.
 """
 
 from unittest.mock import AsyncMock, MagicMock

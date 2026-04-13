@@ -19,7 +19,7 @@ class TestTracingDependencyInjection:
         monkeypatch.delenv("PROVIDER", raising=False)
         
         tracing = TracingSettings(provider="none", enabled=False)
-        settings = Settings(agents_dir="./agents", tracing=tracing)
+        settings = Settings(tracing=tracing)
         provider = _create_tracing_provider(settings)
 
         assert isinstance(provider, NoopTracingProvider)
@@ -28,7 +28,7 @@ class TestTracingDependencyInjection:
         """When langfuse is disabled, _create_tracing_provider returns NoopTracingProvider."""
     
         tracing = TracingSettings(provider="langfuse", enabled=False)
-        settings = Settings(agents_dir="./agents", tracing=tracing)
+        settings = Settings(tracing=tracing)
         provider = _create_tracing_provider(settings)
 
         assert isinstance(provider, NoopTracingProvider)
@@ -37,7 +37,7 @@ class TestTracingDependencyInjection:
         """When phoenix is disabled, _create_tracing_provider returns NoopTracingProvider."""
         
         tracing = TracingSettings(provider="phoenix", enabled=False)
-        settings = Settings(agents_dir="./agents", tracing=tracing)
+        settings = Settings(tracing=tracing)
         provider = _create_tracing_provider(settings)
 
         assert isinstance(provider, NoopTracingProvider)
@@ -46,7 +46,7 @@ class TestTracingDependencyInjection:
         """When provider is unknown, _create_tracing_provider returns NoopTracingProvider."""
         
         tracing = TracingSettings(provider="unknown", enabled=True)
-        settings = Settings(agents_dir="./agents", tracing=tracing)
+        settings = Settings(tracing=tracing)
         provider = _create_tracing_provider(settings)
 
         assert isinstance(provider, NoopTracingProvider)

@@ -1,3 +1,0 @@
-name: example-agent
-model: "openai:anthropic/claude-haiku-4.5:nitro"
-system_prompt: "You are a helpful assistant."

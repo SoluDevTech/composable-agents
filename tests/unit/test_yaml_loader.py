@@ -118,18 +118,3 @@ debug: true
         yaml_content = 'name: test-agent\nsystem_prompt_file: "./prompt.md"\n'
         with pytest.raises(ConfigError, match="system_prompt_file"):
             loader.load_from_string(yaml_content)
-
-    # -- load (file-based, existing tests) ---------------------------------
-
-    def test_loads_real_estate_extractor(self, loader):
-        """Verify real-estate-extractor.yaml loads with subagents, response_format, and MCP servers."""
-        config = loader.load("agents/real-estate-extractor.yaml")
-        assert config.name == "real-estate-extractor"
-        assert len(config.subagents) == 3
-
-        for sa in config.subagents:
-            assert sa.response_format is not None
-            assert sa.response_format["type"] == "object"
-            assert "properties" in sa.response_format
-            assert len(sa.mcp_servers) == 1
-            assert sa.mcp_servers[0].name == "raganything"

@@ -4,6 +4,9 @@ Uses real InMemoryThreadRepository (internal).
 Uses AsyncMock for AgentRegistry.get_runner (external dependency boundary).
 """
 
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
+
 import pytest
 
 from src.application.use_cases.thread_management import (
@@ -12,25 +15,50 @@ from src.application.use_cases.thread_management import (
     GetThreadUseCase,
     ListThreadsUseCase,
 )
+from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.exceptions import AgentNotFoundError, ThreadNotFoundError
-from src.infrastructure.deepagent.registry import DeepAgentRegistry
+from src.domain.ports.agent_config_repository import AgentConfigRepository
+from src.domain.ports.agent_config_store import AgentConfigStore
+from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
+
+VALID_YAML = (
+    "name: test-agent\n"
+    "model: test-model\n"
+    'system_prompt: "Test."\n'
+    "tools: []\n"
+    "debug: false\n"
+)
 
 
 class TestCreateThreadUseCase:
     @pytest.fixture
-    def agents_dir(self, tmp_path):
-        d = tmp_path / "agents"
-        d.mkdir()
-        (d / "test-agent.yaml").write_text("name: test-agent")
-        return d
+    def mock_store(self):
+        store = AsyncMock(spec=AgentConfigStore)
+        store.get.return_value = VALID_YAML
+        return store
 
     @pytest.fixture
-    def registry(self, agents_dir, mock_mcp_tool_loader):
-        """Real DeepAgentRegistry with real YAML files."""
-        return DeepAgentRegistry(
-            agents_dir=agents_dir,
+    def mock_repository(self):
+        repo = AsyncMock(spec=AgentConfigRepository)
+        now = datetime.now(UTC)
+        repo.list_all.return_value = [
+            AgentConfigMetadata(
+                name="test-agent",
+                model="test-model",
+                minio_path="test-agent.yaml",
+                created_at=now,
+                updated_at=now,
+            )
+        ]
+        return repo
+
+    @pytest.fixture
+    def registry(self, mock_store, mock_repository, mock_mcp_tool_loader):
+        return PersistentAgentRegistry(
             config_loader=YamlAgentConfigLoader(),
+            config_store=mock_store,
+            config_repository=mock_repository,
             mcp_tool_loader=mock_mcp_tool_loader,
         )
 
@@ -41,7 +69,10 @@ class TestCreateThreadUseCase:
         assert thread.agent_name == "test-agent"
         assert thread.id is not None
 
-    async def test_create_thread_unknown_agent_raises(self, thread_repo, registry):
+    async def test_create_thread_unknown_agent_raises(self, thread_repo, registry, mock_store):
+        from src.domain.exceptions import AgentNotFoundError as ANF
+
+        mock_store.get.side_effect = ANF("not found")
         use_case = CreateThreadUseCase(thread_repo, registry)
 
         with pytest.raises(AgentNotFoundError):

@@ -1,44 +1,25 @@
 import asyncio
 import logging
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+log_level_name = "INFO"
+log_level = logging.INFO
 
-from src.application.routes.agents import router as agents_router
-from src.application.routes.chat import router as chat_router
-from src.application.routes.health import router as health_router
-from src.application.routes.prompt import router as prompt_router
-from src.application.routes.threads import router as threads_router
-from src.application.routes.websocket import router as websocket_router
 from src.config import Settings
-from src.dependencies import (
-    close_persistence,
-    init_persistence,
-    mcp_tool_loader,
-    seed_builtin_agents,
-    tracing_provider,
-)
-from src.domain.exceptions import (
-    AgentConfigAlreadyExistsError,
-    AgentError,
-    AgentNotFoundError,
-    ConfigError,
-    ConfigNotFoundError,
-    ConfigValidationError,
-    DomainError,
-    StorageError,
-    ThreadNotFoundError,
-)
 
-log_level = getattr(logging, Settings().log_level.upper(), logging.INFO)
+_settings = Settings()
+log_level_name = _settings.log_level.upper()
+log_level = getattr(logging, log_level_name, logging.INFO)
 
-logging.basicConfig(
-    level=log_level,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+
+_root = logging.getLogger()
+_root.setLevel(log_level)
+_root.handlers.clear()
+_root.addHandler(_handler)
 
 for _name in (
     "langchain",
@@ -53,8 +34,37 @@ for _name in (
 ):
     logging.getLogger(_name).setLevel(log_level)
 
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from src.application.routes.agents import router as agents_router
+from src.application.routes.chat import router as chat_router
+from src.application.routes.health import router as health_router
+from src.application.routes.prompt import router as prompt_router
+from src.application.routes.threads import router as threads_router
+from src.application.routes.websocket import router as websocket_router
+from src.dependencies import (
+    close_persistence,
+    init_persistence,
+    mcp_tool_loader,
+    tracing_provider,
+)
+from src.domain.exceptions import (
+    AgentConfigAlreadyExistsError,
+    AgentError,
+    AgentNotFoundError,
+    ConfigError,
+    ConfigNotFoundError,
+    ConfigValidationError,
+    DomainError,
+    StorageError,
+    ThreadNotFoundError,
+)
+
 logger = logging.getLogger("composable-agents")
 
+settings = Settings()
 
 def _run_alembic_upgrade() -> None:
     """Run Alembic migrations to head synchronously.
@@ -80,8 +90,7 @@ async def lifespan(_app: FastAPI):
         await asyncio.to_thread(_run_alembic_upgrade)
         logger.info("Database migrations completed")
         await init_persistence()
-        await seed_builtin_agents()
-        logger.info("Persistence initialized and agents seeded")
+        logger.info("Persistence initialized")
     except Exception:
         logger.exception("Failed to initialize persistence, falling back to filesystem registry")
     logger.info("Application startup complete")
@@ -185,4 +194,4 @@ async def domain_error_handler(_request: Request, exc: DomainError) -> JSONRespo
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=settings.host, port=settings.port, log_level=settings.log_level.lower(), log_config=None)

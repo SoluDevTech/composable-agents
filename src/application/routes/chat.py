@@ -48,9 +48,10 @@ async def stream_message(
             async for chunk in use_case.execute(thread_id, body.message):
                 chunk_count += 1
                 yield {"data": chunk}
+            yield {"event": "done", "data": ""}
             logger.info("[thread=%s] Stream complete, %d chunks", thread_id, chunk_count)
         except Exception:
             logger.exception("[thread=%s] Stream error after %d chunks", thread_id, chunk_count)
-            raise
+            yield {"event": "error", "data": "stream_error"}
 
-    return EventSourceResponse(event_generator())
+    return EventSourceResponse(event_generator(), sep="\r\n", ping=15)

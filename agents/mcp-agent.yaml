@@ -1,8 +1,0 @@
-name: mcp-agent
-model: openai:anthropic/claude-haiku-4.5:nitro
-system_prompt: "You are an agent with MCP tool access."
-mcp_servers:
-  - name: filesystem
-    transport: stdio
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]

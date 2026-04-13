@@ -53,7 +53,6 @@ class CreateAgentConfigUseCase:
             name=name,
             model=config.model,
             minio_path=f"{name}.yaml",
-            is_builtin=False,
             created_at=now,
             updated_at=now,
         )

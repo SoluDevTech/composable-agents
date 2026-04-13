@@ -38,12 +38,9 @@ class UpdateAgentConfigUseCase:
 
         Raises:
             AgentNotFoundError: If no agent with this name exists.
-            ConfigError: If the agent is built-in or the name in YAML does not match.
+            ConfigError: If the name in YAML does not match.
         """
         metadata = await self._config_repository.get(name)
-
-        if metadata.is_builtin:
-            raise ConfigError(f"Cannot update built-in agent: {name}")
 
         config = self._config_loader.load_from_string(yaml_content)
 

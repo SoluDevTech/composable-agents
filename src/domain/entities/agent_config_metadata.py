@@ -9,6 +9,5 @@ class AgentConfigMetadata(BaseModel):
     name: str
     model: str
     minio_path: str
-    is_builtin: bool = False
     created_at: datetime
     updated_at: datetime

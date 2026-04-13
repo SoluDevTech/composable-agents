@@ -31,13 +31,11 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.0",
     "alembic>=1.13.0",
     "cachetools>=7.0.5",
+    "arize-phoenix-otel==0.15.0",
+    "openinference-instrumentation-langchain==0.1.62",
+    "arize-phoenix-client==2.3.0",
+
 ]
-
-[project.optional-dependencies]
-langfuse = ["langfuse>=2.0.0"]
-phoenix = ["arize-phoenix-otel>=0.1.0", "openinference-instrumentation-langchain>=0.1.0", "arize-phoenix-client>=2.3.0"]
-tracing = ["langfuse>=2.0.0", "arize-phoenix-otel>=0.1.0", "openinference-instrumentation-langchain>=0.1.0", "arize-phoenix-client>=2.3.0"]
-
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
