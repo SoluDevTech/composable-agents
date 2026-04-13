@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -270,7 +270,7 @@ wheels = [
 
 [[package]]
 name = "arize-phoenix-otel"
-version = "0.14.0"
+version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "openinference-instrumentation" },
@@ -282,9 +282,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7c/17/ebd502f1bd8a0a6087ea28be8de8b765bcf34fb1b9bc4d6fd6d91bd822f1/arize_phoenix_otel-0.14.0.tar.gz", hash = "sha256:ad1368f0f52c242591ec554cedeccf718abda81383cf8c8d3ade218a7b20b955", size = 20155, upload-time = "2025-11-19T19:48:29.447Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f5/f0/b254118db28a2a202573472be67cf61f09cb37912bfde45b27ddc1c5b71f/arize_phoenix_otel-0.15.0.tar.gz", hash = "sha256:56c7dae09aaaa80df9e9595b7384c1bd4054b69b6032ab18e3a110a59b488388", size = 20254, upload-time = "2026-03-02T20:19:04.112Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c0/be/e7ddb54c4ad6115d2d468b71e90d7a2718735fd217f05c50759799191bfe/arize_phoenix_otel-0.14.0-py3-none-any.whl", hash = "sha256:47bf5563b9342a931385a16609ca83ada44d56a00bf6ed3be199226792b9937f", size = 17708, upload-time = "2025-11-19T19:48:28.252Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/4d/70d9c9d7137cc2e2aad819932172ef13ce21b4e60bf258910b9f15e426af/arize_phoenix_otel-0.15.0-py3-none-any.whl", hash = "sha256:5ff4d03b52d2dbd9c2a234417848f6b171cd220dc3c4020cf3568be84b89b88b", size = 17697, upload-time = "2026-03-02T20:19:03.242Z" },
 ]
 
 [[package]]
@@ -342,15 +342,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6b/5c/685e6633917e101e5dcb62b9dd76946cbb57c26e133bae9e0cd36033c0a9/attrs-25.4.0.tar.gz", hash = "sha256:16d5969b87f0859ef33a48b35d55ac1be6e42ae49d5e853b597db70c35c57e11", size = 934251, upload-time = "2025-10-06T13:54:44.725Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/2a/7cc015f5b9f5db42b7d48157e23356022889fc354a2813c15934b7cb5c0e/attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373", size = 67615, upload-time = "2025-10-06T13:54:43.17Z" },
-]
-
-[[package]]
-name = "backoff"
-version = "2.2.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/47/d7/5bbeb12c44d7c4f2fb5b56abce497eb5ed9f34d85701de869acedd602619/backoff-2.2.1.tar.gz", hash = "sha256:03f829f5bb1923180821643f8753b0502c3b682293992485b0eef2807afa5cba", size = 17001, upload-time = "2022-10-05T19:19:32.061Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/73/b6e24bd22e6720ca8ee9a85a0c4a2971af8497d8f3193fa05390cbd46e09/backoff-2.2.1-py3-none-any.whl", hash = "sha256:63579f9a0628e06278f7e47b7d7d5b6ce20dc65c5e96a6f3ca99a6adca0396e8", size = 15148, upload-time = "2022-10-05T19:19:30.546Z" },
 ]
 
 [[package]]
@@ -550,6 +541,8 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "arize-phoenix-client" },
+    { name = "arize-phoenix-otel" },
     { name = "asyncpg" },
     { name = "cachetools" },
     { name = "cryptography" },
@@ -560,6 +553,7 @@ dependencies = [
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "miniopy-async" },
+    { name = "openinference-instrumentation-langchain" },
     { name = "pyasn1" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -569,22 +563,6 @@ dependencies = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "sse-starlette" },
     { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-langfuse = [
-    { name = "langfuse" },
-]
-phoenix = [
-    { name = "arize-phoenix-client" },
-    { name = "arize-phoenix-otel" },
-    { name = "openinference-instrumentation-langchain" },
-]
-tracing = [
-    { name = "arize-phoenix-client" },
-    { name = "arize-phoenix-otel" },
-    { name = "langfuse" },
-    { name = "openinference-instrumentation-langchain" },
 ]
 
 [package.dev-dependencies]
@@ -600,10 +578,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.13.0" },
-    { name = "arize-phoenix-client", marker = "extra == 'phoenix'", specifier = ">=2.3.0" },
-    { name = "arize-phoenix-client", marker = "extra == 'tracing'", specifier = ">=2.3.0" },
-    { name = "arize-phoenix-otel", marker = "extra == 'phoenix'", specifier = ">=0.1.0" },
-    { name = "arize-phoenix-otel", marker = "extra == 'tracing'", specifier = ">=0.1.0" },
+    { name = "arize-phoenix-client", specifier = "==2.3.0" },
+    { name = "arize-phoenix-otel", specifier = "==0.15.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "cachetools", specifier = ">=7.0.5" },
     { name = "cryptography", specifier = ">=46.0.5" },
@@ -612,12 +588,9 @@ requires-dist = [
     { name = "langchain-core", specifier = ">=1.2.22" },
     { name = "langchain-mcp-adapters", specifier = ">=0.1.0" },
     { name = "langchain-openai", specifier = ">=1.1.7" },
-    { name = "langfuse", marker = "extra == 'langfuse'", specifier = ">=2.0.0" },
-    { name = "langfuse", marker = "extra == 'tracing'", specifier = ">=2.0.0" },
     { name = "langgraph", specifier = ">=1.0.10" },
     { name = "miniopy-async", specifier = ">=1.21.0" },
-    { name = "openinference-instrumentation-langchain", marker = "extra == 'phoenix'", specifier = ">=0.1.0" },
-    { name = "openinference-instrumentation-langchain", marker = "extra == 'tracing'", specifier = ">=0.1.0" },
+    { name = "openinference-instrumentation-langchain", specifier = "==0.1.62" },
     { name = "pyasn1", specifier = ">=0.6.3" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },
@@ -628,7 +601,6 @@ requires-dist = [
     { name = "sse-starlette", specifier = ">=3.2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.40.0" },
 ]
-provides-extras = ["langfuse", "phoenix", "tracing"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1458,27 +1430,6 @@ wheels = [
 ]
 
 [[package]]
-name = "langfuse"
-version = "3.13.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "backoff" },
-    { name = "httpx" },
-    { name = "openai" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-exporter-otlp-proto-http" },
-    { name = "opentelemetry-sdk" },
-    { name = "packaging" },
-    { name = "pydantic" },
-    { name = "requests" },
-    { name = "wrapt" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/24/d0/744e5613c728427330ac2049da0f54fc313e8bf84622f71b025bfba65496/langfuse-3.13.0.tar.gz", hash = "sha256:dacea8111ca4442e97dbfec4f8d676cf9709b35357a26e468f8887b95de0012f", size = 233420, upload-time = "2026-02-06T19:54:14.415Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3d/63/148382e8e79948f7e5c9c137288e504bb88117574eb7e7c886b4fb470b4b/langfuse-3.13.0-py3-none-any.whl", hash = "sha256:71912ddac1cc831a65df895eae538a556f564c094ae51473e747426e9ded1a9d", size = 417626, upload-time = "2026-02-06T19:54:12.547Z" },
-]
-
-[[package]]
 name = "langgraph"
 version = "1.1.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1945,7 +1896,7 @@ wheels = [
 
 [[package]]
 name = "openinference-instrumentation-langchain"
-version = "0.1.58"
+version = "0.1.62"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "openinference-instrumentation" },
@@ -1955,9 +1906,9 @@ dependencies = [
     { name = "opentelemetry-semantic-conventions" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/f7/ed82c3d146ca6f1b62dabb2e01fbee782a75245d694b23bc90232366dac7/openinference_instrumentation_langchain-0.1.58.tar.gz", hash = "sha256:36a1b1ad162c4e356bd28257173ee3171ad7788a96089553512c6288fa9a0f1c", size = 75239, upload-time = "2026-01-06T23:50:16.243Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/02/4c17a89ac11a539eb6d8a31dce6484e880d104cc772d823bef9b9135267a/openinference_instrumentation_langchain-0.1.62.tar.gz", hash = "sha256:6bbfc59de52082ec0b464ed88361d2c8deb4e3c22bc4ad36d0c9f46154723cef", size = 75564, upload-time = "2026-04-03T21:41:12.512Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e2/10/df4805c99e9b17fdd4496b080788340dd09ebc436dd5073e54a1c2633a04/openinference_instrumentation_langchain-0.1.58-py3-none-any.whl", hash = "sha256:9dd2e0b201131e53d9e520624ef4eea6268c08faab1dc10d64b52c60b5169d91", size = 24396, upload-time = "2026-01-06T23:50:14.022Z" },
+    { url = "https://files.pythonhosted.org/packages/73/87/e7c41028b3c3ddfd89325d03571e640b54522ab235cdca2a14a14c61ed00/openinference_instrumentation_langchain-0.1.62-py3-none-any.whl", hash = "sha256:6fcf128c4f5d2e5ed353a728ae9af58b0903f9eb40f0c28a58e81319b1b91195", size = 24761, upload-time = "2026-04-03T21:41:11.159Z" },
 ]
 
 [[package]]

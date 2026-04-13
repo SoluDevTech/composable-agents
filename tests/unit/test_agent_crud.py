@@ -120,19 +120,6 @@ class TestUpdateAgentConfigUseCase:
             name="test-agent",
             model="claude-sonnet-4-5-20250929",
             minio_path="agent-configs/test-agent.yaml",
-            is_builtin=False,
-            created_at=now,
-            updated_at=now,
-        )
-
-    @pytest.fixture
-    def builtin_metadata(self):
-        now = datetime.now(UTC)
-        return AgentConfigMetadata(
-            name="builtin-agent",
-            model="claude-sonnet-4-5-20250929",
-            minio_path="agent-configs/builtin-agent.yaml",
-            is_builtin=True,
             created_at=now,
             updated_at=now,
         )
@@ -165,15 +152,6 @@ class TestUpdateAgentConfigUseCase:
         with pytest.raises(ConfigError):
             await use_case.execute(name="test-agent", yaml_content=mismatched_yaml)
 
-    async def test_update_agent_builtin_protected(self, use_case, mock_repository, builtin_metadata):
-        """Should raise ConfigError when trying to update a built-in agent."""
-        mock_repository.get.return_value = builtin_metadata
-
-        builtin_yaml = 'name: builtin-agent\nmodel: claude-sonnet-4-5-20250929\nsystem_prompt: "Modified."\n'
-
-        with pytest.raises(ConfigError, match="built-in"):
-            await use_case.execute(name="builtin-agent", yaml_content=builtin_yaml)
-
 
 class TestDeleteAgentConfigUseCase:
     """Tests for DeleteAgentConfigUseCase."""
@@ -205,19 +183,6 @@ class TestDeleteAgentConfigUseCase:
             name="test-agent",
             model="claude-sonnet-4-5-20250929",
             minio_path="agent-configs/test-agent.yaml",
-            is_builtin=False,
-            created_at=now,
-            updated_at=now,
-        )
-
-    @pytest.fixture
-    def builtin_metadata(self):
-        now = datetime.now(UTC)
-        return AgentConfigMetadata(
-            name="builtin-agent",
-            model="claude-sonnet-4-5-20250929",
-            minio_path="agent-configs/builtin-agent.yaml",
-            is_builtin=True,
             created_at=now,
             updated_at=now,
         )
@@ -238,13 +203,6 @@ class TestDeleteAgentConfigUseCase:
 
         with pytest.raises(AgentNotFoundError):
             await use_case.execute(name="nonexistent")
-
-    async def test_delete_agent_builtin_protected(self, use_case, mock_repository, builtin_metadata):
-        """Should raise ConfigError when trying to delete a built-in agent."""
-        mock_repository.get.return_value = builtin_metadata
-
-        with pytest.raises(ConfigError, match="built-in"):
-            await use_case.execute(name="builtin-agent")
 
 
 class TestGetAgentConfigUseCase:
@@ -296,7 +254,6 @@ class TestListAgentConfigsUseCase:
                 name="agent-a",
                 model="gpt-4o",
                 minio_path="agent-configs/agent-a.yaml",
-                is_builtin=False,
                 created_at=now,
                 updated_at=now,
             ),
@@ -304,7 +261,6 @@ class TestListAgentConfigsUseCase:
                 name="agent-b",
                 model="claude-sonnet-4-5-20250929",
                 minio_path="agent-configs/agent-b.yaml",
-                is_builtin=True,
                 created_at=now,
                 updated_at=now,
             ),

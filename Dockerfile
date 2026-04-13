@@ -20,7 +20,6 @@ COPY --from=builder /app/.venv /app/.venv
 
 # Copy application source and agent configs
 COPY src/ /app/src/
-COPY agents/ /app/agents/
 
 # Set Python path and venv
 ENV PYTHONPATH=/app:$PYTHONPATH
@@ -33,4 +32,4 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "src.main"]

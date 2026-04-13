@@ -2,7 +2,7 @@
 
 Uses real InMemoryThreadRepository and YamlAgentConfigLoader (internal).
 Uses AsyncMock for AgentRunner (external LLM boundary).
-Uses a real DeepAgentRegistry with patched factory for agent creation.
+Uses real PersistentAgentRegistry with mocked store/repository for agent creation.
 """
 
 from datetime import UTC, datetime
@@ -14,26 +14,26 @@ from httpx import ASGITransport, AsyncClient
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.exceptions import AgentError
-from src.infrastructure.deepagent.registry import DeepAgentRegistry
+from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 from src.main import app
 from tests.fixtures.in_memory_thread_repository import InMemoryThreadRepository
 
+VALID_YAML = (
+    "name: {name}\n"
+    "model: test-model\n"
+    'system_prompt: "Test prompt."\n'
+    "tools: []\n"
+    "debug: false\n"
+)
+
+AGENTS = ["my-agent", "agent-1", "agent-2", "example-agent", "code-reviewer", "minimal-agent", "research-assistant", "mcp-agent"]
+
 
 @pytest.fixture
-def agents_dir(tmp_path):
-    """Create a temporary agents directory with real YAML files."""
-    d = tmp_path / "agents"
-    d.mkdir()
-    (d / "my-agent.yaml").write_text("name: my-agent")
-    (d / "agent-1.yaml").write_text("name: agent-1")
-    (d / "agent-2.yaml").write_text("name: agent-2")
-    (d / "example-agent.yaml").write_text('name: example-agent\nmodel: "test-model"\nsystem_prompt: "Test prompt."')
-    (d / "code-reviewer.yaml").write_text('name: code-reviewer\nmodel: "test-model"')
-    (d / "minimal.yaml").write_text("name: minimal-agent")
-    (d / "research-assistant.yaml").write_text('name: research-assistant\nmodel: "test-model"')
-    (d / "mcp-agent.yaml").write_text('name: mcp-agent\nmodel: "test-model"\nsystem_prompt: "MCP agent."')
-    return d
+def yaml_store():
+    """In-memory YAML store keyed by agent name."""
+    return {name: VALID_YAML.format(name=name) for name in AGENTS}
 
 
 @pytest.fixture
@@ -72,48 +72,33 @@ def real_loader():
 
 
 @pytest.fixture
-def real_registry(agents_dir, real_loader, mock_mcp_tool_loader):
-    return DeepAgentRegistry(
-        agents_dir=agents_dir,
-        config_loader=real_loader,
-        mcp_tool_loader=mock_mcp_tool_loader,
-    )
-
-
-@pytest.fixture
-def mock_config_store(agents_dir):
-    """AsyncMock for AgentConfigStore that reads from the tmp agents_dir."""
+def mock_config_store(yaml_store):
+    """AsyncMock for AgentConfigStore that reads from the in-memory yaml_store."""
     store = AsyncMock()
 
     async def _get(name):
-        from pathlib import Path
-
-        path = Path(agents_dir) / f"{name}.yaml"
-        if not path.exists():
+        if name not in yaml_store:
             from src.domain.exceptions import AgentNotFoundError
-
             raise AgentNotFoundError(f"Agent config not found: {name}")
-        return path.read_text()
+        return yaml_store[name]
 
     store.get.side_effect = _get
     return store
 
 
 @pytest.fixture
-def mock_config_repository(agents_dir):
-    """AsyncMock for AgentConfigRepository that lists agents from the tmp agents_dir."""
+def mock_config_repository(yaml_store):
+    """AsyncMock for AgentConfigRepository that lists agents from the in-memory store."""
     repo = AsyncMock()
-    from pathlib import Path
 
     now = datetime.now(UTC)
     metadata_list = []
-    for f in sorted(Path(agents_dir).glob("*.yaml")):
+    for name in sorted(yaml_store.keys()):
         metadata_list.append(
             AgentConfigMetadata(
-                name=f.stem,
+                name=name,
                 model="test-model",
-                minio_path=f"{f.stem}.yaml",
-                is_builtin=False,
+                minio_path=f"{name}.yaml",
                 created_at=now,
                 updated_at=now,
             )
@@ -122,25 +107,34 @@ def mock_config_repository(agents_dir):
     return repo
 
 
+@pytest.fixture
+def real_registry(real_loader, mock_config_store, mock_config_repository, mock_mcp_tool_loader):
+    return PersistentAgentRegistry(
+        config_loader=real_loader,
+        config_store=mock_config_store,
+        config_repository=mock_config_repository,
+        mcp_tool_loader=mock_mcp_tool_loader,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _wire_dependencies(
-    real_threads, real_registry, real_loader, agents_dir, mock_runner, mock_config_store, mock_config_repository
+    real_threads, real_registry, real_loader, mock_runner, mock_config_store, mock_config_repository
 ):
     """Wire real internal components + mocked runner into the app dependencies."""
     with (
         patch(
-            "src.infrastructure.deepagent.registry.create_agent_from_config",
+            "src.infrastructure.persistent_registry.adapter.create_agent_from_config",
             new_callable=AsyncMock,
             return_value=MagicMock(),
         ),
         patch(
-            "src.infrastructure.deepagent.registry.DeepAgentRunner",
+            "src.infrastructure.persistent_registry.adapter.DeepAgentRunner",
             return_value=mock_runner,
         ),
         patch("src.dependencies.thread_repository", real_threads),
         patch("src.dependencies.agent_registry", real_registry),
         patch("src.dependencies.agent_config_loader", real_loader),
-        patch("src.dependencies.agents_dir", str(agents_dir)),
         patch("src.dependencies._minio_store", mock_config_store),
         patch("src.dependencies._pg_repository", mock_config_repository),
     ):

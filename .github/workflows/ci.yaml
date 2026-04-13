@@ -33,7 +33,6 @@ jobs:
     - name: Install dependencies
       run: |
         uv sync --dev
-        uv sync --dev --extra phoenix
 
     - name: Setup environment file
       run: cp .env.example .env

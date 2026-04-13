@@ -3,44 +3,46 @@
 Uses mock_tracing_provider for verifying flush/shutdown calls (external).
 """
 
-from unittest.mock import AsyncMock, patch
-
 
 class TestTracingLifecycle:
     async def test_lifespan_calls_tracing_flush(self, mock_tracing_provider):
         """Lifespan shutdown calls flush() on the tracing_provider."""
+        from unittest.mock import AsyncMock, patch
+
         from src.main import lifespan
 
         with (
             patch("src.main.close_persistence", AsyncMock()),
             patch("src.main.init_persistence", AsyncMock()),
-            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.mcp_tool_loader", AsyncMock()),
             patch("src.main.tracing_provider", mock_tracing_provider),
         ):
             async with lifespan(None):
-                pass  # enter and exit context to trigger cleanup
+                pass
 
             mock_tracing_provider.flush.assert_awaited_once()
 
     async def test_lifespan_calls_tracing_shutdown(self, mock_tracing_provider):
         """Lifespan shutdown calls shutdown() on the tracing_provider."""
+        from unittest.mock import AsyncMock, patch
+
         from src.main import lifespan
 
         with (
             patch("src.main.close_persistence", AsyncMock()),
             patch("src.main.init_persistence", AsyncMock()),
-            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.mcp_tool_loader", AsyncMock()),
             patch("src.main.tracing_provider", mock_tracing_provider),
         ):
             async with lifespan(None):
-                pass  # enter and exit context to trigger cleanup
+                pass
 
             mock_tracing_provider.shutdown.assert_awaited_once()
 
     async def test_lifespan_flush_before_shutdown(self, mock_tracing_provider):
         """Lifespan calls flush() before shutdown() on the tracing_provider."""
+        from unittest.mock import AsyncMock, patch
+
         from src.main import lifespan
 
         call_order = []
@@ -62,11 +64,10 @@ class TestTracingLifecycle:
         with (
             patch("src.main.close_persistence", AsyncMock()),
             patch("src.main.init_persistence", AsyncMock()),
-            patch("src.main.seed_builtin_agents", AsyncMock()),
             patch("src.main.mcp_tool_loader", AsyncMock()),
             patch("src.main.tracing_provider", mock_tracing_provider),
         ):
             async with lifespan(None):
-                pass  # enter and exit context to trigger cleanup
+                pass
 
             assert call_order == ["flush", "shutdown"]

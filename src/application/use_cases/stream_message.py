@@ -37,7 +37,12 @@ class StreamMessageUseCase:
             raise
         elapsed = time.monotonic() - start
         ai_msg = Message(role=MessageRole.AI, content="".join(full_response))
-        await self._threads.add_message(thread_id, ai_msg)
+        try:
+            await self._threads.add_message(thread_id, ai_msg)
+        except Exception:
+            logger.exception(
+                "[thread=%s][agent=%s] Failed to persist AI message after stream", thread_id, thread.agent_name
+            )
         logger.info(
             "[thread=%s][agent=%s] Stream complete, %d chunks, %d chars, elapsed=%.2fs",
             thread_id,

@@ -55,7 +55,6 @@ class TestPostgresAgentConfigRepository:
             name="test-agent",
             model="claude-sonnet-4-5-20250929",
             minio_path="agent-configs/test-agent.yaml",
-            is_builtin=False,
             created_at=now,
             updated_at=now,
         )
@@ -80,7 +79,6 @@ class TestPostgresAgentConfigRepository:
         model.name = "test-agent"
         model.model = "claude-sonnet-4-5-20250929"
         model.minio_path = "agent-configs/test-agent.yaml"
-        model.is_builtin = False
         model.created_at = now
         model.updated_at = now
 
@@ -113,7 +111,6 @@ class TestPostgresAgentConfigRepository:
         model_a.name = "agent-a"
         model_a.model = "gpt-4o"
         model_a.minio_path = "agent-configs/agent-a.yaml"
-        model_a.is_builtin = False
         model_a.created_at = now
         model_a.updated_at = now
 
@@ -121,7 +118,6 @@ class TestPostgresAgentConfigRepository:
         model_b.name = "agent-b"
         model_b.model = "claude-sonnet-4-5-20250929"
         model_b.minio_path = "agent-configs/agent-b.yaml"
-        model_b.is_builtin = True
         model_b.created_at = now
         model_b.updated_at = now
 
@@ -135,7 +131,6 @@ class TestPostgresAgentConfigRepository:
         assert all(isinstance(m, AgentConfigMetadata) for m in result)
         assert result[0].name == "agent-a"
         assert result[1].name == "agent-b"
-        assert result[1].is_builtin is True
 
     # -- delete ------------------------------------------------------------
 

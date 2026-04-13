@@ -17,7 +17,6 @@ def _model_to_metadata(model: AgentConfigModel) -> AgentConfigMetadata:
         name=model.name,
         model=model.model,
         minio_path=model.minio_path,
-        is_builtin=model.is_builtin,
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
@@ -50,7 +49,6 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
                     name=metadata.name,
                     model=metadata.model,
                     minio_path=metadata.minio_path,
-                    is_builtin=metadata.is_builtin,
                     created_at=metadata.created_at,
                     updated_at=metadata.updated_at,
                 )
