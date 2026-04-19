@@ -94,7 +94,11 @@ class PhoenixPromptManagerProvider(PromptManager):
             )
             if not prompt_obj:
                 raise ValueError(f"Prompt not found: {identifier}")
-            return self._to_domain_prompt(prompt_obj, identifier=identifier, description=prompt_obj._description)
+            
+            tags = self._client.prompts.tags.list(prompt_version_id=prompt_obj.id) if prompt_obj and prompt_obj.id else []
+            logger.info("Retrieved prompt content for '%s' (version: %s, tags: %s)", identifier, version_id, [t["name"] for t in tags])
+
+            return self._to_domain_prompt(prompt_obj, identifier=identifier, description=prompt_obj._description, tags=[t["name"] for t in tags])
         except (ValueError, PhoenixUnavailableError):
             raise
         except Exception as e:
@@ -117,7 +121,11 @@ class PhoenixPromptManagerProvider(PromptManager):
                 prompt_version_id=version_id,
                 tag=tag,
             )
-            domain = self._to_domain_prompt(prompt_obj, identifier=identifier)
+
+            tags = self._client.prompts.tags.list(prompt_version_id=prompt_obj.id) if prompt_obj and prompt_obj.id else []
+            logger.info("Retrieved prompt content for '%s' (version: %s, tags: %s)", identifier, version_id, [t["name"] for t in tags])
+
+            domain = self._to_domain_prompt(prompt_obj, identifier=identifier, tags=[t["name"] for t in tags])
             messages = domain.current_version.content
             return messages[0] if messages else {}
         except (ValueError, PhoenixUnavailableError):
@@ -185,6 +193,7 @@ class PhoenixPromptManagerProvider(PromptManager):
                 name=identifier,
                 version=PhoenixPromptVersion(content, model_name=model_name),
                 prompt_description=description or current.description,
+                prompt_metadata=metadata or current.metadata,
             )
             logger.info("Updated prompt '%s'", identifier)
             return updated
@@ -212,6 +221,7 @@ class PhoenixPromptManagerProvider(PromptManager):
         phoenix_prompt,
         identifier: str | None = None,
         description: str | None = None,
+        tags: list[str] | None = None,
     ) -> Prompt:
         template = getattr(phoenix_prompt, "_template", {})
         raw_messages = template.get("messages", []) if isinstance(template, dict) else []
@@ -236,7 +246,7 @@ class PhoenixPromptManagerProvider(PromptManager):
                 version_id=phoenix_prompt.id or "v1",
                 content=messages,
                 model_name=getattr(phoenix_prompt, "_model_name", ""),
-                tags=[],
+                tags=tags or [],
             ),
             created_at=None,
             updated_at=None,
