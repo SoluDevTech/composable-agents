@@ -41,10 +41,10 @@ class TestPhoenixPromptManagerProvider:
 
     @pytest.mark.asyncio
     async def test_create_prompt_with_tags(self, manager):
-        mock_prompt_obj = MagicMock()
+        mock_prompt_obj = MagicMock(spec=PhoenixPromptVersion)
         mock_prompt_obj.name = "test-prompt"
         mock_prompt_obj.description = None
-        mock_prompt_obj.version_id = "v1"
+        mock_prompt_obj.id = "v1"
         mock_prompt_obj.content = []
         mock_prompt_obj.model_name = "gpt-4"
         mock_prompt_obj.created_at = datetime.now()
@@ -62,6 +62,8 @@ class TestPhoenixPromptManagerProvider:
         )
 
         assert manager._client.prompts.tags.create.call_count == 2
+        manager._client.prompts.tags.create.assert_any_call(prompt_version_id="v1", name="tag1")
+        manager._client.prompts.tags.create.assert_any_call(prompt_version_id="v1", name="tag2")
 
     @pytest.mark.asyncio
     async def test_get_prompt_not_found(self, manager):
@@ -72,8 +74,29 @@ class TestPhoenixPromptManagerProvider:
 
     @pytest.mark.asyncio
     async def test_add_tag(self, manager):
-        manager._client.prompts.tag = MagicMock()
+        manager._client.prompts.tag.create = MagicMock()
 
         await manager.add_tag("test-prompt", "new-tag")
 
-        manager._client.prompts.tag.assert_called_once_with(prompt_identifier="test-prompt", tag="new-tag")
+        manager._client.prompts.tags.create.assert_called_once_with(
+            prompt_version_id="test-prompt",
+            name="new-tag",
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_prompt_success(self, manager):
+        """Add this missing test."""
+        mock_prompt_obj = MagicMock(spec=PhoenixPromptVersion)
+        mock_prompt_obj.id = "v1"
+        mock_prompt_obj._description = "Test"
+        mock_prompt_obj._model_name = "gpt-4"
+        mock_prompt_obj._template = {"messages": [{"role": "system", "content": "Hello"}]}
+
+        manager._client.prompts.get = MagicMock(return_value=mock_prompt_obj)
+        manager._client.prompts.tags.list = MagicMock(return_value=[{"name": "production"}])
+
+        result = await manager.get_prompt("test-prompt")
+
+        assert result.identifier == "test-prompt"
+        assert result.current_version.tags == ["production"]
+        assert result.current_version.model_name == "gpt-4"
