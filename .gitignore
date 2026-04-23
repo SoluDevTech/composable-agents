@@ -1,4 +1,5 @@
 .venv/
+.vscode/
 __pycache__/
 *.pyc
 .env
@@ -17,3 +18,4 @@ coverage.xml
 opencode.json
 .vscode/
 agents
+opencode.json

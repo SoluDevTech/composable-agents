@@ -12,7 +12,6 @@ description = "Composable AI agents with YAML configuration, MCP tool integratio
 requires-python = ">=3.11"
 dependencies = [
     "deepagents>=0.3.12",
-    "deepagents-cli==0.0.37",
     "cryptography>=46.0.5",
     "langchain-core>=1.2.22",
     "pyasn1>=0.6.3",
@@ -35,7 +34,7 @@ dependencies = [
     "arize-phoenix-otel==0.15.0",
     "openinference-instrumentation-langchain==0.1.62",
     "arize-phoenix-client==2.3.0",
-
+    "tenacity>=8.0.0"
 ]
 [dependency-groups]
 dev = [
