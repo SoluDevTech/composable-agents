@@ -62,7 +62,9 @@ class DeepAgentRunner(AgentRunner):
 
     def _build_response(self, result: dict, config: dict) -> Message:
         """Build a Message from graph result, detecting interrupts and collecting tool_calls."""
-        messages = result["messages"]
+        messages = result.get("messages", [])
+        if not messages:
+            raise AgentError("Graph completed but no messages were found in the final state.")
         last_message = messages[-1]
 
         all_tool_calls = getattr(last_message, "tool_calls", None) or []
@@ -107,32 +109,74 @@ class DeepAgentRunner(AgentRunner):
             logger.exception("[thread=%s] Agent execution error", thread_id)
             raise AgentError(f"Agent execution error: {e}") from e
 
+    async def _yield_chunks(
+        self,
+        thread_id: str,
+        message: str,
+        config: dict,
+        stats: dict,
+    ) -> AsyncIterator[str]:
+        """Stream graph chunks and populate *stats* with timing."""
+        start = time.monotonic()
+        first_chunk = True
+        chunk_count = 0
+        async for chunk, _metadata in self._graph.astream(
+            {"messages": [{"role": "human", "content": message}]},
+            config=config,
+            stream_mode="messages",
+        ):
+            if hasattr(chunk, "content") and chunk.content and chunk.type == "AIMessageChunk":
+                if first_chunk:
+                    logger.info(
+                        "[thread=%s] First chunk received, elapsed=%.2fs",
+                        thread_id,
+                        time.monotonic() - start,
+                    )
+                    first_chunk = False
+                chunk_count += 1
+                yield chunk.content
+        stats["chunk_count"] = chunk_count
+        stats["elapsed"] = time.monotonic() - start
+
     async def stream(self, thread_id: str, message: str) -> AsyncIterator[str]:
         config = self._build_config(thread_id)
         logger.info("[thread=%s] Streaming agent response", thread_id)
         try:
-            start = time.monotonic()
-            first_chunk = True
-            chunk_count = 0
-            async for chunk, _metadata in self._graph.astream(
-                {"messages": [{"role": "human", "content": message}]},
-                config=config,
-                stream_mode="messages",
-            ):
-                if hasattr(chunk, "content") and chunk.content and chunk.type == "AIMessageChunk":
-                    if first_chunk:
-                        logger.info(
-                            "[thread=%s] First chunk received, elapsed=%.2fs", thread_id, time.monotonic() - start
-                        )
-                        first_chunk = False
-                    chunk_count += 1
-                    yield chunk.content
+            stats: dict = {}
+            async for chunk in self._yield_chunks(thread_id, message, config, stats):
+                yield chunk
             logger.info(
                 "[thread=%s] Stream complete, %d chunks, elapsed=%.2fs",
                 thread_id,
-                chunk_count,
-                time.monotonic() - start,
+                stats["chunk_count"],
+                stats["elapsed"],
             )
+        except Exception as e:
+            logger.exception("[thread=%s] Streaming error", thread_id)
+            raise AgentError(f"Streaming error: {e}") from e
+
+    async def stream_with_message(self, thread_id: str, message: str) -> AsyncIterator[str | Message]:
+        config = self._build_config(thread_id)
+        logger.info("[thread=%s] Streaming agent response with final message", thread_id)
+        try:
+            stats: dict = {}
+            async for chunk in self._yield_chunks(thread_id, message, config, stats):
+                yield chunk
+            state = self._graph.get_state(config)
+            values = state.values if state and hasattr(state, "values") else {}
+            result = {
+                "messages": values.get("messages", []),
+                "structured_response": values.get("structured_response"),
+            }
+            response = self._build_response(result, config)
+            logger.info(
+                "[thread=%s] Stream with message complete, %d chunks, elapsed=%.2fs, status=%s",
+                thread_id,
+                stats["chunk_count"],
+                stats["elapsed"],
+                response.status,
+            )
+            yield response
         except Exception as e:
             logger.exception("[thread=%s] Streaming error", thread_id)
             raise AgentError(f"Streaming error: {e}") from e

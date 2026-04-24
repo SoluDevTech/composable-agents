@@ -19,15 +19,18 @@ from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 from src.main import app
 from tests.fixtures.in_memory_thread_repository import InMemoryThreadRepository
 
-VALID_YAML = (
-    "name: {name}\n"
-    "model: test-model\n"
-    'system_prompt: "Test prompt."\n'
-    "tools: []\n"
-    "debug: false\n"
-)
+VALID_YAML = 'name: {name}\nmodel: test-model\nsystem_prompt: "Test prompt."\ntools: []\ndebug: false\n'
 
-AGENTS = ["my-agent", "agent-1", "agent-2", "example-agent", "code-reviewer", "minimal-agent", "research-assistant", "mcp-agent"]
+AGENTS = [
+    "my-agent",
+    "agent-1",
+    "agent-2",
+    "example-agent",
+    "code-reviewer",
+    "minimal-agent",
+    "research-assistant",
+    "mcp-agent",
+]
 
 
 @pytest.fixture
@@ -58,6 +61,17 @@ def mock_runner():
             yield word + " "
 
     runner.stream = mock_stream
+
+    async def mock_stream_with_message(_thread_id, _message):
+        for word in ["I", "am", "a", "mock", "agent."]:
+            yield word + " "
+        yield Message(
+            role=MessageRole.AI,
+            content="I am a mock agent.",
+            status=MessageStatus.COMPLETED,
+        )
+
+    runner.stream_with_message = mock_stream_with_message
     return runner
 
 
@@ -79,6 +93,7 @@ def mock_config_store(yaml_store):
     async def _get(name):
         if name not in yaml_store:
             from src.domain.exceptions import AgentNotFoundError
+
             raise AgentNotFoundError(f"Agent config not found: {name}")
         return yaml_store[name]
 
@@ -375,4 +390,114 @@ class TestExceptionHandlers:
         mock_runner.invoke.side_effect = None
         mock_runner.invoke.return_value = Message(
             role=MessageRole.AI, content="I am a mock agent.", status=MessageStatus.COMPLETED
+        )
+
+
+# -- Stream Message Event ------------------------------------------------------
+
+
+class TestStreamMessageEvent:
+    """Tests for the new event: message SSE event in the stream endpoint."""
+
+    async def test_stream_message_emits_message_event(self, client):
+        """The SSE response should contain an event: message with Message JSON."""
+        create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id = create_resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/chat/{thread_id}/stream",
+            json={"message": "Hello agent"},
+        )
+        assert resp.status_code == 200
+        body = resp.text
+
+        # Should contain event: message line
+        assert "event:message" in body or "event: message" in body
+
+        # The data line after event: message should contain valid Message JSON
+        # SSE format: event: message\r\ndata: {...}\r\n\r\n
+        lines = body.replace("\r\n", "\n").split("\n")
+        found_message_event = False
+        for i, line in enumerate(lines):
+            if line.strip() == "event: message":
+                found_message_event = True
+                # Next non-empty line should be data: with JSON
+                data_line = lines[i + 1] if i + 1 < len(lines) else ""
+                assert data_line.startswith("data:"), f"Expected data line after event: message, got: {data_line!r}"
+                json_str = data_line[len("data:") :].strip()
+                import json
+
+                msg_data = json.loads(json_str)
+                assert msg_data["role"] == "ai"
+                break
+        assert found_message_event, f"event: message not found in SSE body:\n{body}"
+
+    async def test_stream_message_final_message_format_matches_sync(self, client):
+        """The Message JSON from event: message should have the same fields as the sync endpoint response."""
+        create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id = create_resp.json()["id"]
+
+        # Get sync response for comparison
+        sync_resp = await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Compare me"})
+        assert sync_resp.status_code == 200
+        sync_data = sync_resp.json()
+
+        # Create a fresh thread for the stream test (thread already has messages)
+        create_resp2 = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id2 = create_resp2.json()["id"]
+
+        stream_resp = await client.post(
+            f"/api/v1/chat/{thread_id2}/stream",
+            json={"message": "Hello agent"},
+        )
+        assert stream_resp.status_code == 200
+        body = stream_resp.text
+
+        # Extract Message JSON from the event: message line
+        import json
+
+        lines = body.replace("\r\n", "\n").split("\n")
+        message_json = None
+        for i, line in enumerate(lines):
+            if line.strip() == "event: message":
+                data_line = lines[i + 1] if i + 1 < len(lines) else ""
+                json_str = data_line[len("data:") :].strip()
+                message_json = json.loads(json_str)
+                break
+
+        assert message_json is not None, f"event: message not found in SSE body:\n{body}"
+
+        # The stream Message should have the same structural fields as the sync response
+        for field in ["role", "content", "timestamp", "status"]:
+            assert field in message_json, f"Missing field {field!r} in stream Message: {message_json}"
+
+        # Role must match
+        assert message_json["role"] == sync_data["role"]
+
+    async def test_stream_message_done_after_message_event(self, client):
+        """event: done should appear after event: message, not before."""
+        create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id = create_resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/chat/{thread_id}/stream",
+            json={"message": "Hello agent"},
+        )
+        assert resp.status_code == 200
+        body = resp.text
+
+        lines = body.replace("\r\n", "\n").split("\n")
+        event_lines = [line.strip() for line in lines if line.strip().startswith("event:")]
+
+        # Find indices of event: message and event: done
+        message_idx = None
+        done_idx = None
+        for i, line in enumerate(event_lines):
+            if line == "event: message":
+                message_idx = i
+            elif line == "event: done":
+                done_idx = i
+
+        assert message_idx is not None, f"event: message not found in event lines: {event_lines}"
+        assert done_idx is not None, f"event: done not found in event lines: {event_lines}"
+        assert done_idx > message_idx, (
+            f"event: done (idx={done_idx}) should come after event: message (idx={message_idx})"
         )

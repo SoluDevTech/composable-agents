@@ -16,6 +16,11 @@ class AgentRunner(ABC):
         ...
 
     @abstractmethod
+    async def stream_with_message(self, thread_id: str, message: str) -> AsyncIterator[str | Message]:
+        """Streame les chunks puis yield le Message final complet."""
+        ...
+
+    @abstractmethod
     async def approve_hitl(self, thread_id: str, tool_call_id: str) -> Message:
         """Approuve une action HITL en attente."""
         ...

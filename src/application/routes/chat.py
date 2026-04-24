@@ -45,9 +45,12 @@ async def stream_message(
     async def event_generator():
         chunk_count = 0
         try:
-            async for chunk in use_case.execute(thread_id, body.message):
-                chunk_count += 1
-                yield {"data": chunk}
+            async for event in use_case.execute(thread_id, body.message):
+                if isinstance(event, str):
+                    chunk_count += 1
+                    yield {"data": event}
+                elif isinstance(event, Message):
+                    yield {"event": "message", "data": event.model_dump_json()}
             yield {"event": "done", "data": ""}
             logger.info("[thread=%s] Stream complete, %d chunks", thread_id, chunk_count)
         except Exception:
