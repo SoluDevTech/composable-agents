@@ -449,7 +449,19 @@ data:  of
 data:  code
 data:  align
 data: ...
+event: message
+data: {"role":"ai","content":"Lines of code align...","timestamp":"2025-04-24T10:30:05.000000Z","tool_calls":null,"status":"completed","structured_response":null}
+
+event: done
+data:
 ```
+
+The stream emits:
+1. **`data: <chunk>`** — text chunks as they are generated (keepalive for proxies like Cloudflare)
+2. **`event: message`** — the complete `Message` JSON with all fields (role, content, timestamp, tool_calls, status, structured_response), identical in format to the synchronous `POST /chat/{thread_id}` response
+3. **`event: done`** — signals the stream is complete
+
+This design prevents Cloudflare timeout issues (~100s on idle connections) because chunks and SSE pings (every 15s) keep the connection active. Clients that need the full structured response can read the `event: message` data.
 
 ### 7. List All Threads
 
@@ -700,10 +712,19 @@ ws.onmessage = (event) => {
   if (event.data === "[END]") {
     console.log("Response complete");
   } else {
-    process.stdout.write(event.data);
+    try {
+      const data = JSON.parse(event.data);
+      if (data.type === "message") {
+        console.log("Final message:", data);
+      }
+    } catch {
+      process.stdout.write(event.data);
+    }
   }
 };
 ```
+
+The WebSocket stream emits text chunks, then a JSON object with `type: "message"` containing the full `Message` fields, followed by `[END]`.
 
 ---
 

@@ -77,6 +77,9 @@ class TestDeepAgentRunnerTracing:
             yield (mock_msg, {"langgraph_node": "agent"})
 
         mock_graph.astream = mock_astream
+        mock_graph.get_state = MagicMock(
+            return_value=MagicMock(values={"messages": [MagicMock(content="chunk", tool_calls=None)]}, interrupts=())
+        )
 
         runner = DeepAgentRunner(mock_graph, tracing_provider=mock_tracing_provider)
 

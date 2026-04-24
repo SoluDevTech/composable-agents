@@ -19,15 +19,18 @@ from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 from src.main import app
 from tests.fixtures.in_memory_thread_repository import InMemoryThreadRepository
 
-VALID_YAML = (
-    "name: {name}\n"
-    "model: test-model\n"
-    'system_prompt: "Test prompt."\n'
-    "tools: []\n"
-    "debug: false\n"
-)
+VALID_YAML = 'name: {name}\nmodel: test-model\nsystem_prompt: "Test prompt."\ntools: []\ndebug: false\n'
 
-AGENTS = ["my-agent", "agent-1", "agent-2", "example-agent", "code-reviewer", "minimal-agent", "research-assistant", "mcp-agent"]
+AGENTS = [
+    "my-agent",
+    "agent-1",
+    "agent-2",
+    "example-agent",
+    "code-reviewer",
+    "minimal-agent",
+    "research-assistant",
+    "mcp-agent",
+]
 
 
 @pytest.fixture
@@ -58,6 +61,18 @@ def mock_runner():
             yield word + " "
 
     runner.stream = mock_stream
+
+    async def mock_stream_with_message(_thread_id, _message):
+        for word in ["I", "am", "a", "mock", "agent."]:
+            yield word + " "
+        yield Message(
+            role=MessageRole.AI,
+            content="I am a mock agent.",
+            status=MessageStatus.COMPLETED,
+            structured_response={"key": "value"},
+        )
+
+    runner.stream_with_message = mock_stream_with_message
     return runner
 
 
@@ -79,6 +94,7 @@ def mock_config_store(yaml_store):
     async def _get(name):
         if name not in yaml_store:
             from src.domain.exceptions import AgentNotFoundError
+
             raise AgentNotFoundError(f"Agent config not found: {name}")
         return yaml_store[name]
 
@@ -376,3 +392,86 @@ class TestExceptionHandlers:
         mock_runner.invoke.return_value = Message(
             role=MessageRole.AI, content="I am a mock agent.", status=MessageStatus.COMPLETED
         )
+
+
+# -- Stream Message Event ------------------------------------------------------
+
+
+class TestStreamMessageEvent:
+    """Tests for SSE stream: JSON message then [DONE] terminator."""
+
+    async def test_stream_ends_with_done(self, client):
+        """Stream always ends with data: [DONE]."""
+        create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id = create_resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/chat/{thread_id}/stream",
+            json={"message": "Hello agent"},
+        )
+        assert resp.status_code == 200
+        body = resp.text
+
+        data_lines = [
+            line.strip()[len("data:"):].strip()
+            for line in body.replace("\r\n", "\n").split("\n")
+            if line.strip().startswith("data:")
+        ]
+        assert data_lines[-1] == "[DONE]", f"Expected [DONE] as last data line, got: {data_lines[-1]}"
+
+    async def test_stream_emits_message_json_before_done(self, client):
+        """Stream emits Message JSON as second-to-last data line, before [DONE]."""
+        create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id = create_resp.json()["id"]
+        resp = await client.post(
+            f"/api/v1/chat/{thread_id}/stream",
+            json={"message": "Hello agent"},
+        )
+        assert resp.status_code == 200
+        body = resp.text
+
+        import json
+
+        data_lines = [
+            line.strip()[len("data:"):].strip()
+            for line in body.replace("\r\n", "\n").split("\n")
+            if line.strip().startswith("data:")
+        ]
+
+        assert data_lines[-1] == "[DONE]"
+        message_json = json.loads(data_lines[-2])
+        assert message_json["role"] == "ai"
+        assert message_json["structured_response"] == {"key": "value"}
+
+    async def test_stream_message_format_matches_sync(self, client):
+        """The Message JSON from stream has the same fields as the sync endpoint."""
+        create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id = create_resp.json()["id"]
+
+        sync_resp = await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Compare me"})
+        assert sync_resp.status_code == 200
+        sync_data = sync_resp.json()
+
+        create_resp2 = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id2 = create_resp2.json()["id"]
+
+        stream_resp = await client.post(
+            f"/api/v1/chat/{thread_id2}/stream",
+            json={"message": "Hello agent"},
+        )
+        assert stream_resp.status_code == 200
+        body = stream_resp.text
+
+        import json
+
+        data_lines = [
+            line.strip()[len("data:"):].strip()
+            for line in body.replace("\r\n", "\n").split("\n")
+            if line.strip().startswith("data:")
+        ]
+
+        message_json = json.loads(data_lines[-2])
+
+        for field in ["role", "content", "timestamp", "status"]:
+            assert field in message_json, f"Missing field {field!r} in stream Message: {message_json}"
+
+        assert message_json["role"] == sync_data["role"]

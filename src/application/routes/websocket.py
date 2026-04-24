@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from src.application.use_cases.stream_message import StreamMessageUseCase
 from src.dependencies import get_stream_message_use_case
+from src.domain.entities.message import Message
 
 logger = logging.getLogger("composable-agents")
 
@@ -32,9 +33,12 @@ async def websocket_chat(
             logger.info("[thread=%s] WS message received: %s", thread_id, message[:80])
             chunk_count = 0
             try:
-                async for chunk in use_case.execute(thread_id, message):
-                    chunk_count += 1
-                    await websocket.send_text(chunk)
+                async for event in use_case.execute(thread_id, message):
+                    if isinstance(event, str):
+                        chunk_count += 1
+                        await websocket.send_text(event)
+                    elif isinstance(event, Message):
+                        await websocket.send_text(json.dumps({"type": "message", **event.model_dump(mode="json")}))
                 await websocket.send_text("[END]")
                 logger.info("[thread=%s] WS stream complete, %d chunks", thread_id, chunk_count)
             except Exception:
