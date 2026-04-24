@@ -69,7 +69,7 @@ def mock_runner():
             role=MessageRole.AI,
             content="I am a mock agent.",
             status=MessageStatus.COMPLETED,
-            structured_response=None,
+            structured_response={"key": "value"},
         )
 
     runner.stream_with_message = mock_stream_with_message
@@ -398,10 +398,10 @@ class TestExceptionHandlers:
 
 
 class TestStreamMessageEvent:
-    """Tests for SSE stream event emission based on structured_response."""
+    """Tests for SSE stream: JSON message then [DONE] terminator."""
 
-    async def test_stream_without_structured_response_emits_done(self, client):
-        """When no structured_response, stream emits event: done as last event."""
+    async def test_stream_ends_with_done(self, client):
+        """Stream always ends with data: [DONE]."""
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
         resp = await client.post(
@@ -411,28 +411,15 @@ class TestStreamMessageEvent:
         assert resp.status_code == 200
         body = resp.text
 
-        lines = body.replace("\r\n", "\n").split("\n")
-        event_lines = [line.strip() for line in lines if line.strip().startswith("event:")]
+        data_lines = [
+            line.strip()[len("data:"):].strip()
+            for line in body.replace("\r\n", "\n").split("\n")
+            if line.strip().startswith("data:")
+        ]
+        assert data_lines[-1] == "[DONE]", f"Expected [DONE] as last data line, got: {data_lines[-1]}"
 
-        assert "event: done" in event_lines, f"event: done not found in event lines: {event_lines}"
-        assert "event: message" not in event_lines, (
-            f"event: message should NOT be emitted when structured_response is None, got: {event_lines}"
-        )
-
-    async def test_stream_with_structured_response_emits_message_as_last_event(self, client, mock_runner):
-        """When structured_response is present, event: message is the last event (no done)."""
-        async def mock_stream_structured(_thread_id, _message):
-            for word in ["I", "am", "a", "mock", "agent."]:
-                yield word + " "
-            yield Message(
-                role=MessageRole.AI,
-                content="I am a mock agent.",
-                status=MessageStatus.COMPLETED,
-                structured_response={"temperature": 22, "condition": "sunny"},
-            )
-
-        mock_runner.stream_with_message = mock_stream_structured
-
+    async def test_stream_emits_message_json_before_done(self, client):
+        """Stream emits Message JSON as second-to-last data line, before [DONE]."""
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
         resp = await client.post(
@@ -444,44 +431,19 @@ class TestStreamMessageEvent:
 
         import json
 
-        lines = body.replace("\r\n", "\n").split("\n")
-        event_lines = [line.strip() for line in lines if line.strip().startswith("event:")]
+        data_lines = [
+            line.strip()[len("data:"):].strip()
+            for line in body.replace("\r\n", "\n").split("\n")
+            if line.strip().startswith("data:")
+        ]
 
-        assert "event: message" in event_lines, f"event: message not found in event lines: {event_lines}"
-        assert "event: done" not in event_lines, (
-            f"event: done should NOT be emitted when structured_response is present, got: {event_lines}"
-        )
-        assert event_lines[-1] == "event: message", (
-            f"event: message should be the last event, got: {event_lines}"
-        )
-
-        # Verify the JSON payload is valid
-        message_json = None
-        for i, line in enumerate(lines):
-            if line.strip() == "event: message":
-                data_line = lines[i + 1] if i + 1 < len(lines) else ""
-                json_str = data_line[len("data:"):].strip()
-                message_json = json.loads(json_str)
-                break
-
-        assert message_json is not None
+        assert data_lines[-1] == "[DONE]"
+        message_json = json.loads(data_lines[-2])
         assert message_json["role"] == "ai"
-        assert message_json["structured_response"] == {"temperature": 22, "condition": "sunny"}
+        assert message_json["structured_response"] == {"key": "value"}
 
-    async def test_stream_message_format_matches_sync(self, client, mock_runner):
-        """The Message JSON from event: message has the same fields as the sync endpoint."""
-        async def mock_stream_structured(_thread_id, _message):
-            for word in ["I", "am", "a", "mock", "agent."]:
-                yield word + " "
-            yield Message(
-                role=MessageRole.AI,
-                content="I am a mock agent.",
-                status=MessageStatus.COMPLETED,
-                structured_response={"key": "value"},
-            )
-
-        mock_runner.stream_with_message = mock_stream_structured
-
+    async def test_stream_message_format_matches_sync(self, client):
+        """The Message JSON from stream has the same fields as the sync endpoint."""
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
 
@@ -501,16 +463,13 @@ class TestStreamMessageEvent:
 
         import json
 
-        lines = body.replace("\r\n", "\n").split("\n")
-        message_json = None
-        for i, line in enumerate(lines):
-            if line.strip() == "event: message":
-                data_line = lines[i + 1] if i + 1 < len(lines) else ""
-                json_str = data_line[len("data:"):].strip()
-                message_json = json.loads(json_str)
-                break
+        data_lines = [
+            line.strip()[len("data:"):].strip()
+            for line in body.replace("\r\n", "\n").split("\n")
+            if line.strip().startswith("data:")
+        ]
 
-        assert message_json is not None, f"event: message not found in SSE body:\n{body}"
+        message_json = json.loads(data_lines[-2])
 
         for field in ["role", "content", "timestamp", "status"]:
             assert field in message_json, f"Missing field {field!r} in stream Message: {message_json}"

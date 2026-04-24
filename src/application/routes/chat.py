@@ -50,10 +50,8 @@ async def stream_message(
                     chunk_count += 1
                     yield {"data": event}
                 elif isinstance(event, Message):
-                    if event.structured_response is not None:
-                        yield {"event": "message", "data": event.model_dump_json()}
-                    else:
-                        yield {"event": "done", "data": ""}
+                    yield {"data": event.model_dump_json()}
+            yield {"data": "[DONE]"}
             logger.info("[thread=%s] Stream complete, %d chunks", thread_id, chunk_count)
         except Exception:
             logger.exception("[thread=%s] Stream error after %d chunks", thread_id, chunk_count)
