@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     log_level: str = "INFO"
+    allowed_origins: list[str] = ["http://localhost:8080"]
     tracing: TracingSettings = TracingSettings()
 
     minio_endpoint: str = "localhost:9040"
