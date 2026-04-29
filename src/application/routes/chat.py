@@ -15,7 +15,7 @@ from src.dependencies import (
     get_stream_message_use_case,
 )
 from src.domain.entities.message import Message
-from src.domain.entities.stream_event import StreamEventType
+from src.domain.entities.stream_event import StreamEvent, StreamEventType
 
 logger = logging.getLogger("composable-agents")
 
@@ -55,8 +55,9 @@ async def stream_message(
             logger.info("[thread=%s] Stream complete, %d chunks", thread_id, chunk_count)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.exception("[thread=%s] Stream error after %d chunks", thread_id, chunk_count)
-            yield {"event": "error", "data": "stream_error"}
+            error_event = StreamEvent(type=StreamEventType.ERROR, data=str(exc))
+            yield {"data": error_event.model_dump_json()}
 
     return EventSourceResponse(event_generator(), sep="\r\n", ping=15)
