@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Annotated
 
@@ -13,6 +14,7 @@ from src.dependencies import (
     get_send_message_use_case,
     get_stream_message_use_case,
 )
+from src.domain.entities.message import Message
 from src.domain.entities.stream_event import StreamEventType
 
 logger = logging.getLogger("composable-agents")
@@ -25,11 +27,11 @@ async def send_message(
     thread_id: str,
     body: ChatRequest,
     use_case: Annotated[SendMessageUseCase, Depends(get_send_message_use_case)],
-) -> dict:
+) -> Message:
     logger.info("[thread=%s] POST /chat - message=%s", thread_id, "HITL" if body.message is None else body.message[:80])
     result = await use_case.execute(thread_id, body)
     logger.info("[thread=%s] Response status=%s content_len=%d", thread_id, result.status, len(result.content or ""))
-    return result.model_dump()
+    return result
 
 
 @router.post("/{thread_id}/stream")
@@ -51,6 +53,8 @@ async def stream_message(
                 yield {"data": event.model_dump_json()}
             yield {"data": "[DONE]"}
             logger.info("[thread=%s] Stream complete, %d chunks", thread_id, chunk_count)
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.exception("[thread=%s] Stream error after %d chunks", thread_id, chunk_count)
             yield {"event": "error", "data": "stream_error"}

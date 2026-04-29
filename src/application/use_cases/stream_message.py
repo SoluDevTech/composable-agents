@@ -43,14 +43,15 @@ class StreamMessageUseCase:
         if final_message is not None:
             try:
                 await self._threads.add_message(thread_id, final_message)
-            except Exception:
+                logger.info(
+                    "[thread=%s][agent=%s] Stream complete, %d chunks, elapsed=%.2fs, message=persisted",
+                    thread_id,
+                    thread.agent_name,
+                    chunk_count,
+                    elapsed,
+                )
+            except Exception as exc:
                 logger.exception(
                     "[thread=%s][agent=%s] Failed to persist AI message after stream", thread_id, thread.agent_name
                 )
-            logger.info(
-                "[thread=%s][agent=%s] Stream complete, %d chunks, elapsed=%.2fs, message=persisted",
-                thread_id,
-                thread.agent_name,
-                chunk_count,
-                elapsed,
-            )
+                raise RuntimeError(f"Failed to persist AI message after stream: {exc}") from exc
