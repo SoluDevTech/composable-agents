@@ -14,6 +14,7 @@ from src.dependencies import (
     get_stream_message_use_case,
 )
 from src.domain.entities.message import Message
+from src.domain.entities.stream_event import StreamEventType
 
 logger = logging.getLogger("composable-agents")
 
@@ -25,11 +26,11 @@ async def send_message(
     thread_id: str,
     body: ChatRequest,
     use_case: Annotated[SendMessageUseCase, Depends(get_send_message_use_case)],
-) -> Message:
+) -> dict:
     logger.info("[thread=%s] POST /chat - message=%s", thread_id, "HITL" if body.message is None else body.message[:80])
     result = await use_case.execute(thread_id, body)
     logger.info("[thread=%s] Response status=%s content_len=%d", thread_id, result.status, len(result.content or ""))
-    return result
+    return result.model_dump()
 
 
 @router.post("/{thread_id}/stream")
@@ -46,11 +47,9 @@ async def stream_message(
         chunk_count = 0
         try:
             async for event in use_case.execute(thread_id, body.message):
-                if isinstance(event, str):
+                if event.type in (StreamEventType.THINKING, StreamEventType.CONTENT):
                     chunk_count += 1
-                    yield {"data": event}
-                elif isinstance(event, Message):
-                    yield {"data": event.model_dump_json()}
+                yield {"data": event.model_dump_json()}
             yield {"data": "[DONE]"}
             logger.info("[thread=%s] Stream complete, %d chunks", thread_id, chunk_count)
         except Exception:

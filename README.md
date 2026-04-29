@@ -711,20 +711,18 @@ ws.onopen = () => ws.send(JSON.stringify({ message: "Hello" }));
 ws.onmessage = (event) => {
   if (event.data === "[END]") {
     console.log("Response complete");
-  } else {
-    try {
-      const data = JSON.parse(event.data);
-      if (data.type === "message") {
-        console.log("Final message:", data);
-      }
-    } catch {
-      process.stdout.write(event.data);
-    }
+    return;
+  }
+  const data = JSON.parse(event.data);
+  switch (data.type) {
+    case "thinking": console.log("[Thinking]", data.data); break;
+    case "content":  process.stdout.write(data.data); break;
+    case "message":  console.log("Final message:", data.data); break;
   }
 };
 ```
 
-The WebSocket stream emits text chunks, then a JSON object with `type: "message"` containing the full `Message` fields, followed by `[END]`.
+The WebSocket stream emits typed `StreamEvent` JSON objects: `thinking` (reasoning tokens), `content` (response text), `message` (final full `Message` JSON), then `[END]`.
 
 ---
 

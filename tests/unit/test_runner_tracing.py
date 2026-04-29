@@ -7,6 +7,7 @@ for non-empty callbacks. Graph is mocked (external LLM boundary).
 from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.entities.message import MessageRole
+from src.domain.entities.stream_event import StreamEvent, StreamEventType
 from src.infrastructure.deepagent.adapter import DeepAgentRunner
 
 
@@ -83,12 +84,13 @@ class TestDeepAgentRunnerTracing:
 
         runner = DeepAgentRunner(mock_graph, tracing_provider=mock_tracing_provider)
 
-        chunks = []
-        async for chunk in runner.stream("thread-1", "Hi"):
-            chunks.append(chunk)
+        events = []
+        async for event in runner.stream("thread-1", "Hi"):
+            events.append(event)
 
-        assert len(chunks) == 1
-        assert chunks[0] == "chunk"
+        assert len(events) == 1
+        assert events[0].type == StreamEventType.CONTENT
+        assert events[0].data == "chunk"
 
     def test_build_config_with_tracing(self, mock_tracing_provider):
         mock_callback = MagicMock()

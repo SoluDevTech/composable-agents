@@ -13,6 +13,7 @@ from httpx import ASGITransport, AsyncClient
 
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.entities.message import Message, MessageRole, MessageStatus
+from src.domain.entities.stream_event import StreamEvent, StreamEventType
 from src.domain.exceptions import AgentError
 from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
@@ -58,18 +59,21 @@ def mock_runner():
 
     async def mock_stream(_thread_id, _message):
         for word in ["I", "am", "a", "mock", "agent."]:
-            yield word + " "
+            yield StreamEvent(type=StreamEventType.CONTENT, data=word + " ")
 
     runner.stream = mock_stream
 
     async def mock_stream_with_message(_thread_id, _message):
         for word in ["I", "am", "a", "mock", "agent."]:
-            yield word + " "
-        yield Message(
-            role=MessageRole.AI,
-            content="I am a mock agent.",
-            status=MessageStatus.COMPLETED,
-            structured_response={"key": "value"},
+            yield StreamEvent(type=StreamEventType.CONTENT, data=word + " ")
+        yield StreamEvent(
+            type=StreamEventType.MESSAGE,
+            data=Message(
+                role=MessageRole.AI,
+                content="I am a mock agent.",
+                status=MessageStatus.COMPLETED,
+                structured_response={"key": "value"},
+            ).model_dump_json(),
         )
 
     runner.stream_with_message = mock_stream_with_message
@@ -438,7 +442,8 @@ class TestStreamMessageEvent:
         ]
 
         assert data_lines[-1] == "[DONE]"
-        message_json = json.loads(data_lines[-2])
+        stream_event = json.loads(data_lines[-2])
+        message_json = json.loads(stream_event["data"])
         assert message_json["role"] == "ai"
         assert message_json["structured_response"] == {"key": "value"}
 
@@ -469,7 +474,8 @@ class TestStreamMessageEvent:
             if line.strip().startswith("data:")
         ]
 
-        message_json = json.loads(data_lines[-2])
+        stream_event = json.loads(data_lines[-2])
+        message_json = json.loads(stream_event["data"])
 
         for field in ["role", "content", "timestamp", "status"]:
             assert field in message_json, f"Missing field {field!r} in stream Message: {message_json}"

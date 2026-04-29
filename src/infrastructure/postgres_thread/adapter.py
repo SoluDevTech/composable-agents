@@ -16,6 +16,11 @@ from src.infrastructure.database.models.thread import MessageModel, ThreadModel
 logger = logging.getLogger("composable-agents")
 
 
+def _safe_str(val: object) -> str | None:
+    """Return a string if the value is a real string, else None."""
+    return val if isinstance(val, str) else None
+
+
 def _model_to_thread(thread_model: ThreadModel) -> Thread:
     """Reconstruct a domain Thread from ORM ThreadModel with its MessageModels.
 
@@ -37,6 +42,7 @@ def _model_to_thread(thread_model: ThreadModel) -> Thread:
             tool_calls=msg.tool_calls,
             status=MessageStatus(msg.status) if msg.status else None,
             structured_response=msg.structured_response,
+            thinking=_safe_str(msg.thinking),
         )
         for msg in messages_sorted
     ]
@@ -189,6 +195,7 @@ class PostgresThreadRepository(ThreadRepository):
                     tool_calls=message.tool_calls,
                     status=message.status.value if message.status else None,
                     structured_response=message.structured_response,
+                    thinking=message.thinking,
                 )
                 session.add(msg_model)
                 thread_model.updated_at = datetime.now(UTC)
