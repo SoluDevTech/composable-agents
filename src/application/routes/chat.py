@@ -13,7 +13,6 @@ from src.dependencies import (
     get_send_message_use_case,
     get_stream_message_use_case,
 )
-from src.domain.entities.message import Message
 from src.domain.entities.stream_event import StreamEventType
 
 logger = logging.getLogger("composable-agents")

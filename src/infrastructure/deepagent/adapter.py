@@ -52,9 +52,8 @@ class DeepAgentRunner(AgentRunner):
         reasoning = additional.get("reasoning_content")
         if DeepAgentRunner._is_nonblank_str(reasoning):
             return (StreamEventType.THINKING, reasoning)
-        if additional.get("type") == "thinking":
-            if DeepAgentRunner._is_nonblank_str(chunk.content):
-                return (StreamEventType.THINKING, chunk.content)
+        if additional.get("type") == "thinking" and DeepAgentRunner._is_nonblank_str(chunk.content):
+            return (StreamEventType.THINKING, chunk.content)
         if DeepAgentRunner._is_nonblank_str(chunk.content):
             return (StreamEventType.CONTENT, chunk.content)
         return None
@@ -111,7 +110,9 @@ class DeepAgentRunner(AgentRunner):
             logger.exception("[thread=%s] Agent execution error", thread_id)
             raise AgentError(f"Agent execution error: {e}") from e
 
-    async def _yield_chunks(self, thread_id: str, message: str, config: dict, stats: dict) -> AsyncIterator[StreamEvent]:
+    async def _yield_chunks(
+        self, thread_id: str, message: str, config: dict, stats: dict
+    ) -> AsyncIterator[StreamEvent]:
         start = time.monotonic()
         first_chunk = True
         chunk_count = 0
@@ -138,7 +139,12 @@ class DeepAgentRunner(AgentRunner):
             stats: dict = {}
             async for event in self._yield_chunks(thread_id, message, config, stats):
                 yield event
-            logger.info("[thread=%s] Stream complete, %d chunks, elapsed=%.2fs", thread_id, stats["chunk_count"], stats["elapsed"])
+            logger.info(
+                "[thread=%s] Stream complete, %d chunks, elapsed=%.2fs",
+                thread_id,
+                stats["chunk_count"],
+                stats["elapsed"],
+            )
         except Exception as e:
             logger.exception("[thread=%s] Streaming error", thread_id)
             raise AgentError(f"Streaming error: {e}") from e
@@ -158,7 +164,13 @@ class DeepAgentRunner(AgentRunner):
             result = {"messages": values.get("messages", []), "structured_response": values.get("structured_response")}
             thinking = "".join(thinking_parts) if thinking_parts else None
             response = self._build_response(result, config, thinking)
-            logger.info("[thread=%s] Stream with message complete, %d chunks, elapsed=%.2fs, status=%s", thread_id, stats["chunk_count"], stats["elapsed"], response.status)
+            logger.info(
+                "[thread=%s] Stream with message complete, %d chunks, elapsed=%.2fs, status=%s",
+                thread_id,
+                stats["chunk_count"],
+                stats["elapsed"],
+                response.status,
+            )
             yield StreamEvent(type=StreamEventType.MESSAGE, data=response.model_dump_json())
         except Exception as e:
             logger.exception("[thread=%s] Streaming error", thread_id)
@@ -183,7 +195,9 @@ class DeepAgentRunner(AgentRunner):
         logger.info("[thread=%s] HITL reject, reason=%s", thread_id, reason)
         try:
             start = time.monotonic()
-            result = await self._graph.ainvoke(Command(resume={"decisions": [{"type": "reject", "message": reason or ""}]}), config=config)
+            result = await self._graph.ainvoke(
+                Command(resume={"decisions": [{"type": "reject", "message": reason or ""}]}), config=config
+            )
             elapsed = time.monotonic() - start
             response = self._build_response(result, config, None)
             logger.info("[thread=%s] HITL reject complete, elapsed=%.2fs", thread_id, elapsed)
@@ -200,10 +214,19 @@ class DeepAgentRunner(AgentRunner):
             state = self._graph.get_state(config)
             tool_name = tool_call_id
             tool_name = next(
-                (tc["name"] for msg in state.values.get("messages", []) if hasattr(msg, "tool_calls") for tc in msg.tool_calls if tc.get("id") == tool_call_id),
+                (
+                    tc["name"]
+                    for msg in state.values.get("messages", [])
+                    if hasattr(msg, "tool_calls")
+                    for tc in msg.tool_calls
+                    if tc.get("id") == tool_call_id
+                ),
                 tool_call_id,
             )
-            result = await self._graph.ainvoke(Command(resume={"decisions": [{"type": "edit", "edited_action": {"name": tool_name, "args": edits}}]}), config=config)
+            result = await self._graph.ainvoke(
+                Command(resume={"decisions": [{"type": "edit", "edited_action": {"name": tool_name, "args": edits}}]}),
+                config=config,
+            )
             elapsed = time.monotonic() - start
             response = self._build_response(result, config, None)
             logger.info("[thread=%s] HITL edit complete, elapsed=%.2fs", thread_id, elapsed)

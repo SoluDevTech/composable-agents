@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.domain.entities.message import Message, MessageRole, MessageStatus
-from src.domain.entities.stream_event import StreamEvent, StreamEventType
+from src.domain.entities.stream_event import StreamEventType
 from src.domain.exceptions import AgentError
 from src.infrastructure.deepagent.adapter import DeepAgentRunner
 

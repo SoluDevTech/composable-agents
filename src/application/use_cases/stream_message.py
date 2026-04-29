@@ -35,15 +35,22 @@ class StreamMessageUseCase:
                     final_message = Message.model_validate_json(event.data)
                     yield event
         except Exception:
-            logger.exception("[thread=%s][agent=%s] Stream error after %d chunks", thread_id, thread.agent_name, chunk_count)
+            logger.exception(
+                "[thread=%s][agent=%s] Stream error after %d chunks", thread_id, thread.agent_name, chunk_count
+            )
             raise
         elapsed = time.monotonic() - start
         if final_message is not None:
             try:
                 await self._threads.add_message(thread_id, final_message)
             except Exception:
-                logger.exception("[thread=%s][agent=%s] Failed to persist AI message after stream", thread_id, thread.agent_name)
+                logger.exception(
+                    "[thread=%s][agent=%s] Failed to persist AI message after stream", thread_id, thread.agent_name
+                )
             logger.info(
                 "[thread=%s][agent=%s] Stream complete, %d chunks, elapsed=%.2fs, message=persisted",
-                thread_id, thread.agent_name, chunk_count, elapsed,
+                thread_id,
+                thread.agent_name,
+                chunk_count,
+                elapsed,
             )

@@ -416,7 +416,7 @@ class TestStreamMessageEvent:
         body = resp.text
 
         data_lines = [
-            line.strip()[len("data:"):].strip()
+            line.strip()[len("data:") :].strip()
             for line in body.replace("\r\n", "\n").split("\n")
             if line.strip().startswith("data:")
         ]
@@ -436,7 +436,7 @@ class TestStreamMessageEvent:
         import json
 
         data_lines = [
-            line.strip()[len("data:"):].strip()
+            line.strip()[len("data:") :].strip()
             for line in body.replace("\r\n", "\n").split("\n")
             if line.strip().startswith("data:")
         ]
@@ -469,7 +469,7 @@ class TestStreamMessageEvent:
         import json
 
         data_lines = [
-            line.strip()[len("data:"):].strip()
+            line.strip()[len("data:") :].strip()
             for line in body.replace("\r\n", "\n").split("\n")
             if line.strip().startswith("data:")
         ]

@@ -7,7 +7,7 @@ for non-empty callbacks. Graph is mocked (external LLM boundary).
 from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.entities.message import MessageRole
-from src.domain.entities.stream_event import StreamEvent, StreamEventType
+from src.domain.entities.stream_event import StreamEventType
 from src.infrastructure.deepagent.adapter import DeepAgentRunner
 
 
