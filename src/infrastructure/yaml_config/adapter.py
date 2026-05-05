@@ -7,7 +7,7 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.exceptions import ConfigError, ConfigNotFoundError, ConfigValidationError
 from src.domain.ports.agent_config_loader import AgentConfigLoader
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class YamlAgentConfigLoader(AgentConfigLoader):

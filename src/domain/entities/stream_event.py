@@ -7,6 +7,7 @@ class StreamEventType(StrEnum):
     THINKING = "thinking"
     CONTENT = "content"
     MESSAGE = "message"
+    STRUCTURED = "structured"
     ERROR = "error"
 
 

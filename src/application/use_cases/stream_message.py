@@ -1,5 +1,6 @@
 import logging
 import time
+import json
 from collections.abc import AsyncGenerator
 
 from src.domain.entities.message import Message, MessageRole
@@ -7,7 +8,7 @@ from src.domain.entities.stream_event import StreamEvent, StreamEventType
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.thread_repository import ThreadRepository
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class StreamMessageUseCase:
@@ -33,6 +34,11 @@ class StreamMessageUseCase:
                     yield event
                 elif event.type == StreamEventType.MESSAGE:
                     final_message = Message.model_validate_json(event.data)
+                    if final_message and final_message.structured_response is not None:
+                        yield StreamEvent(
+                            type=StreamEventType.STRUCTURED,
+                            data=json.dumps(final_message.structured_response)
+                        )
                     yield event
         except Exception:
             logger.exception(

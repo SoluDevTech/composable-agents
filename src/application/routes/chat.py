@@ -17,7 +17,7 @@ from src.dependencies import (
 from src.domain.entities.message import Message
 from src.domain.entities.stream_event import StreamEvent, StreamEventType
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 

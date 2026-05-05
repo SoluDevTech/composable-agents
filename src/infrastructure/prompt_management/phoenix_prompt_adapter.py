@@ -14,7 +14,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from src.domain.entities.prompt import Prompt, PromptVersion
 from src.domain.ports.prompt_manager import PromptManager
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 # Retry config
 _RETRY_ATTEMPTS = 3

@@ -423,7 +423,7 @@ class TestStreamMessageEvent:
         assert data_lines[-1] == "[DONE]", f"Expected [DONE] as last data line, got: {data_lines[-1]}"
 
     async def test_stream_emits_message_json_before_done(self, client):
-        """Stream emits Message JSON as second-to-last data line, before [DONE]."""
+        """Stream emits Message JSON before [DONE], even with a preceding structured event."""
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
         resp = await client.post(
@@ -442,8 +442,17 @@ class TestStreamMessageEvent:
         ]
 
         assert data_lines[-1] == "[DONE]"
-        stream_event = json.loads(data_lines[-2])
-        message_json = json.loads(stream_event["data"])
+
+        # Find the last message event before [DONE]
+        message_event = None
+        for line in reversed(data_lines[:-1]):
+            event = json.loads(line)
+            if event.get("type") == "message":
+                message_event = event
+                break
+
+        assert message_event is not None, "No message event found in stream"
+        message_json = json.loads(message_event["data"])
         assert message_json["role"] == "ai"
         assert message_json["structured_response"] == {"key": "value"}
 
@@ -474,8 +483,18 @@ class TestStreamMessageEvent:
             if line.strip().startswith("data:")
         ]
 
-        stream_event = json.loads(data_lines[-2])
-        message_json = json.loads(stream_event["data"])
+        # Locate the message event (ignore structured events, [DONE], etc.)
+        message_event = None
+        for line in data_lines:
+            if line == "[DONE]":
+                continue
+            event = json.loads(line)
+            if event.get("type") == "message":
+                message_event = event
+                break
+
+        assert message_event is not None, "No message event found in stream"
+        message_json = json.loads(message_event["data"])
 
         for field in ["role", "content", "timestamp", "status"]:
             assert field in message_json, f"Missing field {field!r} in stream Message: {message_json}"

@@ -7,7 +7,7 @@ from opentelemetry import trace
 
 from src.domain.ports.tracing_provider import TracingProvider
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class PhoenixTracingProvider(TracingProvider):

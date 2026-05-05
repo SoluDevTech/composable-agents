@@ -12,7 +12,7 @@ from src.domain.ports.tracing_provider import TracingProvider
 from src.infrastructure.deepagent.adapter import DeepAgentRunner
 from src.infrastructure.deepagent.factory import create_agent_from_config
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class PersistentAgentRegistry(AgentRegistry):

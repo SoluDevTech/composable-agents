@@ -7,7 +7,7 @@ from src.application.use_cases.stream_message import StreamMessageUseCase
 from src.dependencies import get_stream_message_use_case
 from src.domain.entities.stream_event import StreamEvent, StreamEventType
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["websocket"])
 

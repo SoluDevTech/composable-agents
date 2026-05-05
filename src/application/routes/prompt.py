@@ -13,7 +13,7 @@ from src.application.use_cases.update_prompt import UpdatePromptUseCase
 from src.dependencies import get_prompt_manager
 from src.domain.ports.prompt_manager import PromptManager
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
 

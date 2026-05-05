@@ -3,7 +3,7 @@ import logging
 from src.domain.entities.prompt import PromptVersion
 from src.domain.ports.prompt_manager import PromptManager
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class CreatePromptUseCase:

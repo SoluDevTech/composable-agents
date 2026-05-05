@@ -6,7 +6,7 @@ from src.domain.entities.message import Message, MessageRole
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.thread_repository import ThreadRepository
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class SendMessageUseCase:

@@ -4,7 +4,7 @@ from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.domain.ports.agent_config_store import AgentConfigStore
 from src.domain.ports.agent_registry import AgentRegistry
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class DeleteAgentConfigUseCase:

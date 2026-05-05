@@ -12,7 +12,7 @@ from src.domain.exceptions import AgentError
 from src.domain.ports.agent_runner import AgentRunner
 from src.domain.ports.tracing_provider import TracingProvider
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class DeepAgentRunner(AgentRunner):

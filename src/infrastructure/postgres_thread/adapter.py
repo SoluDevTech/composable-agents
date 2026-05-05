@@ -13,7 +13,7 @@ from src.domain.exceptions import StorageError, ThreadNotFoundError
 from src.domain.ports.thread_repository import ThreadRepository
 from src.infrastructure.database.models.thread import MessageModel, ThreadModel
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 def _safe_str(val: object) -> str | None:

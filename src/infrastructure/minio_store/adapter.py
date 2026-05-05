@@ -7,7 +7,7 @@ from miniopy_async.error import S3Error
 from src.domain.exceptions import AgentNotFoundError
 from src.domain.ports.agent_config_store import AgentConfigStore
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class MinioAgentConfigStore(AgentConfigStore):

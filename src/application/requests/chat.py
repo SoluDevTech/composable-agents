@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):

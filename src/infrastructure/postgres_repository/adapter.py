@@ -9,7 +9,7 @@ from src.domain.exceptions import AgentNotFoundError, StorageError
 from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.infrastructure.database.models.agent_config import AgentConfigModel
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 def _model_to_metadata(model: AgentConfigModel) -> AgentConfigMetadata:
