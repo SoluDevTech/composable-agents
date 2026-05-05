@@ -23,3 +23,4 @@ class Message(BaseModel, frozen=True):
     tool_calls: list[dict] | None = None
     status: MessageStatus | None = None
     structured_response: dict | None = None
+    thinking: str | None = None

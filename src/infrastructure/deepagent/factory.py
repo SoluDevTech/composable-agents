@@ -17,7 +17,7 @@ from src.domain.entities.agent_config import AgentConfig, BackendType
 from src.domain.ports.mcp_tool_loader import McpToolLoader
 from src.domain.ports.prompt_manager import PromptManager
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 STRUCTURED_OUTPUT_INSTRUCTION = (
     "\n\nYou MUST use the 'structured_response' tool to return your final answer in the expected structured format."

@@ -4,35 +4,14 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-log_level_name = "INFO"
-log_level = logging.INFO
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
 
 from src.config import Settings
-
-_settings = Settings()
-log_level_name = _settings.log_level.upper()
-log_level = getattr(logging, log_level_name, logging.INFO)
-
-_handler = logging.StreamHandler(sys.stdout)
-_handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-
-_root = logging.getLogger()
-_root.setLevel(log_level)
-_root.handlers.clear()
-_root.addHandler(_handler)
-
-for _name in (
-    "langchain",
-    "langchain_core",
-    "langchain_community",
-    "langgraph",
-    "openai",
-    "httpx",
-    "httpcore",
-    "alembic",
-    "sqlalchemy",
-):
-    logging.getLogger(_name).setLevel(log_level)
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,7 +41,7 @@ from src.domain.exceptions import (
     ThreadNotFoundError,
 )
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 settings = Settings()
 

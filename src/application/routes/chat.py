@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Annotated
 
@@ -14,8 +15,9 @@ from src.dependencies import (
     get_stream_message_use_case,
 )
 from src.domain.entities.message import Message
+from src.domain.entities.stream_event import StreamEvent, StreamEventType
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
@@ -46,15 +48,16 @@ async def stream_message(
         chunk_count = 0
         try:
             async for event in use_case.execute(thread_id, body.message):
-                if isinstance(event, str):
+                if event.type in (StreamEventType.THINKING, StreamEventType.CONTENT):
                     chunk_count += 1
-                    yield {"data": event}
-                elif isinstance(event, Message):
-                    yield {"data": event.model_dump_json()}
+                yield {"data": event.model_dump_json()}
             yield {"data": "[DONE]"}
             logger.info("[thread=%s] Stream complete, %d chunks", thread_id, chunk_count)
-        except Exception:
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
             logger.exception("[thread=%s] Stream error after %d chunks", thread_id, chunk_count)
-            yield {"event": "error", "data": "stream_error"}
+            error_event = StreamEvent(type=StreamEventType.ERROR, data=str(exc))
+            yield {"data": error_event.model_dump_json()}
 
     return EventSourceResponse(event_generator(), sep="\r\n", ping=15)

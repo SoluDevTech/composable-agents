@@ -10,7 +10,7 @@ from src.domain.exceptions import McpConnectionError, McpToolLoadError
 from src.domain.ports.mcp_tool_loader import McpToolLoader
 from src.infrastructure.env_utils import resolve_env_vars
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class LangchainMcpToolLoader(McpToolLoader):

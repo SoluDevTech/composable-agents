@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from src.domain.entities.mcp_server_config import McpServerConfig
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class MiddlewareType(StrEnum):

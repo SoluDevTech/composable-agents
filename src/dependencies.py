@@ -32,7 +32,7 @@ from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 from src.infrastructure.prompt_management.phoenix_prompt_adapter import PhoenixPromptManagerProvider
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 # ============= CONFIG =============
 

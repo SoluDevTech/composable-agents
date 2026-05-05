@@ -8,7 +8,7 @@ from src.domain.ports.agent_config_loader import AgentConfigLoader
 from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.domain.ports.agent_config_store import AgentConfigStore
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class CreateAgentConfigUseCase:

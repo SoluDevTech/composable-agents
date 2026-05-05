@@ -4,7 +4,7 @@ from src.domain.entities.agent_config import AgentConfig
 from src.domain.ports.agent_config_loader import AgentConfigLoader
 from src.domain.ports.agent_config_store import AgentConfigStore
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 
 class GetAgentConfigUseCase:

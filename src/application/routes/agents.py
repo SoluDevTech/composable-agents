@@ -19,7 +19,7 @@ from src.dependencies import (
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 
-logger = logging.getLogger("composable-agents")
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 

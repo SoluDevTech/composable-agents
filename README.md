@@ -444,24 +444,38 @@ curl -N -X POST http://localhost:8000/api/v1/chat/a1b2c3d4-e5f6-7890-abcd-ef1234
 Response (Server-Sent Events):
 
 ```
-data: Lines
-data:  of
-data:  code
-data:  align
-data: ...
-event: message
-data: {"role":"ai","content":"Lines of code align...","timestamp":"2025-04-24T10:30:05.000000Z","tool_calls":null,"status":"completed","structured_response":null}
+data: {"type":"thinking","data":"Hmm, a haiku needs 5-7-5 syllables..."}
 
-event: done
-data:
+data: {"type":"content","data":"Lines"}
+
+data: {"type":"content","data":" of"}
+
+data: {"type":"content","data":" code"}
+
+data: {"type":"content","data":" align"}
+
+data: {"type":"content","data":"..."}
+
+data: {"type":"message","data":"{\"role\":\"ai\",\"content\":\"Lines of code align...\",\"timestamp\":\"2025-04-24T10:30:05.000000Z\",\"tool_calls\":null,\"status\":\"completed\",\"structured_response\":null,\"thinking\":\"Hmm, a haiku needs 5-7-5 syllables...\"}"}
+
+data: [DONE]
 ```
 
-The stream emits:
-1. **`data: <chunk>`** — text chunks as they are generated (keepalive for proxies like Cloudflare)
-2. **`event: message`** — the complete `Message` JSON with all fields (role, content, timestamp, tool_calls, status, structured_response), identical in format to the synchronous `POST /chat/{thread_id}` response
-3. **`event: done`** — signals the stream is complete
+The stream emits **typed `StreamEvent` JSON objects** over SSE:
 
-This design prevents Cloudflare timeout issues (~100s on idle connections) because chunks and SSE pings (every 15s) keep the connection active. Clients that need the full structured response can read the `event: message` data.
+| `type` | Description | Persisted? |
+|---|---|---|
+| `thinking` | Reasoning / chain-of-thought tokens from extended-thinking models (e.g., Claude reasoning). | Yes — saved in `Message.thinking` |
+| `content` | Response text / markdown tokens as they are generated. | Yes — aggregated into `Message.content` |
+| `message` | The final complete `Message` JSON with all fields (`role`, `content`, `timestamp`, `tool_calls`, `status`, `structured_response`, `thinking`). Identical in format to the synchronous `POST /chat/{thread_id}` response. | Yes — persisted as the AI turn in the thread |
+
+The stream ends with `data: [DONE]`.
+
+This design prevents Cloudflare timeout issues (~100s on idle connections) because chunks and SSE pings (every 15s) keep the connection active. Clients can switch rendering based on `type`:
+
+- Render `thinking` events in a collapsible reasoning panel.
+- Append `content` events directly to the chat bubble.
+- Wait for the `message` event to finalize metadata (status, structure, tool calls).
 
 ### 7. List All Threads
 
@@ -711,20 +725,18 @@ ws.onopen = () => ws.send(JSON.stringify({ message: "Hello" }));
 ws.onmessage = (event) => {
   if (event.data === "[END]") {
     console.log("Response complete");
-  } else {
-    try {
-      const data = JSON.parse(event.data);
-      if (data.type === "message") {
-        console.log("Final message:", data);
-      }
-    } catch {
-      process.stdout.write(event.data);
-    }
+    return;
+  }
+  const data = JSON.parse(event.data);
+  switch (data.type) {
+    case "thinking": console.log("[Thinking]", data.data); break;
+    case "content":  process.stdout.write(data.data); break;
+    case "message":  console.log("Final message:", data.data); break;
   }
 };
 ```
 
-The WebSocket stream emits text chunks, then a JSON object with `type: "message"` containing the full `Message` fields, followed by `[END]`.
+The WebSocket stream emits typed `StreamEvent` JSON objects: `thinking` (reasoning tokens), `content` (response text), `message` (final full `Message` JSON), then `[END]`.
 
 ---
 
