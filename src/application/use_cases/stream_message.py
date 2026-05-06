@@ -42,7 +42,7 @@ class StreamMessageUseCase:
                 elif event.type == StreamEventType.MESSAGE:
                     final_message = Message.model_validate_json(event.data)
                     if final_message and final_message.structured_response is not None:
-                        yield StreamEvent(
+                        event = StreamEvent(
                             type=StreamEventType.STRUCTURED,
                             data=json.dumps(final_message.structured_response)
                         )

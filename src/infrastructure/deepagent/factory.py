@@ -6,7 +6,6 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend, StoreBackend
-from langchain.agents.structured_output import ProviderStrategy
 from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
@@ -239,7 +238,17 @@ async def create_agent_from_config(
         kwargs["skills"] = config.skills
 
     if config.response_format:
-        kwargs["response_format"] = ProviderStrategy(config.response_format)
+        # Use tool-based structured output instead of ProviderStrategy to bypass
+        # Bedrock schema limitations (max 16 anyOf, max 24 optionals, max grammar size).
+        # The structured_response tool is injected into the agent's tool list so the LLM
+        # sees it, but we do NOT pass response_format to avoid create_agent forcing
+        # tool_choice="any", which suppresses intermediate streaming messages.
+        # The system prompt is augmented with an instruction to use the tool.
+        response_tool = _create_response_tool(config.response_format)
+        all_tools = (all_tools or []) + [response_tool]
+        kwargs["tools"] = all_tools
+        current_prompt = kwargs.get("system_prompt", "")
+        kwargs["system_prompt"] = (current_prompt or "") + STRUCTURED_OUTPUT_INSTRUCTION
 
     subagents = await _resolve_subagents(config, mcp_tool_loader, prompt_manager)
     if subagents:
