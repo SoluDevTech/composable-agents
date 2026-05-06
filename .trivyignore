@@ -11,3 +11,9 @@ CVE-2025-7458
 # Faux positif confirmé par le tracker Debian (will_not_fix).
 # Review: 2026-04-23
 CVE-2023-45853
+
+# libgnutls30: CVE-2026-33845 - DTLS zero-length fragment DoS.
+# Aucune version fixée disponible dans Debian bookworm (Candidate == Installed: 3.7.9-2+deb12u6).
+# L'application n'utilise pas DTLS (FastAPI/HTTP + WebSocket over TCP).
+# Review: 2026-05-06
+CVE-2026-33845
