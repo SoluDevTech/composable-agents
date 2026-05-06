@@ -10,6 +10,7 @@ logging.basicConfig(
     stream=sys.stdout,
     force=True,
 )
+logging.getLogger().setLevel(logging.INFO)
 
 from src.config import Settings
 
