@@ -66,6 +66,29 @@ class DeepAgentRunner(AgentRunner):
                 config["callbacks"] = callbacks
         return config
 
+    def _extract_structured_response(self, messages: list) -> dict | None:
+        """Extract structured_response from tool_calls in messages."""
+        if not messages:
+            return None
+        # Walk messages in reverse to find the most recent structured_response tool call
+        for msg in reversed(messages):
+            tool_calls = getattr(msg, "tool_calls", None) or []
+            if isinstance(tool_calls, list):
+                for tc in tool_calls:
+                    if tc.get("name") == "structured_response":
+                        args = tc.get("args")
+                        if args:
+                            if isinstance(args, dict):
+                                return args
+                            if isinstance(args, str):
+                                try:
+                                    parsed = json.loads(args)
+                                    if isinstance(parsed, dict):
+                                        return parsed
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
+        return None
+
     def _build_response(self, result: dict, config: dict, thinking: str | None) -> Message:
         messages = result.get("messages", [])
         if not messages:
@@ -74,15 +97,23 @@ class DeepAgentRunner(AgentRunner):
         all_tool_calls = getattr(last_message, "tool_calls", None) or []
         state = self._graph.get_state(config)
         status = MessageStatus.AWAITING_HITL if state.interrupts else MessageStatus.COMPLETED
-        structured_response = None
-        raw_structured = result.get("structured_response")
-        if raw_structured is not None:
-            if hasattr(raw_structured, "model_dump"):
-                structured_response = raw_structured.model_dump()
-            elif isinstance(raw_structured, dict):
-                structured_response = raw_structured
+
+        # 1. Try extracting structured_response from tool_calls (ToolStrategy mode)
+        structured_response = self._extract_structured_response(messages)
+
+        # 2. Fallback to result structured_response (ProviderStrategy/ToolStrategy native mode)
+        if structured_response is None:
+            raw_structured = result.get("structured_response")
+            if raw_structured is not None:
+                if hasattr(raw_structured, "model_dump"):
+                    structured_response = raw_structured.model_dump()
+                elif isinstance(raw_structured, dict):
+                    structured_response = raw_structured
+
+        # 3. Fallback to parsing the last message content as JSON
         if structured_response is None:
             structured_response = self._try_parse_json(last_message.content)
+
         return Message(
             role=MessageRole.AI,
             content=last_message.content,

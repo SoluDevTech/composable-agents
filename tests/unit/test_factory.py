@@ -129,15 +129,17 @@ class TestCreateResponseTool:
 
 class TestResponseFormatIntegration:
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
-    async def test_passes_provider_strategy_when_response_format_set(self, mock_create):
+    async def test_injects_structured_response_tool_when_response_format_set(self, mock_create):
+        """When response_format is set, inject structured_response tool and instruction."""
         mock_create.return_value = MagicMock()
         config = AgentConfig(name="test", response_format=WEATHER_SCHEMA)
         await create_agent_from_config(config)
         kwargs = mock_create.call_args.kwargs
-        assert "response_format" in kwargs
-        from langchain.agents.structured_output import ProviderStrategy
-
-        assert isinstance(kwargs["response_format"], ProviderStrategy)
+        assert "response_format" not in kwargs
+        assert "tools" in kwargs
+        tool_names = [t.name for t in kwargs["tools"]]
+        assert "structured_response" in tool_names
+        assert "structured_response" in kwargs.get("system_prompt", "")
 
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
     async def test_omits_response_format_when_none(self, mock_create):

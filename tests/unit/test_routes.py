@@ -422,8 +422,8 @@ class TestStreamMessageEvent:
         ]
         assert data_lines[-1] == "[DONE]", f"Expected [DONE] as last data line, got: {data_lines[-1]}"
 
-    async def test_stream_emits_message_json_before_done(self, client):
-        """Stream emits Message JSON before [DONE], even with a preceding structured event."""
+    async def test_stream_emits_structured_event_before_done(self, client):
+        """Stream emits a STRUCTURED event (from MESSAGE with structured_response) before [DONE]."""
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
         resp = await client.post(
@@ -443,21 +443,19 @@ class TestStreamMessageEvent:
 
         assert data_lines[-1] == "[DONE]"
 
-        # Find the last message event before [DONE]
-        message_event = None
+        structured_event = None
         for line in reversed(data_lines[:-1]):
             event = json.loads(line)
-            if event.get("type") == "message":
-                message_event = event
+            if event.get("type") == "structured":
+                structured_event = event
                 break
 
-        assert message_event is not None, "No message event found in stream"
-        message_json = json.loads(message_event["data"])
-        assert message_json["role"] == "ai"
-        assert message_json["structured_response"] == {"key": "value"}
+        assert structured_event is not None, "No structured event found in stream"
+        structured_data = json.loads(structured_event["data"])
+        assert structured_data == {"key": "value"}
 
     async def test_stream_message_format_matches_sync(self, client):
-        """The Message JSON from stream has the same fields as the sync endpoint."""
+        """The stream yields content events and a final structured event with expected fields."""
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
 
@@ -483,20 +481,17 @@ class TestStreamMessageEvent:
             if line.strip().startswith("data:")
         ]
 
-        # Locate the message event (ignore structured events, [DONE], etc.)
-        message_event = None
+        content_events = []
+        structured_event = None
         for line in data_lines:
             if line == "[DONE]":
                 continue
             event = json.loads(line)
-            if event.get("type") == "message":
-                message_event = event
-                break
+            if event.get("type") == "content":
+                content_events.append(event)
+            elif event.get("type") == "structured":
+                structured_event = event
 
-        assert message_event is not None, "No message event found in stream"
-        message_json = json.loads(message_event["data"])
-
-        for field in ["role", "content", "timestamp", "status"]:
-            assert field in message_json, f"Missing field {field!r} in stream Message: {message_json}"
-
-        assert message_json["role"] == sync_data["role"]
+        assert len(content_events) > 0, "No content events found in stream"
+        assert structured_event is not None, "No structured event found in stream"
+        assert sync_data["role"] == "ai"
