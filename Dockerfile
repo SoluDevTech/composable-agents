@@ -15,6 +15,9 @@ FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
+# Upgrade system packages to fix CVEs (e.g. libgnutls30)
+RUN apt-get update && apt-get upgrade -y && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 
