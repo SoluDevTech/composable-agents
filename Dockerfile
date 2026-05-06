@@ -10,13 +10,13 @@ COPY pyproject.toml uv.lock ./
 # Install dependencies using uv
 RUN uv sync --frozen --no-dev
 
-# Stage 2: Runtime image
-FROM python:3.11-slim-bookworm
+# Stage 2: Runtime image (Alpine for smaller attack surface and fewer CVEs)
+FROM python:3.11-alpine
 
 WORKDIR /app
 
-# Upgrade system packages to fix CVEs (e.g. libgnutls30)
-RUN apt-get update && apt-get upgrade -y && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Upgrade system packages to fix CVEs
+RUN apk update && apk upgrade && rm -rf /var/cache/apk/*
 
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
@@ -25,12 +25,12 @@ COPY --from=builder /app/.venv /app/.venv
 COPY src/ /app/src/
 
 # Set Python path and venv
-ENV PYTHONPATH=/app:$PYTHONPATH
+ENV PYTHONPATH=/app
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+# Create non-root user for security (Alpine syntax)
+RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000
