@@ -10,13 +10,13 @@ COPY pyproject.toml uv.lock ./
 # Install dependencies using uv
 RUN uv sync --frozen --no-dev
 
-# Stage 2: Runtime image (Alpine for smaller attack surface and fewer CVEs)
-FROM python:3.11-alpine
+# Stage 2: Runtime image (Debian slim to match builder libc and support compiled wheels)
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
 # Upgrade system packages to fix CVEs
-RUN apk update && apk upgrade && rm -rf /var/cache/apk/*
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
@@ -29,8 +29,8 @@ ENV PYTHONPATH=/app
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
-# Create non-root user for security (Alpine syntax)
-RUN adduser -D -u 1000 appuser && chown -R appuser:appuser /app
+# Create non-root user for security (Debian syntax)
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000
