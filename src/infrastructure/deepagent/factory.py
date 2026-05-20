@@ -15,6 +15,7 @@ from pydantic import create_model
 from src.domain.entities.agent_config import AgentConfig, BackendType
 from src.domain.ports.mcp_tool_loader import McpToolLoader
 from src.domain.ports.prompt_manager import PromptManager
+from src.infrastructure.deepagent.schema_utils import make_validation_model
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,7 @@ async def create_agent_from_config(
         mcp_tool_loader: Optional MCP tool loader for loading remote tools.
 
     Returns:
-        The compiled agent ready for execution.
+        Tuple of (compiled agent graph, response_format_model or None).
     """
     logger.info("Creating agent '%s' (model=%s)", config.name, config.model)
     checkpointer = MemorySaver()
@@ -238,17 +239,14 @@ async def create_agent_from_config(
         kwargs["skills"] = config.skills
 
     if config.response_format:
-        # Use tool-based structured output instead of ProviderStrategy to bypass
-        # Bedrock schema limitations (max 16 anyOf, max 24 optionals, max grammar size).
-        # The structured_response tool is injected into the agent's tool list so the LLM
-        # sees it, but we do NOT pass response_format to avoid create_agent forcing
-        # tool_choice="any", which suppresses intermediate streaming messages.
-        # The system prompt is augmented with an instruction to use the tool.
+        response_format_model = make_validation_model(config.response_format)
         response_tool = _create_response_tool(config.response_format)
         all_tools = (all_tools or []) + [response_tool]
         kwargs["tools"] = all_tools
         current_prompt = kwargs.get("system_prompt", "")
         kwargs["system_prompt"] = (current_prompt or "") + STRUCTURED_OUTPUT_INSTRUCTION
+    else:
+        response_format_model = None
 
     subagents = await _resolve_subagents(config, mcp_tool_loader, prompt_manager)
     if subagents:
@@ -260,7 +258,7 @@ async def create_agent_from_config(
         logger.error(f"Error creating agent '{config.name}': {e}")
         raise
     logger.info("Agent '%s' created successfully", config.name)
-    return graph
+    return graph, response_format_model
 
 
 # helper to get system_prompt from Phoenix

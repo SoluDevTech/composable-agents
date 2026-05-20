@@ -67,7 +67,7 @@ class TestPersistentAgentRegistry:
         """get_runner should fetch YAML from MinIO, parse it, create agent, cache runner."""
         mock_store.get.return_value = VALID_YAML
         mock_graph = MagicMock()
-        mock_create.return_value = mock_graph
+        mock_create.return_value = (mock_graph, None)
         mock_runner_instance = MagicMock()
         mock_runner_cls.return_value = mock_runner_instance
 
@@ -85,7 +85,7 @@ class TestPersistentAgentRegistry:
     async def test_get_runner_cache_hit(self, mock_runner_cls, mock_create, registry, mock_store):
         """Second call should return cached runner without fetching from store again."""
         mock_store.get.return_value = VALID_YAML
-        mock_create.return_value = MagicMock()
+        mock_create.return_value = (MagicMock(), None)
         mock_runner_instance = MagicMock()
         mock_runner_cls.return_value = mock_runner_instance
 
@@ -124,7 +124,7 @@ class TestPersistentAgentRegistry:
     async def test_invalidate_clears_cache(self, mock_runner_cls, mock_create, registry, mock_store):
         """After invalidate, next get_runner should re-fetch from store."""
         mock_store.get.return_value = VALID_YAML
-        mock_create.return_value = MagicMock()
+        mock_create.return_value = (MagicMock(), None)
         runner_a = MagicMock()
         runner_b = MagicMock()
         mock_runner_cls.side_effect = [runner_a, runner_b]
@@ -148,7 +148,7 @@ class TestPersistentAgentRegistry:
     async def test_close_clears_all_runners(self, mock_runner_cls, mock_create, registry, mock_store):
         """close should empty the runners cache."""
         mock_store.get.return_value = VALID_YAML
-        mock_create.return_value = MagicMock()
+        mock_create.return_value = (MagicMock(), None)
         mock_runner_cls.return_value = MagicMock()
 
         await registry.get_runner("test-agent")

@@ -59,8 +59,8 @@ class PersistentAgentRegistry(AgentRegistry):
             logger.info("Building agent '%s' from persistent store", agent_name)
             yaml_content = await self._config_store.get(agent_name)
             config = self._config_loader.load_from_string(yaml_content)
-            graph = await create_agent_from_config(config, self._mcp_tool_loader, self._prompt_manager)
-            runner = DeepAgentRunner(graph, tracing_provider=self._tracing_provider)
+            graph, response_format_model = await create_agent_from_config(config, self._mcp_tool_loader, self._prompt_manager)
+            runner = DeepAgentRunner(graph, tracing_provider=self._tracing_provider, response_format_model=response_format_model)
             self._runners[agent_name] = runner
             logger.info("Agent '%s' ready and cached", agent_name)
             return runner
