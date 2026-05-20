@@ -293,3 +293,123 @@ class TestDeepAgentRunner:
         result = await runner.invoke("thread-1", "hi")
 
         assert result.structured_response is None
+
+    # --- Post-validation tests ---
+
+    async def test_validate_structured_response_strips_extra_top_level_fields(self):
+        """Extra top-level fields invented by the LLM are stripped."""
+        from src.infrastructure.deepagent.schema_utils import make_validation_model
+
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+            "required": ["name"],
+        }
+        model = make_validation_model(schema)
+        mock_msg = MagicMock()
+        mock_msg.content = "Result"
+        mock_msg.tool_calls = None
+        graph = _make_graph([mock_msg])
+        graph.ainvoke.return_value = {
+            "messages": [mock_msg],
+            "structured_response": {"name": "Alice", "age": 30, "terraceArea": 50, "parkingSpaces": 2},
+        }
+
+        runner = DeepAgentRunner(graph, response_format_model=model)
+        result = await runner.invoke("thread-1", "analyze")
+
+        assert result.structured_response == {"name": "Alice", "age": 30}
+        assert "terraceArea" not in result.structured_response
+        assert "parkingSpaces" not in result.structured_response
+
+    async def test_validate_structured_response_strips_nested_extra_fields(self):
+        """Extra nested fields invented by the LLM are stripped."""
+        from src.infrastructure.deepagent.schema_utils import make_validation_model
+
+        schema = {
+            "type": "object",
+            "properties": {
+                "building": {
+                    "type": "object",
+                    "properties": {"floors": {"type": "integer"}},
+                    "required": ["floors"],
+                }
+            },
+            "required": ["building"],
+        }
+        model = make_validation_model(schema)
+        mock_msg = MagicMock()
+        mock_msg.content = "Result"
+        mock_msg.tool_calls = None
+        graph = _make_graph([mock_msg])
+        graph.ainvoke.return_value = {
+            "messages": [mock_msg],
+            "structured_response": {"building": {"floors": 3, "rooftop": True}},
+        }
+
+        runner = DeepAgentRunner(graph, response_format_model=model)
+        result = await runner.invoke("thread-1", "analyze")
+
+        assert result.structured_response == {"building": {"floors": 3}}
+        assert "rooftop" not in result.structured_response["building"]
+
+    async def test_validate_structured_response_no_model_returns_raw(self):
+        """When no response_format_model is set, data passes through unmodified."""
+        mock_msg = MagicMock()
+        mock_msg.content = "Result"
+        mock_msg.tool_calls = None
+        graph = _make_graph([mock_msg])
+        graph.ainvoke.return_value = {
+            "messages": [mock_msg],
+            "structured_response": {"name": "test", "extra": True},
+        }
+
+        runner = DeepAgentRunner(graph, response_format_model=None)
+        result = await runner.invoke("thread-1", "analyze")
+
+        assert result.structured_response == {"name": "test", "extra": True}
+
+    def test_log_extra_fields_logs_top_level(self, caplog):
+        """_log_extra_fields logs warnings for stripped top-level keys."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            DeepAgentRunner._log_extra_fields(
+                {"name": "a", "invented": 1},
+                {"name": "a"},
+            )
+        assert "invented" in caplog.text
+
+    def test_log_extra_fields_logs_nested(self, caplog):
+        """_log_extra_fields logs warnings for stripped nested keys."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            DeepAgentRunner._log_extra_fields(
+                {"building": {"floors": 3, "bogus": 1}},
+                {"building": {"floors": 3}},
+            )
+        assert "building.bogus" in caplog.text
+
+    async def test_validate_structured_response_from_tool_call(self):
+        """structured_response extracted from tool_calls is also validated."""
+        from src.infrastructure.deepagent.schema_utils import make_validation_model
+
+        schema = {
+            "type": "object",
+            "properties": {"summary": {"type": "string"}},
+            "required": ["summary"],
+        }
+        model = make_validation_model(schema)
+        ai_msg = MagicMock()
+        ai_msg.content = "Done"
+        ai_msg.tool_calls = [
+            {"name": "structured_response", "args": {"summary": "ok", "hallucinated": 99}, "id": "tc-1"}
+        ]
+        graph = _make_graph([ai_msg])
+
+        runner = DeepAgentRunner(graph, response_format_model=model)
+        result = await runner.invoke("thread-1", "summarize")
+
+        assert result.structured_response == {"summary": "ok"}
+        assert "hallucinated" not in result.structured_response

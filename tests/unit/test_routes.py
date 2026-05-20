@@ -146,7 +146,7 @@ def _wire_dependencies(
         patch(
             "src.infrastructure.persistent_registry.adapter.create_agent_from_config",
             new_callable=AsyncMock,
-            return_value=MagicMock(),
+            return_value=(MagicMock(), None),
         ),
         patch(
             "src.infrastructure.persistent_registry.adapter.DeepAgentRunner",

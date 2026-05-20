@@ -5,6 +5,7 @@ import time
 from collections.abc import AsyncIterator
 
 from langgraph.types import Command
+from pydantic import BaseModel
 
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.entities.stream_event import StreamEvent, StreamEventType
@@ -16,9 +17,10 @@ logger = logging.getLogger(__name__)
 
 
 class DeepAgentRunner(AgentRunner):
-    def __init__(self, graph, tracing_provider: TracingProvider | None = None):
+    def __init__(self, graph, tracing_provider: TracingProvider | None = None, response_format_model: type[BaseModel] | None = None):
         self._graph = graph
         self._tracing_provider = tracing_provider
+        self._response_format_model = response_format_model
 
     @staticmethod
     def _try_parse_json(content: str) -> dict | None:
@@ -39,6 +41,31 @@ class DeepAgentRunner(AgentRunner):
             except (json.JSONDecodeError, TypeError):
                 pass
         return None
+
+    def _validate_structured_response(self, data: dict) -> dict:
+        """Validate structured_response against the response_format model.
+
+        Strips any extra fields not defined in the schema and logs warnings.
+        """
+        try:
+            validated = self._response_format_model.model_validate(data)
+            cleaned = validated.model_dump()
+            self._log_extra_fields(data, cleaned)
+            return cleaned
+        except Exception:
+            logger.warning("Failed to validate structured_response against schema, returning raw data")
+            return data
+
+    @staticmethod
+    def _log_extra_fields(original: dict, cleaned: dict) -> None:
+        """Log any top-level or nested fields that were stripped."""
+        for key in original:
+            if key not in cleaned:
+                logger.warning("Stripped extra field from structured_response: '%s'", key)
+            elif isinstance(original[key], dict) and isinstance(cleaned[key], dict):
+                for sub_key in original[key]:
+                    if sub_key not in cleaned[key]:
+                        logger.warning("Stripped extra nested field: '%s.%s'", key, sub_key)
 
     @staticmethod
     def _is_nonblank_str(val: object) -> bool:
@@ -113,6 +140,10 @@ class DeepAgentRunner(AgentRunner):
         # 3. Fallback to parsing the last message content as JSON
         if structured_response is None:
             structured_response = self._try_parse_json(last_message.content)
+
+        # 4. Validate against response_format schema (strip extra fields)
+        if structured_response is not None and self._response_format_model is not None:
+            structured_response = self._validate_structured_response(structured_response)
 
         return Message(
             role=MessageRole.AI,
