@@ -63,8 +63,8 @@ class PhoenixTracingProvider(TracingProvider):
             if hasattr(self._tracer_provider, "force_flush"):
                 self._tracer_provider.force_flush(timeout_millis=timeout_millis)
                 logger.info("Flushed pending spans to Phoenix")
-        except Exception as e:
-            logger.error("Error flushing spans to Phoenix: %s", e)
+        except Exception:
+            logger.exception("Error flushing spans to Phoenix")
 
     async def shutdown(self) -> None:
         """Shutdown the tracer provider and flush remaining spans."""
@@ -76,5 +76,5 @@ class PhoenixTracingProvider(TracingProvider):
             if hasattr(self._tracer_provider, "shutdown"):
                 self._tracer_provider.shutdown()
                 logger.info("Phoenix tracing provider shutdown complete")
-        except Exception as e:
-            logger.error("Error shutting down tracer provider: %s", e)
+        except Exception:
+            logger.exception("Error shutting down tracer provider")

@@ -42,6 +42,7 @@ async def create_prompt(
     """Create a new prompt."""
     use_case = CreatePromptUseCase(prompt_manager)
     try:
+        logger.info("Creating prompt: %s", request.identifier)
         content_dicts = [msg.model_dump() for msg in request.content]
         prompt = await use_case.execute(
             identifier=request.identifier,
@@ -51,10 +52,11 @@ async def create_prompt(
             tags=request.tags,
             metadata=request.metadata,
         )
+        logger.info("Prompt created: %s", request.identifier)
         return {"status": "success", "prompt": prompt}
-    except Exception as e:
-        logger.error(f"Error creating prompt '{request.identifier}': {e}")
-        raise _handle_http_error(e, request.identifier)
+    except Exception:
+        logger.exception("Error creating prompt '%s'", request.identifier)
+        raise
 
 
 @router.get("/get/{identifier}")
@@ -73,9 +75,9 @@ async def get_prompt(
             tag=tag,
         )
         return {"status": "success", "prompt": prompt}
-    except Exception as e:
-        logger.error(f"Error getting prompt '{identifier}': {e}")
-        raise _handle_http_error(e, identifier)
+    except Exception:
+        logger.exception("Error getting prompt '%s'", identifier)
+        raise
 
 
 @router.put("/update/{identifier}")
@@ -96,6 +98,6 @@ async def update_prompt(
             metadata=request.metadata,
         )
         return {"status": "success", "prompt": prompt}
-    except Exception as e:
-        logger.error(f"Error updating prompt '{identifier}': {e}")
-        raise _handle_http_error(e, identifier)
+    except Exception:
+        logger.exception("Error updating prompt '%s'", identifier)
+        raise

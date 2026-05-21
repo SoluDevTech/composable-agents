@@ -1,53 +1,28 @@
-import asyncio
+"""Main entry point for the Composable Agents API."""
+
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from src.config import Settings
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from src.application.routes.agents import router as agents_router
-from src.application.routes.chat import router as chat_router
-from src.application.routes.health import router as health_router
-from src.application.routes.prompt import router as prompt_router
-from src.application.routes.threads import router as threads_router
-from src.application.routes.websocket import router as websocket_router
-from src.dependencies import (
-    close_persistence,
-    init_persistence,
-    mcp_tool_loader,
-    tracing_provider,
-)
-from src.domain.exceptions import (
-    AgentConfigAlreadyExistsError,
-    AgentError,
-    AgentNotFoundError,
-    ConfigError,
-    ConfigNotFoundError,
-    ConfigValidationError,
-    DomainError,
-    StorageError,
-    ThreadNotFoundError,
+from src.config import Settings
+
+settings = Settings()
+
+logging.basicConfig(
+    level=settings.uvicorn_log_level.upper(),
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 
 logger = logging.getLogger(__name__)
 
-settings = Settings()
 
 def _run_alembic_upgrade() -> None:
-    """Run Alembic migrations to head synchronously.
-
-    Designed to be called via asyncio.to_thread() during startup.
-    """
     from alembic.config import Config
 
     from alembic import command
@@ -60,12 +35,10 @@ def _run_alembic_upgrade() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Application lifespan: run migrations, init persistence on startup, cleanup on shutdown."""
+    logging.getLogger().setLevel(settings.uvicorn_log_level.upper())
+
     logger.info("Application startup initiated")
     try:
-        logger.info("Running database migrations...")
-        await asyncio.to_thread(_run_alembic_upgrade)
-        logger.info("Database migrations completed")
         await init_persistence()
         logger.info("Persistence initialized")
     except Exception:
@@ -105,6 +78,30 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+from src.application.routes.agents import router as agents_router
+from src.application.routes.chat import router as chat_router
+from src.application.routes.health import router as health_router
+from src.application.routes.prompt import router as prompt_router
+from src.application.routes.threads import router as threads_router
+from src.application.routes.websocket import router as websocket_router
+from src.dependencies import (
+    close_persistence,
+    init_persistence,
+    mcp_tool_loader,
+    tracing_provider,
+)
+from src.domain.exceptions import (
+    AgentConfigAlreadyExistsError,
+    AgentError,
+    AgentNotFoundError,
+    ConfigError,
+    ConfigNotFoundError,
+    ConfigValidationError,
+    DomainError,
+    StorageError,
+    ThreadNotFoundError,
 )
 
 app.include_router(health_router)
@@ -168,7 +165,20 @@ async def domain_error_handler(_request: Request, exc: DomainError) -> JSONRespo
     logger.error("Domain error: %s", exc)
     return JSONResponse(status_code=500, content={"detail": str(exc)})
 
-if __name__ == "__main__":
-    import uvicorn
 
-    uvicorn.run(app, host=settings.host, port=settings.port, log_level=settings.log_level.lower())
+def run_fastapi():
+    logger.info("Running database migrations...")
+    _run_alembic_upgrade()
+    logger.info("Database migrations completed")
+
+    uvicorn.run(
+        app,
+        host=settings.host,
+        port=settings.port,
+        log_level=settings.uvicorn_log_level,
+        access_log=True,
+    )
+
+
+if __name__ == "__main__":
+    run_fastapi()
