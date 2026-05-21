@@ -1,18 +1,15 @@
 import asyncio
 import logging
-import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from src.config import Settings
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    stream=sys.stdout,
-    force=True,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
-logging.getLogger().setLevel(logging.INFO)
-
-from src.config import Settings
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -174,4 +171,4 @@ async def domain_error_handler(_request: Request, exc: DomainError) -> JSONRespo
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=settings.host, port=settings.port, log_level=settings.log_level.lower(), log_config=None)
+    uvicorn.run(app, host=settings.host, port=settings.port, log_level=settings.log_level.lower())
