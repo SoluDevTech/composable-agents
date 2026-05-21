@@ -16,14 +16,39 @@ class SendMessageUseCase:
         self._registry = registry
         self._threads = threads
 
+    @staticmethod
+    def _is_duplicate_human_message(messages: list, message: str) -> bool:
+        """Detect duplicate HUMAN message submissions (crash/retry scenario).
+
+        When a request crashes before the AI response is persisted, the last DB message
+        is HUMAN with status=None. On client retry, this check prevents storing a
+        duplicate HUMAN message in the DB.
+
+        NOTE: The graph invocation still proceeds (LangGraph will add the human message
+        to its internal checkpoint state). This is intentional — the graph needs to be
+        invoked to produce a response. The trade-off is that the LangGraph checkpoint
+        may accumulate duplicate human messages, but the DB projection remains clean.
+        """
+        if not messages:
+            return False
+        last = messages[-1]
+        return (
+            last.role == MessageRole.HUMAN
+            and last.content == message
+            and last.status is None
+        )
+
     async def execute(self, thread_id: str, request: ChatRequest) -> Message:
         thread = await self._threads.get(thread_id)
         runner = await self._registry.get_runner(thread.agent_name)
 
         if request.message is not None:
             logger.info("[thread=%s][agent=%s] Sending human message", thread_id, thread.agent_name)
-            human_msg = Message(role=MessageRole.HUMAN, content=request.message)
-            await self._threads.add_message(thread_id, human_msg)
+            if not self._is_duplicate_human_message(thread.messages, request.message):
+                human_msg = Message(role=MessageRole.HUMAN, content=request.message)
+                await self._threads.add_message(thread_id, human_msg)
+            else:
+                logger.info("[thread=%s] Skipping duplicate HUMAN message", thread_id)
             start = time.monotonic()
             response = await runner.invoke(thread_id, request.message)
             elapsed = time.monotonic() - start

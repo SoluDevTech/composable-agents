@@ -85,7 +85,6 @@ class TestSendMessageUseCase:
         thread = await thread_repo.create("test-agent")
         use_case = SendMessageUseCase(registry, thread_repo)
 
-        # Bypass Pydantic validation to simulate an unexpected action value
         request = MagicMock(spec=ChatRequest)
         request.message = None
         request.action = "unknown_action"
@@ -95,3 +94,42 @@ class TestSendMessageUseCase:
 
         with pytest.raises(ValueError, match="Unsupported HITL action"):
             await use_case.execute(thread.id, request)
+
+    # --- _is_duplicate_human_message tests ---
+
+    def test_is_duplicate_true_when_last_is_human_same_content_no_status(self):
+        messages = [Message(role=MessageRole.HUMAN, content="Hello")]
+        assert SendMessageUseCase._is_duplicate_human_message(messages, "Hello") is True
+
+    def test_is_duplicate_false_when_last_is_human_different_content(self):
+        messages = [Message(role=MessageRole.HUMAN, content="Hello")]
+        assert SendMessageUseCase._is_duplicate_human_message(messages, "World") is False
+
+    def test_is_duplicate_false_when_last_is_human_with_status(self):
+        messages = [Message(role=MessageRole.HUMAN, content="Hello", status=MessageStatus.COMPLETED)]
+        assert SendMessageUseCase._is_duplicate_human_message(messages, "Hello") is False
+
+    def test_is_duplicate_false_when_last_is_ai(self):
+        messages = [Message(role=MessageRole.AI, content="Hello")]
+        assert SendMessageUseCase._is_duplicate_human_message(messages, "Hello") is False
+
+    def test_is_duplicate_false_when_empty_messages(self):
+        assert SendMessageUseCase._is_duplicate_human_message([], "Hello") is False
+
+    def test_is_duplicate_false_when_mixed_messages_last_is_ai(self):
+        messages = [
+            Message(role=MessageRole.HUMAN, content="Hello"),
+            Message(role=MessageRole.AI, content="Hi there"),
+        ]
+        assert SendMessageUseCase._is_duplicate_human_message(messages, "Hello") is False
+
+    async def test_execute_skips_duplicate_human_message_when_last_is_pending_human(self, registry, thread_repo):
+        thread = await thread_repo.create("test-agent")
+        await thread_repo.add_message(thread.id, Message(role=MessageRole.HUMAN, content="Hello agent!"))
+
+        use_case = SendMessageUseCase(registry, thread_repo)
+        await use_case.execute(thread.id, ChatRequest(message="Hello agent!"))
+
+        updated = await thread_repo.get(thread.id)
+        human_msgs = [m for m in updated.messages if m.role == MessageRole.HUMAN]
+        assert len(human_msgs) == 1

@@ -413,3 +413,41 @@ class TestDeepAgentRunner:
 
         assert result.structured_response == {"summary": "ok"}
         assert "hallucinated" not in result.structured_response
+
+    # --- ToolNode error handling patch tests ---
+
+    def test_patch_tool_error_handling_sets_true(self):
+        tools_node = MagicMock()
+        tool_node_impl = MagicMock()
+        tool_node_impl._handle_tool_errors = MagicMock()
+        tools_node.bound = tool_node_impl
+
+        graph = MagicMock()
+        graph.nodes = {"tools": tools_node}
+
+        DeepAgentRunner(graph)
+        assert tool_node_impl._handle_tool_errors is True
+
+    def test_patch_tool_error_handling_no_tools_node(self):
+        graph = MagicMock()
+        graph.nodes = {"model": MagicMock()}
+
+        DeepAgentRunner(graph)
+
+    def test_patch_tool_error_handling_no_bound(self):
+        tools_node = MagicMock(spec=["bound"])
+        del tools_node.bound
+        graph = MagicMock()
+        graph.nodes = {"tools": tools_node}
+
+        DeepAgentRunner(graph)
+
+    def test_patch_tool_error_handling_no_handle_tool_errors_attr(self):
+        tools_node = MagicMock()
+        tool_node_impl = MagicMock(spec=[])
+        tools_node.bound = tool_node_impl
+
+        graph = MagicMock()
+        graph.nodes = {"tools": tools_node}
+
+        DeepAgentRunner(graph)

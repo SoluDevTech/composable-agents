@@ -21,6 +21,32 @@ class DeepAgentRunner(AgentRunner):
         self._graph = graph
         self._tracing_provider = tracing_provider
         self._response_format_model = response_format_model
+        self._patch_tool_node_error_handling()
+
+    def _patch_tool_node_error_handling(self) -> None:
+        """Patch ToolNode to catch all tool errors (not just ToolInvocationError).
+
+        By default, LangGraph's ToolNode only catches ToolInvocationError, which means
+        Pydantic ValidationError from hallucinated parameters crashes the graph. Setting
+        _handle_tool_errors=True causes any exception to be surfaced as a ToolMessage,
+        allowing the LLM to self-correct.
+
+        TODO: Prefer configuring handle_tool_errors=True at ToolNode construction time
+        in the factory, rather than monkey-patching at runtime.
+        """
+        tools_node = self._graph.nodes.get("tools")
+        if tools_node is None:
+            logger.warning("No 'tools' node found in graph; cannot patch handle_tool_errors")
+            return
+        tool_node_impl = getattr(tools_node, "bound", None)
+        if tool_node_impl is None:
+            logger.warning("'tools' node has no 'bound' attribute; cannot patch handle_tool_errors")
+            return
+        if hasattr(tool_node_impl, "_handle_tool_errors"):
+            tool_node_impl._handle_tool_errors = True
+            logger.info("Patched ToolNode handle_tool_errors=True")
+        else:
+            logger.warning("ToolNode bound object missing _handle_tool_errors; patch not applied")
 
     @staticmethod
     def _try_parse_json(content: str) -> dict | None:
