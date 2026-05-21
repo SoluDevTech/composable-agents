@@ -50,7 +50,9 @@ async def list_agents(
     use_case: Annotated[ListAgentConfigsUseCase, Depends(get_list_agent_configs_use_case)],
 ) -> list[AgentConfigMetadata]:
     """List all agent configuration metadata."""
-    return await use_case.execute()
+    agents = await use_case.execute()
+    logger.info("Listed %d agent configs", len(agents))
+    return agents
 
 
 @router.get("/{agent_name}", response_model=AgentConfig)
@@ -60,6 +62,7 @@ async def get_agent(
 ) -> AgentConfig:
     """Retrieve a single agent configuration by name."""
     _validate_agent_name(agent_name)
+    logger.info("Getting agent config: %s", agent_name)
     return await use_case.execute(name=agent_name)
 
 
@@ -72,7 +75,10 @@ async def create_agent(
     """Create a new agent configuration from an uploaded YAML file."""
     _validate_agent_name(agent_name)
     yaml_content = await _read_yaml_upload(file)
-    return await use_case.execute(name=agent_name, yaml_content=yaml_content)
+    logger.info("Creating agent config: %s", agent_name)
+    result = await use_case.execute(name=agent_name, yaml_content=yaml_content)
+    logger.info("Agent config created: %s", agent_name)
+    return result
 
 
 @router.put("/{agent_name}", response_model=AgentConfig)
@@ -84,7 +90,10 @@ async def update_agent(
     """Update an existing agent configuration from an uploaded YAML file."""
     _validate_agent_name(agent_name)
     yaml_content = await _read_yaml_upload(file)
-    return await use_case.execute(name=agent_name, yaml_content=yaml_content)
+    logger.info("Updating agent config: %s", agent_name)
+    result = await use_case.execute(name=agent_name, yaml_content=yaml_content)
+    logger.info("Agent config updated: %s", agent_name)
+    return result
 
 
 @router.delete("/{agent_name}", status_code=status.HTTP_204_NO_CONTENT)
@@ -94,4 +103,6 @@ async def delete_agent(
 ) -> None:
     """Delete an agent configuration."""
     _validate_agent_name(agent_name)
+    logger.info("Deleting agent config: %s", agent_name)
     await use_case.execute(name=agent_name)
+    logger.info("Agent config deleted: %s", agent_name)

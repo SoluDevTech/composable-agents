@@ -183,7 +183,7 @@ class DeepAgentRunner(AgentRunner):
     async def invoke(self, thread_id: str, message: str) -> Message:
         config = self._build_config(thread_id)
         logger.info("[thread=%s] Invoking agent", thread_id)
-        logger.debug("[thread=%s] Message: %s", thread_id, message[:200])
+        logger.info("[thread=%s] Message: %s", thread_id, message[:200])
         try:
             start = time.monotonic()
             result = await self._graph.ainvoke(

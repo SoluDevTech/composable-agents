@@ -19,5 +19,5 @@ class ListAgentConfigsUseCase:
             List of AgentConfigMetadata.
         """
         result = await self._config_repository.list_all()
-        logger.debug("Listed %d agent configs from repository", len(result))
+        logger.info("Listed %d agent configs from repository", len(result))
         return result
