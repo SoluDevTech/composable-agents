@@ -35,4 +35,4 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["python", "-m", "src.main"]
+CMD ["python", "src/main.py"]

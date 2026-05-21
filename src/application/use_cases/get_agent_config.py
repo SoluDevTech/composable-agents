@@ -33,5 +33,5 @@ class GetAgentConfigUseCase:
         """
         yaml_content = await self._config_store.get(name)
         config = self._config_loader.load_from_string(yaml_content)
-        logger.debug("Loaded agent config '%s' from store", name)
+        logger.info("Loaded agent config '%s' from store", name)
         return config

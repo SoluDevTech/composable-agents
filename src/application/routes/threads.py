@@ -39,7 +39,7 @@ async def list_threads(
     use_case: Annotated[ListThreadsUseCase, Depends(get_list_threads_use_case)],
 ) -> list[Thread]:
     threads = await use_case.execute()
-    logger.debug("Listed %d threads", len(threads))
+    logger.info("Listed %d threads", len(threads))
     return threads
 
 
@@ -48,7 +48,7 @@ async def get_thread(
     thread_id: str,
     use_case: Annotated[GetThreadUseCase, Depends(get_get_thread_use_case)],
 ) -> Thread:
-    logger.debug("Getting thread=%s", thread_id)
+    logger.info("Getting thread=%s", thread_id)
     return await use_case.execute(thread_id)
 
 
@@ -67,5 +67,5 @@ async def list_messages(
     use_case: Annotated[GetThreadUseCase, Depends(get_get_thread_use_case)],
 ) -> list:
     thread = await use_case.execute(thread_id)
-    logger.debug("[thread=%s] Listed %d messages", thread_id, len(thread.messages))
+    logger.info("[thread=%s] Listed %d messages", thread_id, len(thread.messages))
     return thread.messages
