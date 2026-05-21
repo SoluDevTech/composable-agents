@@ -1,7 +1,7 @@
+import json
 import logging
 import sys
 import time
-import json
 from collections.abc import AsyncGenerator
 
 from src.domain.entities.message import Message, MessageRole
@@ -25,10 +25,35 @@ class StreamMessageUseCase:
         self._registry = registry
         self._threads = threads
 
+    @staticmethod
+    def _is_duplicate_human_message(messages: list, message: str) -> bool:
+        """Detect duplicate HUMAN message submissions (crash/retry scenario).
+
+        When a stream crashes before the AI response is persisted, the last DB message
+        is HUMAN with status=None. On client retry, this check prevents storing a
+        duplicate HUMAN message in the DB.
+
+        NOTE: The graph invocation still proceeds (LangGraph will add the human message
+        to its internal checkpoint state). This is intentional — the graph needs to be
+        invoked to produce a response. The trade-off is that the LangGraph checkpoint
+        may accumulate duplicate human messages, but the DB projection remains clean.
+        """
+        if not messages:
+            return False
+        last = messages[-1]
+        return (
+            last.role == MessageRole.HUMAN
+            and last.content == message
+            and last.status is None
+        )
+
     async def execute(self, thread_id: str, message: str) -> AsyncGenerator[StreamEvent, None]:
         thread = await self._threads.get(thread_id)
-        human_msg = Message(role=MessageRole.HUMAN, content=message)
-        await self._threads.add_message(thread_id, human_msg)
+        if not self._is_duplicate_human_message(thread.messages, message):
+            human_msg = Message(role=MessageRole.HUMAN, content=message)
+            await self._threads.add_message(thread_id, human_msg)
+        else:
+            logger.info("[thread=%s] Skipping duplicate HUMAN message", thread_id)
         runner = await self._registry.get_runner(thread.agent_name)
         start = time.monotonic()
         logger.info("[thread=%s][agent=%s] Stream started", thread_id, thread.agent_name)
