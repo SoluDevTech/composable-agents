@@ -209,7 +209,7 @@ async def create_agent_from_config(
         mcp_tools = await mcp_tool_loader.load_tools(config.mcp_servers)
         logger.info("Loaded %d MCP tools for agent '%s'", len(mcp_tools), config.name)
     all_tools = (local_tools or []) + mcp_tools if (local_tools or mcp_tools) else None
-    logger.info("Agent '%s' tools: %d total", config.name, len(all_tools) if all_tools else 0)
+    logger.debug("Agent '%s' tools: %d total", config.name, len(all_tools) if all_tools else 0)
 
     if prompt_manager:
         system_prompt = await get_system_prompt_from_phoenix(config.name, prompt_manager)
@@ -254,8 +254,8 @@ async def create_agent_from_config(
         logger.info("Agent '%s' has %d subagents", config.name, len(subagents))
     try:
         graph = create_deep_agent(**kwargs)
-    except Exception:
-        logger.exception("Error creating agent '%s'", config.name)
+    except Exception as e:
+        logger.error(f"Error creating agent '{config.name}': {e}")
         raise
     logger.info("Agent '%s' created successfully", config.name)
     return graph, response_format_model

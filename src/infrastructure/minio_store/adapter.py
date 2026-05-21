@@ -84,7 +84,7 @@ class MinioAgentConfigStore(AgentConfigStore):
     async def ensure_bucket(self) -> None:
         """Create the bucket if it does not already exist."""
         if await self._client.bucket_exists(self._bucket):
-            logger.info("MinIO bucket '%s' already exists", self._bucket)
+            logger.debug("MinIO bucket '%s' already exists", self._bucket)
             return
         await self._client.make_bucket(self._bucket)
         logger.info("Created MinIO bucket '%s'", self._bucket)

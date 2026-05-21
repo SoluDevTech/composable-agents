@@ -26,7 +26,7 @@ async def websocket_chat(
             try:
                 payload = json.loads(data)
             except json.JSONDecodeError:
-                logger.exception("[thread=%s] Invalid JSON received: %s", thread_id, data[:200])
+                logger.error("[thread=%s] Invalid JSON received: %s", thread_id, data[:200])
                 await websocket.send_text(json.dumps({"error": "Invalid JSON"}))
                 continue
             message = payload.get("message", "")

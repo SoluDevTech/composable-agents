@@ -73,8 +73,8 @@ class PhoenixPromptManagerProvider(PromptManager):
                 ),
             )
             logger.info("PhoenixPromptManagerProvider initialized base_url=%s timeout=%ss", base_url, timeout)
-        except Exception:
-            logger.exception("Failed to initialize Phoenix client")
+        except Exception as e:
+            logger.error("Failed to initialize Phoenix client: %s", e)
             self._client = None
 
     @_phoenix_retry
@@ -101,8 +101,8 @@ class PhoenixPromptManagerProvider(PromptManager):
             return self._to_domain_prompt(prompt_obj, identifier=identifier, description=prompt_obj._description, tags=[t["name"] for t in tags])
         except (ValueError, PhoenixUnavailableError):
             raise
-        except Exception:
-            logger.exception("Error getting prompt '%s'", identifier)
+        except Exception as e:
+            logger.error("Error getting prompt '%s': %s", identifier, e)
             raise _wrap_phoenix_error("get_prompt", identifier, e) from e
 
     @cached(cache=TTLCache(maxsize=10, ttl=300))
@@ -130,8 +130,8 @@ class PhoenixPromptManagerProvider(PromptManager):
             return messages[0] if messages else {}
         except (ValueError, PhoenixUnavailableError):
             raise
-        except Exception:
-            logger.exception("Error getting prompt content '%s'", identifier)
+        except Exception as e:
+            logger.error("Error getting prompt content '%s': %s", identifier, e)
             raise _wrap_phoenix_error("get_prompt_content", identifier, e) from e
 
     @_phoenix_retry
@@ -167,8 +167,8 @@ class PhoenixPromptManagerProvider(PromptManager):
             return prompt_obj
         except (ValueError, PhoenixUnavailableError):
             raise
-        except Exception:
-            logger.exception("Error creating prompt '%s'", identifier)
+        except Exception as e:
+            logger.error("Error creating prompt '%s': %s", identifier, e)
             raise _wrap_phoenix_error("create_prompt", identifier, e) from e
 
     @_phoenix_retry
@@ -199,8 +199,8 @@ class PhoenixPromptManagerProvider(PromptManager):
             return updated
         except (ValueError, PhoenixUnavailableError):
             raise
-        except Exception:
-            logger.exception("Error updating prompt '%s'", identifier)
+        except Exception as e:
+            logger.error("Error updating prompt '%s': %s", identifier, e)
             raise _wrap_phoenix_error("update_prompt", identifier, e) from e
 
     async def add_tag(self, identifier: str, tag: str) -> None:
@@ -212,8 +212,8 @@ class PhoenixPromptManagerProvider(PromptManager):
                 name=tag,
             )
             logger.info("Added tag '%s' to prompt '%s'", tag, identifier)
-        except Exception:
-            logger.exception("Error adding tag '%s' to '%s'", tag, identifier)
+        except Exception as e:
+            logger.error("Error adding tag '%s' to '%s': %s", tag, identifier, e)
             raise _wrap_phoenix_error("add_tag", identifier, e) from e
 
     def _to_domain_prompt(

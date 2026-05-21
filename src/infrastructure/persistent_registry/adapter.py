@@ -49,7 +49,7 @@ class PersistentAgentRegistry(AgentRegistry):
             AgentNotFoundError: If no config exists for this agent.
         """
         if agent_name in self._runners:
-            logger.info("Agent '%s' loaded from cache", agent_name)
+            logger.debug("Agent '%s' loaded from cache", agent_name)
             return self._runners[agent_name]
 
         async with self._lock:

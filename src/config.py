@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     host: str = "0.0.0.0"
     port: int = 8000
-    uvicorn_log_level: str = "info"
+    log_level: str = "INFO"
     allowed_origins: list[str] = ["http://localhost:8080"]
     tracing: TracingSettings = TracingSettings()
 

@@ -15,6 +15,7 @@ class CreateThreadUseCase:
 
     async def execute(self, agent_name: str) -> Thread:
         if agent_name not in await self._registry.list_agents():
+            logger.error("Agent not found: %s", agent_name)
             raise AgentNotFoundError(f"Agent not found: {agent_name}")
         thread = await self._threads.create(agent_name)
         logger.info("Thread created: id=%s agent=%s", thread.id, agent_name)
