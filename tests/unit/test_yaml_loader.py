@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.domain.exceptions import ConfigError, ConfigNotFoundError, ConfigValidationError
+from src.domain.errors.config import ConfigError, ConfigNotFoundError, ConfigValidationError
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 
 

@@ -2,7 +2,7 @@ import logging
 import re
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
 from src.application.use_cases.create_agent_config import CreateAgentConfigUseCase
 from src.application.use_cases.delete_agent_config import DeleteAgentConfigUseCase
@@ -18,6 +18,9 @@ from src.dependencies import (
 )
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
+from src.domain.errors.config import ConfigError
+from src.domain.errors.messages import ErrorMessage
+from src.domain.logging.messages import LogMessage
 
 logger = logging.getLogger(__name__)
 
@@ -29,20 +32,19 @@ MAX_UPLOAD_SIZE = 1024 * 1024  # 1 MB
 
 def _validate_agent_name(name: str) -> None:
     if not AGENT_NAME_PATTERN.match(name):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid agent name '{name}'. Must match pattern: alphanumeric, dots, hyphens, underscores, 2-100 chars.",
+        raise ConfigError(
+            ErrorMessage.INVALID_AGENT_NAME.format(name=name),
         )
 
 
 async def _read_yaml_upload(file: UploadFile) -> str:
     data = await file.read()
     if len(data) > MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE} bytes.")
+        raise ConfigError(ErrorMessage.FILE_TOO_LARGE.format(max_size=MAX_UPLOAD_SIZE))
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as e:
-        raise HTTPException(status_code=400, detail="File must be valid UTF-8 encoded YAML.") from e
+        raise ConfigError(ErrorMessage.FILE_NOT_UTF8) from e
 
 
 @router.get("", response_model=list[AgentConfigMetadata])
@@ -51,7 +53,7 @@ async def list_agents(
 ) -> list[AgentConfigMetadata]:
     """List all agent configuration metadata."""
     agents = await use_case.execute()
-    logger.info("Listed %d agent configs", len(agents))
+    logger.info(LogMessage.AGENT_CONFIG_LISTED, len(agents))
     return agents
 
 
@@ -62,7 +64,7 @@ async def get_agent(
 ) -> AgentConfig:
     """Retrieve a single agent configuration by name."""
     _validate_agent_name(agent_name)
-    logger.info("Getting agent config: %s", agent_name)
+    logger.info(LogMessage.AGENT_CONFIG_GET, agent_name)
     return await use_case.execute(name=agent_name)
 
 
@@ -75,9 +77,9 @@ async def create_agent(
     """Create a new agent configuration from an uploaded YAML file."""
     _validate_agent_name(agent_name)
     yaml_content = await _read_yaml_upload(file)
-    logger.info("Creating agent config: %s", agent_name)
+    logger.info(LogMessage.AGENT_CONFIG_CREATING, agent_name)
     result = await use_case.execute(name=agent_name, yaml_content=yaml_content)
-    logger.info("Agent config created: %s", agent_name)
+    logger.info(LogMessage.AGENT_CONFIG_CREATED, agent_name)
     return result
 
 
@@ -90,9 +92,9 @@ async def update_agent(
     """Update an existing agent configuration from an uploaded YAML file."""
     _validate_agent_name(agent_name)
     yaml_content = await _read_yaml_upload(file)
-    logger.info("Updating agent config: %s", agent_name)
+    logger.info(LogMessage.AGENT_CONFIG_UPDATING, agent_name)
     result = await use_case.execute(name=agent_name, yaml_content=yaml_content)
-    logger.info("Agent config updated: %s", agent_name)
+    logger.info(LogMessage.AGENT_CONFIG_UPDATED, agent_name)
     return result
 
 
@@ -103,6 +105,6 @@ async def delete_agent(
 ) -> None:
     """Delete an agent configuration."""
     _validate_agent_name(agent_name)
-    logger.info("Deleting agent config: %s", agent_name)
+    logger.info(LogMessage.AGENT_CONFIG_DELETING, agent_name)
     await use_case.execute(name=agent_name)
-    logger.info("Agent config deleted: %s", agent_name)
+    logger.info(LogMessage.AGENT_CONFIG_DELETED, agent_name)

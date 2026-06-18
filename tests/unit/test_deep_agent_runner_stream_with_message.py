@@ -9,7 +9,7 @@ import pytest
 
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.entities.stream_event import StreamEventType
-from src.domain.exceptions import AgentError
+from src.domain.errors.agent import AgentError
 from src.infrastructure.deepagent.adapter import DeepAgentRunner
 
 
@@ -180,3 +180,39 @@ class TestStreamWithMessage:
             collected = []
             async for event in runner.stream_with_message("thread-1", "hello"):
                 collected.append(event)
+
+    async def test_stream_idle_timeout_raises_agent_error(self):
+        """A graph that hangs between chunks (lost tool result) must abort via AgentError."""
+        import asyncio
+
+        mock_graph = AsyncMock()
+
+        async def _astream_hang(_input, **_kwargs):
+            chunk = MagicMock()
+            chunk.content = "first"
+            chunk.type = "AIMessageChunk"
+            chunk.additional_kwargs = {}
+            yield chunk, MagicMock()
+            # Simulate a stuck graph: a tool result never arrives.
+            await asyncio.sleep(10)
+
+        mock_graph.astream = _astream_hang
+        runner = DeepAgentRunner(mock_graph, stream_idle_timeout=0.05)
+        with pytest.raises(AgentError, match="idle"):
+            async for _event in runner.stream_with_message("thread-1", "hello"):
+                pass
+
+    async def test_invoke_timeout_raises_agent_error(self):
+        """A non-streaming invoke that hangs must abort via AgentError."""
+        import asyncio
+
+        mock_graph = AsyncMock()
+
+        async def _ainvoke_hang(_input, **_kwargs):
+            await asyncio.sleep(10)
+            return {"messages": []}
+
+        mock_graph.ainvoke = _ainvoke_hang
+        runner = DeepAgentRunner(mock_graph, invoke_timeout=0.05)
+        with pytest.raises(AgentError, match="timed out"):
+            await runner.invoke("thread-1", "hello")

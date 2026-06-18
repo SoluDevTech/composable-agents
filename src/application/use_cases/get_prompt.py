@@ -1,6 +1,7 @@
 import logging
 
 from src.domain.entities.prompt import Prompt
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.prompt_manager import PromptManager
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ class GetPromptUseCase:
         tag: str | None = None,
     ) -> Prompt:
         """Get a prompt."""
-        logger.info(f"Retrieving prompt: {identifier}")
+        logger.info(LogMessage.PROMPT_RETRIEVING, identifier)
         prompt = await self._prompt_manager.get_prompt(
             identifier=identifier,
             version_id=version_id,
@@ -29,7 +30,7 @@ class GetPromptUseCase:
 
     async def execute_get_prompt_content(self, identifier: str, version_id: str | None = None, tag: str | None = None) -> dict:
         """Get the content of a prompt."""
-        logger.info(f"Retrieving prompt content: {identifier}")
+        logger.info(LogMessage.PROMPT_RETRIEVING_CONTENT, identifier)
         content = await self._prompt_manager.get_prompt_content(
             identifier=identifier,
             version_id=version_id,

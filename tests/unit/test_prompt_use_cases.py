@@ -8,6 +8,11 @@ from src.application.use_cases.create_prompt import CreatePromptUseCase
 from src.application.use_cases.get_prompt import GetPromptUseCase
 from src.application.use_cases.update_prompt import UpdatePromptUseCase
 from src.domain.entities.prompt import Prompt, PromptVersion
+from src.domain.errors.prompt import (
+    PromptAlreadyExistsError,
+    PromptManagerUnavailableError,
+    PromptNotFoundError,
+)
 
 
 def _make_prompt(identifier: str = "test-prompt") -> Prompt:
@@ -59,10 +64,10 @@ class TestCreatePromptUseCase:
         )
 
     async def test_execute_propagates_exception(self, mock_prompt_manager):
-        mock_prompt_manager.create_prompt.side_effect = ValueError("already exists")
+        mock_prompt_manager.create_prompt.side_effect = PromptAlreadyExistsError("already exists")
 
         use_case = CreatePromptUseCase(mock_prompt_manager)
-        with pytest.raises(ValueError, match="already exists"):
+        with pytest.raises(PromptAlreadyExistsError, match="already exists"):
             await use_case.execute(
                 identifier="test-prompt",
                 content=[{"role": "user", "content": "Hello"}],
@@ -135,10 +140,10 @@ class TestGetPromptUseCase:
         )
 
     async def test_execute_not_found_raises(self, mock_prompt_manager):
-        mock_prompt_manager.get_prompt.side_effect = ValueError("Prompt not found: test-prompt")
+        mock_prompt_manager.get_prompt.side_effect = PromptNotFoundError("Prompt not found: test-prompt")
 
         use_case = GetPromptUseCase(mock_prompt_manager)
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(PromptNotFoundError, match="not found"):
             await use_case.execute(identifier="test-prompt")
 
 
@@ -184,15 +189,15 @@ class TestUpdatePromptUseCase:
         )
 
     async def test_execute_not_found_raises(self, mock_prompt_manager):
-        mock_prompt_manager.update_prompt.side_effect = ValueError("Prompt not found: test-prompt")
+        mock_prompt_manager.update_prompt.side_effect = PromptNotFoundError("Prompt not found: test-prompt")
 
         use_case = UpdatePromptUseCase(mock_prompt_manager)
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(PromptNotFoundError, match="not found"):
             await use_case.execute(identifier="test-prompt")
 
     async def test_execute_propagates_exception(self, mock_prompt_manager):
-        mock_prompt_manager.update_prompt.side_effect = RuntimeError("Phoenix unavailable")
+        mock_prompt_manager.update_prompt.side_effect = PromptManagerUnavailableError("Phoenix unavailable")
 
         use_case = UpdatePromptUseCase(mock_prompt_manager)
-        with pytest.raises(RuntimeError, match="Phoenix unavailable"):
+        with pytest.raises(PromptManagerUnavailableError, match="Phoenix unavailable"):
             await use_case.execute(identifier="test-prompt")

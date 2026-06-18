@@ -16,7 +16,8 @@ from src.application.use_cases.thread_management import (
     ListThreadsUseCase,
 )
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
-from src.domain.exceptions import AgentNotFoundError, ThreadNotFoundError
+from src.domain.errors.agent import AgentNotFoundError
+from src.domain.errors.thread import ThreadNotFoundError
 from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.domain.ports.agent_config_store import AgentConfigStore
 from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
@@ -70,7 +71,7 @@ class TestCreateThreadUseCase:
         assert thread.id is not None
 
     async def test_create_thread_unknown_agent_raises(self, thread_repo, registry, mock_store):
-        from src.domain.exceptions import AgentNotFoundError as ANF
+        from src.domain.errors.agent import AgentNotFoundError as ANF
 
         mock_store.get.side_effect = ANF("not found")
         use_case = CreateThreadUseCase(thread_repo, registry)

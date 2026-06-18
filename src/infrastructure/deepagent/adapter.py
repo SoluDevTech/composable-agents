@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -9,7 +10,9 @@ from pydantic import BaseModel
 
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.entities.stream_event import StreamEvent, StreamEventType
-from src.domain.exceptions import AgentError
+from src.domain.errors.agent import AgentError
+from src.domain.errors.messages import ErrorMessage
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_runner import AgentRunner
 from src.domain.ports.tracing_provider import TracingProvider
 
@@ -17,10 +20,22 @@ logger = logging.getLogger(__name__)
 
 
 class DeepAgentRunner(AgentRunner):
-    def __init__(self, graph, tracing_provider: TracingProvider | None = None, response_format_model: type[BaseModel] | None = None):
+    def __init__(
+        self,
+        graph,
+        tracing_provider: TracingProvider | None = None,
+        response_format_model: type[BaseModel] | None = None,
+        stream_idle_timeout: float = 120.0,
+        invoke_timeout: float = 120.0,
+    ):
         self._graph = graph
         self._tracing_provider = tracing_provider
         self._response_format_model = response_format_model
+        # Max idle window (s) between streamed chunks before the graph is considered
+        # stuck (e.g. a tool result was lost) and aborted. Max wall time (s) for a
+        # non-streaming invoke/HITL call.
+        self._stream_idle_timeout = stream_idle_timeout
+        self._invoke_timeout = invoke_timeout
         self._patch_tool_node_error_handling()
 
     def _patch_tool_node_error_handling(self) -> None:
@@ -36,17 +51,17 @@ class DeepAgentRunner(AgentRunner):
         """
         tools_node = self._graph.nodes.get("tools")
         if tools_node is None:
-            logger.warning("No 'tools' node found in graph; cannot patch handle_tool_errors")
+            logger.warning(LogMessage.TOOLS_NODE_MISSING)
             return
         tool_node_impl = getattr(tools_node, "bound", None)
         if tool_node_impl is None:
-            logger.warning("'tools' node has no 'bound' attribute; cannot patch handle_tool_errors")
+            logger.warning(LogMessage.TOOLS_NODE_NO_BOUND)
             return
         if hasattr(tool_node_impl, "_handle_tool_errors"):
             tool_node_impl._handle_tool_errors = True
-            logger.info("Patched ToolNode handle_tool_errors=True")
+            logger.info(LogMessage.TOOLNODE_PATCHED)
         else:
-            logger.warning("ToolNode bound object missing _handle_tool_errors; patch not applied")
+            logger.warning(LogMessage.TOOLNODE_PATCH_MISSING_ATTR)
 
     @staticmethod
     def _try_parse_json(content: str) -> dict | None:
@@ -79,7 +94,7 @@ class DeepAgentRunner(AgentRunner):
             self._log_extra_fields(data, cleaned)
             return cleaned
         except Exception:
-            logger.warning("Failed to validate structured_response against schema, returning raw data")
+            logger.warning(LogMessage.STRUCTURED_RESPONSE_VALIDATION_FAILED)
             return data
 
     @staticmethod
@@ -87,11 +102,11 @@ class DeepAgentRunner(AgentRunner):
         """Log any top-level or nested fields that were stripped."""
         for key in original:
             if key not in cleaned:
-                logger.warning("Stripped extra field from structured_response: '%s'", key)
+                logger.warning(LogMessage.STRUCTURED_FIELD_STRIPPED, key)
             elif isinstance(original[key], dict) and isinstance(cleaned[key], dict):
                 for sub_key in original[key]:
                     if sub_key not in cleaned[key]:
-                        logger.warning("Stripped extra nested field: '%s.%s'", key, sub_key)
+                        logger.warning(LogMessage.STRUCTURED_NESTED_FIELD_STRIPPED, key, sub_key)
 
     @staticmethod
     def _is_nonblank_str(val: object) -> bool:
@@ -145,7 +160,7 @@ class DeepAgentRunner(AgentRunner):
     def _build_response(self, result: dict, config: dict, thinking: str | None) -> Message:
         messages = result.get("messages", [])
         if not messages:
-            raise AgentError("Graph completed but no messages were found in the final state.")
+            raise AgentError(ErrorMessage.AGENT_NO_FINAL_MESSAGES)
         last_message = messages[-1]
         all_tool_calls = getattr(last_message, "tool_calls", None) or []
         state = self._graph.get_state(config)
@@ -182,21 +197,29 @@ class DeepAgentRunner(AgentRunner):
 
     async def invoke(self, thread_id: str, message: str) -> Message:
         config = self._build_config(thread_id)
-        logger.info("[thread=%s] Invoking agent", thread_id)
-        logger.info("[thread=%s] Message: %s", thread_id, message[:200])
+        logger.info(LogMessage.AGENT_INVOKING, thread_id)
+        logger.info(LogMessage.AGENT_MESSAGE, thread_id, message[:200])
         try:
             start = time.monotonic()
-            result = await self._graph.ainvoke(
-                {"messages": [{"role": "human", "content": message}]},
-                config=config,
+            result = await asyncio.wait_for(
+                self._graph.ainvoke(
+                    {"messages": [{"role": "human", "content": message}]},
+                    config=config,
+                ),
+                timeout=self._invoke_timeout,
             )
             elapsed = time.monotonic() - start
             response = self._build_response(result, config, None)
-            logger.info("[thread=%s] Invoke complete, status=%s, elapsed=%.2fs", thread_id, response.status, elapsed)
+            logger.info(LogMessage.AGENT_INVOKE_COMPLETE, thread_id, response.status, elapsed)
             return response
+        except TimeoutError as e:
+            logger.error(LogMessage.AGENT_INVOKE_TIMEOUT, thread_id, self._invoke_timeout)
+            raise AgentError(
+                ErrorMessage.AGENT_INVOKE_TIMEOUT.format(thread_id=thread_id, timeout=self._invoke_timeout)
+            ) from e
         except Exception as e:
-            logger.exception("[thread=%s] Agent execution error", thread_id)
-            raise AgentError(f"Agent execution error: {e}") from e
+            logger.exception(LogMessage.AGENT_EXECUTION_ERROR_LOG, thread_id)
+            raise AgentError(ErrorMessage.AGENT_EXECUTION_ERROR.format(error=e)) from e
 
     async def _yield_chunks(
         self, thread_id: str, message: str, config: dict, stats: dict
@@ -204,42 +227,63 @@ class DeepAgentRunner(AgentRunner):
         start = time.monotonic()
         first_chunk = True
         chunk_count = 0
-        async for chunk, _metadata in self._graph.astream(
-            {"messages": [{"role": "human", "content": message}]},
-            config=config,
-            stream_mode="messages",
-        ):
-            classification = self._classify_chunk(chunk)
-            if classification:
-                event_type, data = classification
-                if first_chunk:
-                    logger.info("[thread=%s] First chunk received, elapsed=%.2fs", thread_id, time.monotonic() - start)
-                    first_chunk = False
-                chunk_count += 1
-                yield StreamEvent(type=event_type, data=data)
+        stream_iter = aiter(
+            self._graph.astream(
+                {"messages": [{"role": "human", "content": message}]},
+                config=config,
+                stream_mode="messages",
+            )
+        )
+        # Consume chunks with an idle timeout: if no chunk arrives within the window
+        # the graph is considered stuck (e.g. a tool result was lost) and aborted.
+        try:
+            while True:
+                try:
+                    chunk, _metadata = await asyncio.wait_for(
+                        anext(stream_iter), timeout=self._stream_idle_timeout
+                    )
+                except StopAsyncIteration:
+                    break
+                except TimeoutError as e:
+                    logger.error(LogMessage.AGENT_STREAM_IDLE_TIMEOUT, thread_id, self._stream_idle_timeout)
+                    raise AgentError(
+                        ErrorMessage.AGENT_STREAM_IDLE_TIMEOUT.format(thread_id=thread_id, timeout=self._stream_idle_timeout)
+                    ) from e
+                classification = self._classify_chunk(chunk)
+                if classification:
+                    event_type, data = classification
+                    if first_chunk:
+                        logger.info(LogMessage.AGENT_FIRST_CHUNK, thread_id, time.monotonic() - start)
+                        first_chunk = False
+                    chunk_count += 1
+                    yield StreamEvent(type=event_type, data=data)
+        finally:
+            aclose = getattr(stream_iter, "aclose", None)
+            if aclose is not None:
+                await aclose()
         stats["chunk_count"] = chunk_count
         stats["elapsed"] = time.monotonic() - start
 
     async def stream(self, thread_id: str, message: str) -> AsyncIterator[StreamEvent]:
         config = self._build_config(thread_id)
-        logger.info("[thread=%s] Streaming agent response", thread_id)
+        logger.info(LogMessage.AGENT_STREAMING, thread_id)
         try:
             stats: dict = {}
             async for event in self._yield_chunks(thread_id, message, config, stats):
                 yield event
             logger.info(
-                "[thread=%s] Stream complete, %d chunks, elapsed=%.2fs",
+                LogMessage.AGENT_STREAM_COMPLETE,
                 thread_id,
                 stats["chunk_count"],
                 stats["elapsed"],
             )
         except Exception as e:
-            logger.exception("[thread=%s] Streaming error", thread_id)
-            raise AgentError(f"Streaming error: {e}") from e
+            logger.exception(LogMessage.AGENT_STREAMING_ERROR_LOG, thread_id)
+            raise AgentError(ErrorMessage.AGENT_STREAMING_ERROR.format(error=e)) from e
 
     async def stream_with_message(self, thread_id: str, message: str) -> AsyncIterator[StreamEvent]:
         config = self._build_config(thread_id)
-        logger.info("[thread=%s] Streaming agent response with final message", thread_id)
+        logger.info(LogMessage.AGENT_STREAMING_WITH_MESSAGE, thread_id)
         try:
             stats: dict = {}
             thinking_parts = []
@@ -253,7 +297,7 @@ class DeepAgentRunner(AgentRunner):
             thinking = "".join(thinking_parts) if thinking_parts else None
             response = self._build_response(result, config, thinking)
             logger.info(
-                "[thread=%s] Stream with message complete, %d chunks, elapsed=%.2fs, status=%s",
+                LogMessage.AGENT_STREAM_WITH_MESSAGE_COMPLETE,
                 thread_id,
                 stats["chunk_count"],
                 stats["elapsed"],
@@ -261,26 +305,26 @@ class DeepAgentRunner(AgentRunner):
             )
             yield StreamEvent(type=StreamEventType.MESSAGE, data=response.model_dump_json())
         except Exception as e:
-            logger.exception("[thread=%s] Streaming error", thread_id)
-            raise AgentError(f"Streaming error: {e}") from e
+            logger.exception(LogMessage.AGENT_STREAMING_ERROR_LOG, thread_id)
+            raise AgentError(ErrorMessage.AGENT_STREAMING_ERROR.format(error=e)) from e
 
     async def approve_hitl(self, thread_id: str, _tool_call_id: str) -> Message:
         config = self._build_config(thread_id)
-        logger.info("[thread=%s] HITL approve", thread_id)
+        logger.info(LogMessage.HITL_APPROVE, thread_id)
         try:
             start = time.monotonic()
             result = await self._graph.ainvoke(Command(resume={"decisions": [{"type": "approve"}]}), config=config)
             elapsed = time.monotonic() - start
             response = self._build_response(result, config, None)
-            logger.info("[thread=%s] HITL approve complete, elapsed=%.2fs", thread_id, elapsed)
+            logger.info(LogMessage.HITL_APPROVE_COMPLETE, thread_id, elapsed)
             return response
         except Exception as e:
-            logger.exception("HITL approve error")
-            raise AgentError(f"HITL approve error: {e}") from e
+            logger.exception(LogMessage.HITL_APPROVE_ERROR_LOG)
+            raise AgentError(ErrorMessage.AGENT_HITL_APPROVE_ERROR.format(error=e)) from e
 
     async def reject_hitl(self, thread_id: str, _tool_call_id: str, reason: str | None = None) -> Message:
         config = self._build_config(thread_id)
-        logger.info("[thread=%s] HITL reject, reason=%s", thread_id, reason)
+        logger.info(LogMessage.HITL_REJECT, thread_id, reason)
         try:
             start = time.monotonic()
             result = await self._graph.ainvoke(
@@ -288,15 +332,15 @@ class DeepAgentRunner(AgentRunner):
             )
             elapsed = time.monotonic() - start
             response = self._build_response(result, config, None)
-            logger.info("[thread=%s] HITL reject complete, elapsed=%.2fs", thread_id, elapsed)
+            logger.info(LogMessage.HITL_REJECT_COMPLETE, thread_id, elapsed)
             return response
         except Exception as e:
-            logger.exception("HITL reject error")
-            raise AgentError(f"HITL reject error: {e}") from e
+            logger.exception(LogMessage.HITL_REJECT_ERROR_LOG)
+            raise AgentError(ErrorMessage.AGENT_HITL_REJECT_ERROR.format(error=e)) from e
 
     async def edit_hitl(self, thread_id: str, tool_call_id: str, edits: dict) -> Message:
         config = self._build_config(thread_id)
-        logger.info("[thread=%s] HITL edit, tool_call_id=%s", thread_id, tool_call_id)
+        logger.info(LogMessage.HITL_EDIT, thread_id, tool_call_id)
         try:
             start = time.monotonic()
             state = self._graph.get_state(config)
@@ -317,8 +361,8 @@ class DeepAgentRunner(AgentRunner):
             )
             elapsed = time.monotonic() - start
             response = self._build_response(result, config, None)
-            logger.info("[thread=%s] HITL edit complete, elapsed=%.2fs", thread_id, elapsed)
+            logger.info(LogMessage.HITL_EDIT_COMPLETE, thread_id, elapsed)
             return response
         except Exception as e:
-            logger.exception("HITL edit error")
-            raise AgentError(f"HITL edit error: {e}") from e
+            logger.exception(LogMessage.HITL_EDIT_ERROR_LOG)
+            raise AgentError(ErrorMessage.AGENT_HITL_EDIT_ERROR.format(error=e)) from e

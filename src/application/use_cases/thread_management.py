@@ -1,7 +1,9 @@
 import logging
 
 from src.domain.entities.thread import Thread
-from src.domain.exceptions import AgentNotFoundError
+from src.domain.errors.agent import AgentNotFoundError
+from src.domain.errors.messages import ErrorMessage
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.thread_repository import ThreadRepository
 
@@ -15,9 +17,9 @@ class CreateThreadUseCase:
 
     async def execute(self, agent_name: str) -> Thread:
         if agent_name not in await self._registry.list_agents():
-            raise AgentNotFoundError(f"Agent not found: {agent_name}")
+            raise AgentNotFoundError(ErrorMessage.AGENT_NOT_FOUND.format(name=agent_name))
         thread = await self._threads.create(agent_name)
-        logger.info("Thread created: id=%s agent=%s", thread.id, agent_name)
+        logger.info(LogMessage.THREAD_CREATED, thread.id, agent_name)
         return thread
 
 

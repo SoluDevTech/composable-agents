@@ -1,6 +1,7 @@
 import logging
 
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_config_loader import AgentConfigLoader
 from src.domain.ports.agent_config_store import AgentConfigStore
 
@@ -33,5 +34,5 @@ class GetAgentConfigUseCase:
         """
         yaml_content = await self._config_store.get(name)
         config = self._config_loader.load_from_string(yaml_content)
-        logger.info("Loaded agent config '%s' from store", name)
+        logger.info(LogMessage.AGENT_CONFIG_LOADED_FROM_STORE, name)
         return config

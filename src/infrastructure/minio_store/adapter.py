@@ -4,7 +4,9 @@ import logging
 from miniopy_async import Minio
 from miniopy_async.error import S3Error
 
-from src.domain.exceptions import AgentNotFoundError
+from src.domain.errors.agent import AgentNotFoundError
+from src.domain.errors.messages import ErrorMessage
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_config_store import AgentConfigStore
 
 logger = logging.getLogger(__name__)
@@ -31,7 +33,7 @@ class MinioAgentConfigStore(AgentConfigStore):
             length=len(data),
             content_type="application/x-yaml",
         )
-        logger.info("Uploaded agent config '%s' to MinIO bucket '%s'", name, self._bucket)
+        logger.info(LogMessage.MINIO_CONFIG_UPLOADED, name, self._bucket)
 
     async def get(self, name: str) -> str:
         """Download and return YAML content for the given agent name.
@@ -47,7 +49,7 @@ class MinioAgentConfigStore(AgentConfigStore):
             return data.decode("utf-8")
         except S3Error as e:
             if e.code == "NoSuchKey":
-                raise AgentNotFoundError(f"Agent config not found in store: {name}") from e
+                raise AgentNotFoundError(ErrorMessage.AGENT_CONFIG_NOT_FOUND_IN_STORE.format(name=name)) from e
             raise
 
     async def delete(self, name: str) -> None:
@@ -60,10 +62,10 @@ class MinioAgentConfigStore(AgentConfigStore):
             await self._client.stat_object(self._bucket, self._key(name))
         except S3Error as e:
             if e.code == "NoSuchKey":
-                raise AgentNotFoundError(f"Agent config not found in store: {name}") from e
+                raise AgentNotFoundError(ErrorMessage.AGENT_CONFIG_NOT_FOUND_IN_STORE.format(name=name)) from e
             raise
         await self._client.remove_object(self._bucket, self._key(name))
-        logger.info("Deleted agent config '%s' from MinIO bucket '%s'", name, self._bucket)
+        logger.info(LogMessage.MINIO_CONFIG_DELETED, name, self._bucket)
 
     async def exists(self, name: str) -> bool:
         """Check whether a YAML object exists for the given agent name."""
@@ -84,7 +86,7 @@ class MinioAgentConfigStore(AgentConfigStore):
     async def ensure_bucket(self) -> None:
         """Create the bucket if it does not already exist."""
         if await self._client.bucket_exists(self._bucket):
-            logger.info("MinIO bucket '%s' already exists", self._bucket)
+            logger.info(LogMessage.MINIO_BUCKET_EXISTS, self._bucket)
             return
         await self._client.make_bucket(self._bucket)
-        logger.info("Created MinIO bucket '%s'", self._bucket)
+        logger.info(LogMessage.MINIO_BUCKET_CREATED, self._bucket)

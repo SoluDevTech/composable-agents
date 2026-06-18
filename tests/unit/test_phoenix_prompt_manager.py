@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from phoenix.client.resources.prompts import PromptVersion as PhoenixPromptVersion
 
+from src.domain.errors.prompt import PromptNotFoundError
 from src.infrastructure.prompt_management.phoenix_prompt_adapter import PhoenixPromptManagerProvider
 
 
@@ -69,7 +70,7 @@ class TestPhoenixPromptManagerProvider:
     async def test_get_prompt_not_found(self, manager):
         manager._client.prompts.get = MagicMock(return_value=None)
 
-        with pytest.raises(ValueError, match="Prompt not found"):
+        with pytest.raises(PromptNotFoundError, match="Prompt not found"):
             await manager.get_prompt("nonexistent")
 
     @pytest.mark.asyncio

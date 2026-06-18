@@ -16,6 +16,7 @@ from src.dependencies import (
 )
 from src.domain.entities.message import Message
 from src.domain.entities.stream_event import StreamEvent, StreamEventType
+from src.domain.logging.messages import LogMessage
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +29,9 @@ async def send_message(
     body: ChatRequest,
     use_case: Annotated[SendMessageUseCase, Depends(get_send_message_use_case)],
 ) -> Message:
-    logger.info("[thread=%s] POST /chat - message=%s", thread_id, "HITL" if body.message is None else body.message[:80])
+    logger.info(LogMessage.CHAT_RECEIVE, thread_id, "HITL" if body.message is None else body.message[:80])
     result = await use_case.execute(thread_id, body)
-    logger.info("[thread=%s] Response status=%s content_len=%d", thread_id, result.status, len(result.content or ""))
+    logger.info(LogMessage.CHAT_RESPONSE, thread_id, result.status, len(result.content or ""))
     return result
 
 
@@ -41,7 +42,7 @@ async def stream_message(
     use_case: Annotated[StreamMessageUseCase, Depends(get_stream_message_use_case)],
     get_thread: Annotated[GetThreadUseCase, Depends(get_get_thread_use_case)],
 ) -> EventSourceResponse:
-    logger.info("[thread=%s] POST /chat/stream - message=%s", thread_id, (body.message or "")[:80])
+    logger.info(LogMessage.CHAT_STREAM_RECEIVE, thread_id, (body.message or "")[:80])
     await get_thread.execute(thread_id)
 
     async def event_generator():
@@ -52,11 +53,11 @@ async def stream_message(
                     chunk_count += 1
                 yield {"data": event.model_dump_json()}
             yield {"data": "[DONE]"}
-            logger.info("[thread=%s] Stream complete, %d chunks", thread_id, chunk_count)
+            logger.info(LogMessage.CHAT_STREAM_COMPLETE, thread_id, chunk_count)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.exception("[thread=%s] Stream error after %d chunks", thread_id, chunk_count)
+            logger.exception(LogMessage.CHAT_STREAM_ERROR, thread_id, chunk_count)
             error_event = StreamEvent(type=StreamEventType.ERROR, data=str(exc))
             yield {"data": error_event.model_dump_json()}
 

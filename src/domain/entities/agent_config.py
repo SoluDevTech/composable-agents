@@ -5,6 +5,7 @@ from typing import Any, Literal, Self
 from pydantic import BaseModel, Field, model_validator
 
 from src.domain.entities.mcp_server_config import McpServerConfig
+from src.domain.logging.messages import LogMessage
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,6 @@ class AgentConfig(BaseModel, frozen=True):
     @model_validator(mode="after")
     def check_prompt_exclusivity(self) -> Self:
         if self.system_prompt and self.system_prompt_file:
-            logger.error("system_prompt and system_prompt_file are mutually exclusive")
+            logger.error(LogMessage.VALIDATION_PROMPTS_MUTUALLY_EXCLUSIVE)
             raise ValueError("system_prompt and system_prompt_file are mutually exclusive")
         return self

@@ -5,6 +5,7 @@ import phoenix.otel
 from openinference.instrumentation.langchain import LangChainInstrumentor
 from opentelemetry import trace
 
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.tracing_provider import TracingProvider
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ class PhoenixTracingProvider(TracingProvider):
             endpoint = f"{endpoint.rstrip('/')}/v1/traces"
 
         logger.info(
-            "Initializing PhoenixTracingProvider with endpoint=%s, project_name=%s",
+            LogMessage.PHOENIX_PROVIDER_INIT,
             endpoint,
             project_name,
         )
@@ -47,7 +48,7 @@ class PhoenixTracingProvider(TracingProvider):
         # Store tracer provider for flush/shutdown
         self._tracer_provider = trace.get_tracer_provider()
         self._instrumented = True
-        logger.info("Phoenix tracing initialized successfully")
+        logger.info(LogMessage.PHOENIX_TRACING_INITIALIZED)
 
     def get_callbacks(self) -> list[Any]:
         """Return an empty list since Phoenix uses OpenTelemetry auto-instrumentation."""
@@ -62,9 +63,9 @@ class PhoenixTracingProvider(TracingProvider):
             timeout_millis = 30000
             if hasattr(self._tracer_provider, "force_flush"):
                 self._tracer_provider.force_flush(timeout_millis=timeout_millis)
-                logger.info("Flushed pending spans to Phoenix")
+                logger.info(LogMessage.PHOENIX_SPANS_FLUSHED)
         except Exception:
-            logger.exception("Error flushing spans to Phoenix")
+            logger.exception(LogMessage.PHOENIX_FLUSH_FAILED)
 
     async def shutdown(self) -> None:
         """Shutdown the tracer provider and flush remaining spans."""
@@ -75,6 +76,6 @@ class PhoenixTracingProvider(TracingProvider):
             await self.flush()
             if hasattr(self._tracer_provider, "shutdown"):
                 self._tracer_provider.shutdown()
-                logger.info("Phoenix tracing provider shutdown complete")
+                logger.info(LogMessage.PHOENIX_TRACING_SHUTDOWN)
         except Exception:
-            logger.exception("Error shutting down tracer provider")
+            logger.exception(LogMessage.TRACER_SHUTDOWN_FAILED)

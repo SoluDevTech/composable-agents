@@ -1,17 +1,20 @@
 import logging
 import os
-from functools import wraps
-from typing import TypeVar, Callable, Any
-import asyncio
 
 import httpx
 from cachetools import TTLCache, cached
 from phoenix.client import Client
-from phoenix.client.client import _update_headers, _WrappedClient
 from phoenix.client.resources.prompts import PromptVersion as PhoenixPromptVersion
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from src.domain.entities.prompt import Prompt, PromptVersion
+from src.domain.errors.messages import ErrorMessage
+from src.domain.errors.prompt import (
+    PromptAlreadyExistsError,
+    PromptManagerUnavailableError,
+    PromptNotFoundError,
+)
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.prompt_manager import PromptManager
 
 logger = logging.getLogger(__name__)
@@ -28,24 +31,33 @@ _phoenix_retry = retry(
     reraise=True,
 )
 
-
-class PhoenixUnavailableError(RuntimeError):
-    """Raised when Phoenix is unreachable or returns a server error."""
-    pass
+# Domain exceptions that must propagate without being wrapped.
+_PROPAGATED_ERRORS = (PromptNotFoundError, PromptManagerUnavailableError, PromptAlreadyExistsError)
 
 
 def _wrap_phoenix_error(operation: str, identifier: str, e: Exception) -> Exception:
-    """Convert raw Phoenix/httpx exceptions to meaningful domain errors."""
+    """Convert raw Phoenix/httpx exceptions to domain exceptions.
+
+    Infrastructure never defines its own error classes: it only raises the
+    domain exceptions declared in ``src/domain/exceptions.py``.
+    """
     if isinstance(e, (httpx.TimeoutException, httpx.ConnectError)):
-        return PhoenixUnavailableError(
-            f"Phoenix unavailable during '{operation}' for '{identifier}': {e}"
+        return PromptManagerUnavailableError(
+            ErrorMessage.PROMPT_MANAGER_UNAVAILABLE.format(
+                operation=operation, identifier=identifier, error=e
+            )
         )
     if isinstance(e, httpx.HTTPStatusError):
-        if e.response.status_code == 404:
-            return ValueError(f"Prompt not found: {identifier}")
-        if e.response.status_code >= 500:
-            return PhoenixUnavailableError(
-                f"Phoenix server error ({e.response.status_code}) during '{operation}' for '{identifier}'"
+        status_code = e.response.status_code
+        if status_code == 404:
+            return PromptNotFoundError(ErrorMessage.PROMPT_NOT_FOUND.format(identifier=identifier))
+        if status_code == 409:
+            return PromptAlreadyExistsError(ErrorMessage.PROMPT_ALREADY_EXISTS.format(identifier=identifier))
+        if status_code >= 500:
+            return PromptManagerUnavailableError(
+                ErrorMessage.PROMPT_MANAGER_SERVER_ERROR.format(
+                    status_code=status_code, operation=operation, identifier=identifier
+                )
             )
     return e
 
@@ -72,9 +84,9 @@ class PhoenixPromptManagerProvider(PromptManager):
                     timeout=httpx.Timeout(connect=10.0, read=timeout, write=timeout, pool=10.0),
                 ),
             )
-            logger.info("PhoenixPromptManagerProvider initialized base_url=%s timeout=%ss", base_url, timeout)
+            logger.info(LogMessage.PHOENIX_PROMPT_PROVIDER_INITIALIZED, base_url, timeout)
         except Exception:
-            logger.exception("Failed to initialize Phoenix client")
+            logger.exception(LogMessage.PHOENIX_CLIENT_INIT_FAILED)
             self._client = None
 
     @_phoenix_retry
@@ -85,7 +97,7 @@ class PhoenixPromptManagerProvider(PromptManager):
         tag: str | None = None,
     ) -> Prompt:
         if not self._client:
-            raise PhoenixUnavailableError("Phoenix client not initialized")
+            raise PromptManagerUnavailableError(ErrorMessage.PROMPT_MANAGER_NOT_INITIALIZED)
         try:
             prompt_obj: PhoenixPromptVersion = self._client.prompts.get(
                 prompt_identifier=identifier,
@@ -93,16 +105,16 @@ class PhoenixPromptManagerProvider(PromptManager):
                 tag=tag,
             )
             if not prompt_obj:
-                raise ValueError(f"Prompt not found: {identifier}")
-            
+                raise PromptNotFoundError(ErrorMessage.PROMPT_NOT_FOUND.format(identifier=identifier))
+
             tags = self._client.prompts.tags.list(prompt_version_id=prompt_obj.id) if prompt_obj and prompt_obj.id else []
-            logger.info("Retrieved prompt content for '%s' (version: %s, tags: %s)", identifier, version_id, [t["name"] for t in tags])
+            logger.info(LogMessage.PROMPT_RETRIEVED, identifier, version_id, [t["name"] for t in tags])
 
             return self._to_domain_prompt(prompt_obj, identifier=identifier, description=prompt_obj._description, tags=[t["name"] for t in tags])
-        except (ValueError, PhoenixUnavailableError):
+        except _PROPAGATED_ERRORS:
             raise
-        except Exception:
-            logger.exception("Error getting prompt '%s'", identifier)
+        except Exception as e:
+            logger.exception(LogMessage.PROMPT_GET_ERROR, identifier)
             raise _wrap_phoenix_error("get_prompt", identifier, e) from e
 
     @cached(cache=TTLCache(maxsize=10, ttl=300))
@@ -114,7 +126,7 @@ class PhoenixPromptManagerProvider(PromptManager):
         tag: str | None = None,
     ) -> dict[str, str]:
         if not self._client:
-            raise PhoenixUnavailableError("Phoenix client not initialized")
+            raise PromptManagerUnavailableError(ErrorMessage.PROMPT_MANAGER_NOT_INITIALIZED)
         try:
             prompt_obj = self._client.prompts.get(
                 prompt_identifier=identifier,
@@ -123,15 +135,15 @@ class PhoenixPromptManagerProvider(PromptManager):
             )
 
             tags = self._client.prompts.tags.list(prompt_version_id=prompt_obj.id) if prompt_obj and prompt_obj.id else []
-            logger.info("Retrieved prompt content for '%s' (version: %s, tags: %s)", identifier, version_id, [t["name"] for t in tags])
+            logger.info(LogMessage.PROMPT_RETRIEVED, identifier, version_id, [t["name"] for t in tags])
 
             domain = self._to_domain_prompt(prompt_obj, identifier=identifier, tags=[t["name"] for t in tags])
             messages = domain.current_version.content
             return messages[0] if messages else {}
-        except (ValueError, PhoenixUnavailableError):
+        except _PROPAGATED_ERRORS:
             raise
-        except Exception:
-            logger.exception("Error getting prompt content '%s'", identifier)
+        except Exception as e:
+            logger.exception(LogMessage.PROMPT_GET_CONTENT_ERROR, identifier)
             raise _wrap_phoenix_error("get_prompt_content", identifier, e) from e
 
     @_phoenix_retry
@@ -145,7 +157,7 @@ class PhoenixPromptManagerProvider(PromptManager):
         metadata: dict | None = None,
     ) -> PhoenixPromptVersion:
         if not self._client:
-            raise PhoenixUnavailableError("Phoenix client not initialized")
+            raise PromptManagerUnavailableError(ErrorMessage.PROMPT_MANAGER_NOT_INITIALIZED)
         try:
             prompt_obj = self._client.prompts.create(
                 name=identifier,
@@ -161,14 +173,14 @@ class PhoenixPromptManagerProvider(PromptManager):
                             name=tag,
                         )
                     except Exception as tag_error:
-                        logger.warning("Failed to add tag '%s' to '%s': %s", tag, identifier, tag_error)
+                        logger.warning(LogMessage.PROMPT_TAG_ADD_FAILED, tag, identifier, tag_error)
 
-            logger.info("Created prompt '%s'", identifier)
+            logger.info(LogMessage.PROMPT_VERSION_CREATED, identifier)
             return prompt_obj
-        except (ValueError, PhoenixUnavailableError):
+        except _PROPAGATED_ERRORS:
             raise
-        except Exception:
-            logger.exception("Error creating prompt '%s'", identifier)
+        except Exception as e:
+            logger.exception(LogMessage.PROMPT_CREATE_ERROR, identifier)
             raise _wrap_phoenix_error("create_prompt", identifier, e) from e
 
     @_phoenix_retry
@@ -181,10 +193,10 @@ class PhoenixPromptManagerProvider(PromptManager):
         metadata: dict | None = None,
     ) -> PhoenixPromptVersion:
         if not self._client:
-            raise PhoenixUnavailableError("Phoenix client not initialized")
+            raise PromptManagerUnavailableError(ErrorMessage.PROMPT_MANAGER_NOT_INITIALIZED)
         if description is not None:
             logger.warning(
-                "Phoenix does not support updating description on existing prompts — description change ignored for '%s'",
+                LogMessage.PHOENIX_DESC_UPDATE_UNSUPPORTED,
                 identifier
             )
         try:
@@ -195,25 +207,27 @@ class PhoenixPromptManagerProvider(PromptManager):
                 prompt_description=description or current.description,
                 prompt_metadata=metadata or current.metadata,
             )
-            logger.info("Updated prompt '%s'", identifier)
+            logger.info(LogMessage.PROMPT_VERSION_UPDATED, identifier)
             return updated
-        except (ValueError, PhoenixUnavailableError):
+        except _PROPAGATED_ERRORS:
             raise
-        except Exception:
-            logger.exception("Error updating prompt '%s'", identifier)
+        except Exception as e:
+            logger.exception(LogMessage.PROMPT_UPDATE_ERROR, identifier)
             raise _wrap_phoenix_error("update_prompt", identifier, e) from e
 
     async def add_tag(self, identifier: str, tag: str) -> None:
         if not self._client:
-            raise PhoenixUnavailableError("Phoenix client not initialized")
+            raise PromptManagerUnavailableError(ErrorMessage.PROMPT_MANAGER_NOT_INITIALIZED)
         try:
             self._client.prompts.tags.create(
                 prompt_version_id=identifier,
                 name=tag,
             )
-            logger.info("Added tag '%s' to prompt '%s'", tag, identifier)
-        except Exception:
-            logger.exception("Error adding tag '%s' to '%s'", tag, identifier)
+            logger.info(LogMessage.PROMPT_TAG_ADDED, tag, identifier)
+        except _PROPAGATED_ERRORS:
+            raise
+        except Exception as e:
+            logger.exception(LogMessage.PROMPT_TAG_ADD_ERROR, tag, identifier)
             raise _wrap_phoenix_error("add_tag", identifier, e) from e
 
     def _to_domain_prompt(

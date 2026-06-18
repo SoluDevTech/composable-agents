@@ -13,7 +13,7 @@ import pytest
 
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.entities.thread import Thread
-from src.domain.exceptions import ThreadNotFoundError
+from src.domain.errors.thread import ThreadNotFoundError
 
 
 class TestPostgresThreadRepository:

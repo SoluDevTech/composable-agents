@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
-from src.domain.exceptions import AgentNotFoundError
+from src.domain.errors.agent import AgentNotFoundError
 
 
 class TestPostgresAgentConfigRepository:

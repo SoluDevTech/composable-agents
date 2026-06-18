@@ -5,7 +5,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
-from src.domain.exceptions import AgentNotFoundError, StorageError
+from src.domain.errors.agent import AgentNotFoundError
+from src.domain.errors.messages import ErrorMessage
+from src.domain.errors.storage import StorageError
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.infrastructure.database.models.agent_config import AgentConfigModel
 
@@ -54,9 +57,11 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
                 )
                 await session.merge(model)
                 await session.commit()
-                logger.info("Saved agent config metadata '%s'", metadata.name)
+                logger.info(LogMessage.AGENT_CONFIG_METADATA_SAVED, metadata.name)
             except SQLAlchemyError as e:
-                raise StorageError(f"Failed to save agent config metadata '{metadata.name}': {e}") from e
+                raise StorageError(
+                    ErrorMessage.STORAGE_FAILED_SAVE_AGENT_CONFIG.format(name=metadata.name, error=e)
+                ) from e
 
     async def get(self, name: str) -> AgentConfigMetadata:
         """Retrieve metadata by agent name.
@@ -75,12 +80,14 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
             try:
                 model = await session.get(AgentConfigModel, name)
                 if model is None:
-                    raise AgentNotFoundError(f"Agent config metadata not found: {name}")
+                    raise AgentNotFoundError(ErrorMessage.AGENT_CONFIG_NOT_FOUND.format(name=name))
                 return _model_to_metadata(model)
             except AgentNotFoundError:
                 raise
             except SQLAlchemyError as e:
-                raise StorageError(f"Failed to get agent config metadata '{name}': {e}") from e
+                raise StorageError(
+                    ErrorMessage.STORAGE_FAILED_GET_AGENT_CONFIG.format(name=name, error=e)
+                ) from e
 
     async def list_all(self) -> list[AgentConfigMetadata]:
         """List all agent configuration metadata.
@@ -97,7 +104,9 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
                 models = result.scalars().all()
                 return [_model_to_metadata(m) for m in models]
             except SQLAlchemyError as e:
-                raise StorageError(f"Failed to list agent config metadata: {e}") from e
+                raise StorageError(
+                    ErrorMessage.STORAGE_FAILED_LIST_AGENT_CONFIG.format(error=e)
+                ) from e
 
     async def delete(self, name: str) -> None:
         """Delete metadata by agent name.
@@ -113,14 +122,16 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
             try:
                 model = await session.get(AgentConfigModel, name)
                 if model is None:
-                    raise AgentNotFoundError(f"Agent config metadata not found: {name}")
+                    raise AgentNotFoundError(ErrorMessage.AGENT_CONFIG_NOT_FOUND.format(name=name))
                 await session.delete(model)
                 await session.commit()
-                logger.info("Deleted agent config metadata '%s'", name)
+                logger.info(LogMessage.AGENT_CONFIG_METADATA_DELETED, name)
             except AgentNotFoundError:
                 raise
             except SQLAlchemyError as e:
-                raise StorageError(f"Failed to delete agent config metadata '{name}': {e}") from e
+                raise StorageError(
+                    ErrorMessage.STORAGE_FAILED_DELETE_AGENT_CONFIG.format(name=name, error=e)
+                ) from e
 
     async def exists(self, name: str) -> bool:
         """Check whether metadata exists for the given agent name.
@@ -139,4 +150,6 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
                 model = await session.get(AgentConfigModel, name)
                 return model is not None
             except SQLAlchemyError as e:
-                raise StorageError(f"Failed to check existence of agent config '{name}': {e}") from e
+                raise StorageError(
+                    ErrorMessage.STORAGE_FAILED_EXISTS_AGENT_CONFIG.format(name=name, error=e)
+                ) from e

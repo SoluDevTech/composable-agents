@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.domain.exceptions import AgentNotFoundError
+from src.domain.errors.agent import AgentNotFoundError
 from src.infrastructure.minio_store.adapter import MinioAgentConfigStore
 
 BUCKET = "agent-configs"

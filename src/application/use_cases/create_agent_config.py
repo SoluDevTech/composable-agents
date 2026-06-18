@@ -3,7 +3,10 @@ from datetime import UTC, datetime
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
-from src.domain.exceptions import AgentConfigAlreadyExistsError, ConfigError
+from src.domain.errors.agent import AgentConfigAlreadyExistsError
+from src.domain.errors.config import ConfigError
+from src.domain.errors.messages import ErrorMessage
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_config_loader import AgentConfigLoader
 from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.domain.ports.agent_config_store import AgentConfigStore
@@ -41,10 +44,12 @@ class CreateAgentConfigUseCase:
         config = self._config_loader.load_from_string(yaml_content)
 
         if config.name != name:
-            raise ConfigError(f"Agent name in YAML '{config.name}' does not match provided name '{name}'")
+            raise ConfigError(
+                ErrorMessage.AGENT_NAME_MISMATCH.format(yaml_name=config.name, name=name)
+            )
 
         if await self._config_repository.exists(name):
-            raise AgentConfigAlreadyExistsError(f"Agent config already exists: {name}")
+            raise AgentConfigAlreadyExistsError(ErrorMessage.AGENT_CONFIG_ALREADY_EXISTS.format(name=name))
 
         await self._config_store.put(name, yaml_content)
 
@@ -58,5 +63,5 @@ class CreateAgentConfigUseCase:
         )
         await self._config_repository.save(metadata)
 
-        logger.info("Created agent config '%s'", name)
+        logger.info(LogMessage.AGENT_CONFIG_CREATED_UC, name)
         return config

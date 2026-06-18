@@ -11,6 +11,7 @@ import pytest
 from src.application.requests.chat import ChatRequest
 from src.application.use_cases.send_message import SendMessageUseCase
 from src.domain.entities.message import Message, MessageRole, MessageStatus
+from src.domain.errors.hitl import InvalidHitlActionError
 from src.domain.ports.agent_runner import AgentRunner
 
 
@@ -80,8 +81,8 @@ class TestSendMessageUseCase:
         updated_thread = await thread_repo.get(thread.id)
         assert len(updated_thread.messages) == 1
 
-    async def test_unsupported_hitl_action_raises_value_error(self, registry, thread_repo):
-        """A HITL request with an unrecognized action should raise ValueError."""
+    async def test_unsupported_hitl_action_raises_invalid_hitl_action_error(self, registry, thread_repo):
+        """A HITL request with an unrecognized action should raise InvalidHitlActionError."""
         thread = await thread_repo.create("test-agent")
         use_case = SendMessageUseCase(registry, thread_repo)
 
@@ -92,7 +93,7 @@ class TestSendMessageUseCase:
         request.reason = None
         request.edits = None
 
-        with pytest.raises(ValueError, match="Unsupported HITL action"):
+        with pytest.raises(InvalidHitlActionError, match="Unsupported HITL action"):
             await use_case.execute(thread.id, request)
 
     # --- _is_duplicate_human_message tests ---

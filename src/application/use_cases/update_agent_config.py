@@ -2,7 +2,9 @@ import logging
 from datetime import UTC, datetime
 
 from src.domain.entities.agent_config import AgentConfig
-from src.domain.exceptions import ConfigError
+from src.domain.errors.config import ConfigError
+from src.domain.errors.messages import ErrorMessage
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_config_loader import AgentConfigLoader
 from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.domain.ports.agent_config_store import AgentConfigStore
@@ -45,7 +47,9 @@ class UpdateAgentConfigUseCase:
         config = self._config_loader.load_from_string(yaml_content)
 
         if config.name != name:
-            raise ConfigError(f"Agent name in YAML '{config.name}' does not match URL name '{name}'")
+            raise ConfigError(
+                ErrorMessage.AGENT_NAME_MISMATCH_URL.format(yaml_name=config.name, name=name)
+            )
 
         await self._config_store.put(name, yaml_content)
 
@@ -57,5 +61,5 @@ class UpdateAgentConfigUseCase:
 
         await self._agent_registry.invalidate(name)
 
-        logger.info("Updated agent config '%s'", name)
+        logger.info(LogMessage.AGENT_CONFIG_UPDATED_UC, name)
         return config

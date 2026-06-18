@@ -1,21 +1,17 @@
 import json
 import logging
-import sys
 import time
 from collections.abc import AsyncGenerator
 
 from src.domain.entities.message import Message, MessageRole
 from src.domain.entities.stream_event import StreamEvent, StreamEventType
+from src.domain.errors.messages import ErrorMessage
+from src.domain.errors.storage import StorageError
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.thread_repository import ThreadRepository
 
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    _handler = logging.StreamHandler(sys.stdout)
-    _handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-    logger.addHandler(_handler)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
 
 
 class StreamMessageUseCase:
@@ -53,10 +49,10 @@ class StreamMessageUseCase:
             human_msg = Message(role=MessageRole.HUMAN, content=message)
             await self._threads.add_message(thread_id, human_msg)
         else:
-            logger.info("[thread=%s] Skipping duplicate HUMAN message", thread_id)
+            logger.info(LogMessage.CHAT_SKIP_DUPLICATE_HUMAN, thread_id)
         runner = await self._registry.get_runner(thread.agent_name)
         start = time.monotonic()
-        logger.info("[thread=%s][agent=%s] Stream started", thread_id, thread.agent_name)
+        logger.info(LogMessage.CHAT_STREAM_STARTED, thread_id, thread.agent_name)
         chunk_count = 0
         final_message = None
         try:
@@ -74,7 +70,7 @@ class StreamMessageUseCase:
                     yield event
         except Exception:
             logger.exception(
-                "[thread=%s][agent=%s] Stream error after %d chunks", thread_id, thread.agent_name, chunk_count
+                LogMessage.CHAT_STREAM_ERROR_UC, thread_id, thread.agent_name, chunk_count
             )
             raise
         elapsed = time.monotonic() - start
@@ -82,7 +78,7 @@ class StreamMessageUseCase:
             try:
                 await self._threads.add_message(thread_id, final_message)
                 logger.info(
-                    "[thread=%s][agent=%s] Stream complete, %d chunks, elapsed=%.2fs, message=persisted",
+                    LogMessage.CHAT_STREAM_COMPLETE_PERSISTED,
                     thread_id,
                     thread.agent_name,
                     chunk_count,
@@ -90,6 +86,6 @@ class StreamMessageUseCase:
                 )
             except Exception as exc:
                 logger.exception(
-                    "[thread=%s][agent=%s] Failed to persist AI message after stream", thread_id, thread.agent_name
+                    LogMessage.CHAT_STREAM_PERSIST_FAILED, thread_id, thread.agent_name
                 )
-                raise RuntimeError(f"Failed to persist AI message after stream: {exc}") from exc
+                raise StorageError(ErrorMessage.STORAGE_FAILED_PERSIST_STREAM.format(error=exc)) from exc
