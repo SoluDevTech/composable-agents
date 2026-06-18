@@ -17,3 +17,19 @@ CVE-2023-45853
 # L'application n'utilise pas DTLS (FastAPI/HTTP + WebSocket over TCP).
 # Review: 2026-05-06
 CVE-2026-33845
+
+# perl-base: CVE-2026-42496 - Path traversal via symlinks dans Archive::Tar.
+# Aucune version fixée dans Debian bookworm (status: <postponed>).
+# L'application n'utilise pas Perl ; perl-base est une dépendance système
+# des outils Debian (dpkg, apt). Fix upstream: Archive::Tar 3.08.
+# Tracker: https://security-tracker.debian.org/tracker/CVE-2026-42496
+# Review: 2026-06-18
+CVE-2026-42496
+
+# perl-base: CVE-2026-8376 - Heap buffer overflow dans le compileur de regex.
+# N'affecte que les builds 32-bit (image amd64/arm64 non concernée -> faux positif).
+# Aucune version fixée dans bookworm/trixie (status: <no-dsa>).
+# Fix uniquement dans unstable (perl 5.40.1-8).
+# Tracker: https://security-tracker.debian.org/tracker/CVE-2026-8376
+# Review: 2026-06-18
+CVE-2026-8376
