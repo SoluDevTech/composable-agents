@@ -6,7 +6,7 @@ Uses the real YamlAgentConfigLoader with tmp_path (internal component).
 import pytest
 
 from src.application.use_cases.load_agent_config import LoadAgentConfigUseCase
-from src.domain.exceptions import ConfigNotFoundError
+from src.domain.errors.config import ConfigNotFoundError
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 
 

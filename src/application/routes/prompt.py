@@ -1,7 +1,6 @@
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
-from httpx import HTTPStatusError
+from fastapi import APIRouter, Depends
 
 from src.application.requests.prompt import (
     CreatePromptRequest,
@@ -11,27 +10,12 @@ from src.application.use_cases.create_prompt import CreatePromptUseCase
 from src.application.use_cases.get_prompt import GetPromptUseCase
 from src.application.use_cases.update_prompt import UpdatePromptUseCase
 from src.dependencies import get_prompt_manager
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.prompt_manager import PromptManager
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/prompts", tags=["prompts"])
-
-
-def _handle_http_error(e: Exception, identifier: str | None = None) -> HTTPException:
-    """Map exceptions to appropriate HTTP status codes."""
-    if isinstance(e, ValueError) and "not found" in str(e).lower():
-        return HTTPException(status_code=404, detail=str(e))
-    if isinstance(e, HTTPStatusError):
-        if e.response.status_code == 404:
-            return HTTPException(status_code=404, detail=f"Prompt not found: {identifier}")
-        if e.response.status_code == 409:
-            return HTTPException(status_code=409, detail=f"Prompt already exists: {identifier}")
-        if e.response.status_code == 400:
-            return HTTPException(status_code=400, detail=str(e))
-    if isinstance(e, ValueError):
-        return HTTPException(status_code=400, detail=str(e))
-    return HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/create", status_code=201)
@@ -42,7 +26,7 @@ async def create_prompt(
     """Create a new prompt."""
     use_case = CreatePromptUseCase(prompt_manager)
     try:
-        logger.info("Creating prompt: %s", request.identifier)
+        logger.info(LogMessage.PROMPT_CREATING, request.identifier)
         content_dicts = [msg.model_dump() for msg in request.content]
         prompt = await use_case.execute(
             identifier=request.identifier,
@@ -52,10 +36,10 @@ async def create_prompt(
             tags=request.tags,
             metadata=request.metadata,
         )
-        logger.info("Prompt created: %s", request.identifier)
+        logger.info(LogMessage.PROMPT_CREATED, request.identifier)
         return {"status": "success", "prompt": prompt}
     except Exception:
-        logger.exception("Error creating prompt '%s'", request.identifier)
+        logger.exception(LogMessage.PROMPT_CREATE_ERROR, request.identifier)
         raise
 
 
@@ -76,7 +60,7 @@ async def get_prompt(
         )
         return {"status": "success", "prompt": prompt}
     except Exception:
-        logger.exception("Error getting prompt '%s'", identifier)
+        logger.exception(LogMessage.PROMPT_GET_ERROR, identifier)
         raise
 
 
@@ -99,5 +83,5 @@ async def update_prompt(
         )
         return {"status": "success", "prompt": prompt}
     except Exception:
-        logger.exception("Error updating prompt '%s'", identifier)
+        logger.exception(LogMessage.PROMPT_UPDATE_ERROR, identifier)
         raise

@@ -9,7 +9,9 @@ from sqlalchemy.orm import selectinload
 
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.entities.thread import Thread
-from src.domain.exceptions import StorageError, ThreadNotFoundError
+from src.domain.errors.messages import ErrorMessage
+from src.domain.errors.storage import StorageError
+from src.domain.errors.thread import ThreadNotFoundError
 from src.domain.ports.thread_repository import ThreadRepository
 from src.infrastructure.database.models.thread import MessageModel, ThreadModel
 
@@ -97,7 +99,7 @@ class PostgresThreadRepository(ThreadRepository):
                     updated_at=model.updated_at,
                 )
             except SQLAlchemyError as e:
-                raise StorageError(f"Failed to create thread: {e}") from e
+                raise StorageError(ErrorMessage.THREAD_FAILED_CREATE.format(error=e)) from e
 
     async def get(self, thread_id: str) -> Thread:
         """Retrieve a thread by its ID.
@@ -116,12 +118,12 @@ class PostgresThreadRepository(ThreadRepository):
             try:
                 model = await session.get(ThreadModel, thread_id, options=[selectinload(ThreadModel.messages)])
                 if model is None:
-                    raise ThreadNotFoundError(f"Thread not found: {thread_id}")
+                    raise ThreadNotFoundError(ErrorMessage.THREAD_NOT_FOUND.format(thread_id=thread_id))
                 return _model_to_thread(model)
             except ThreadNotFoundError:
                 raise
             except SQLAlchemyError as e:
-                raise StorageError(f"Failed to get thread {thread_id}: {e}") from e
+                raise StorageError(ErrorMessage.THREAD_FAILED_GET.format(thread_id=thread_id, error=e)) from e
 
     async def list_all(self) -> list[Thread]:
         """List all conversation threads.
@@ -142,7 +144,7 @@ class PostgresThreadRepository(ThreadRepository):
                 models = result.scalars().all()
                 return [_model_to_thread(model) for model in models]
             except SQLAlchemyError as e:
-                raise StorageError(f"Failed to list threads: {e}") from e
+                raise StorageError(ErrorMessage.THREAD_FAILED_LIST.format(error=e)) from e
 
     async def delete(self, thread_id: str) -> None:
         """Delete a thread and all its messages.
@@ -158,13 +160,13 @@ class PostgresThreadRepository(ThreadRepository):
             try:
                 model = await session.get(ThreadModel, thread_id)
                 if model is None:
-                    raise ThreadNotFoundError(f"Thread not found: {thread_id}")
+                    raise ThreadNotFoundError(ErrorMessage.THREAD_NOT_FOUND.format(thread_id=thread_id))
                 await session.delete(model)
                 await session.commit()
             except ThreadNotFoundError:
                 raise
             except SQLAlchemyError as e:
-                raise StorageError(f"Failed to delete thread {thread_id}: {e}") from e
+                raise StorageError(ErrorMessage.THREAD_FAILED_DELETE.format(thread_id=thread_id, error=e)) from e
 
     async def add_message(self, thread_id: str, message: Message) -> Thread:
         """Add a message to an existing thread.
@@ -184,7 +186,7 @@ class PostgresThreadRepository(ThreadRepository):
             try:
                 thread_model = await session.get(ThreadModel, thread_id)
                 if thread_model is None:
-                    raise ThreadNotFoundError(f"Thread not found: {thread_id}")
+                    raise ThreadNotFoundError(ErrorMessage.THREAD_NOT_FOUND.format(thread_id=thread_id))
 
                 msg_model = MessageModel(
                     id=str(uuid4()),
@@ -213,4 +215,4 @@ class PostgresThreadRepository(ThreadRepository):
             except ThreadNotFoundError:
                 raise
             except SQLAlchemyError as e:
-                raise StorageError(f"Failed to add message to thread {thread_id}: {e}") from e
+                raise StorageError(ErrorMessage.THREAD_FAILED_ADD_MESSAGE.format(thread_id=thread_id, error=e)) from e

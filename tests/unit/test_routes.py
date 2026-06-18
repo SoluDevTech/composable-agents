@@ -14,7 +14,7 @@ from httpx import ASGITransport, AsyncClient
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.entities.stream_event import StreamEvent, StreamEventType
-from src.domain.exceptions import AgentError
+from src.domain.errors.agent import AgentError
 from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 from src.main import app
@@ -97,7 +97,7 @@ def mock_config_store(yaml_store):
 
     async def _get(name):
         if name not in yaml_store:
-            from src.domain.exceptions import AgentNotFoundError
+            from src.domain.errors.agent import AgentNotFoundError
 
             raise AgentNotFoundError(f"Agent config not found: {name}")
         return yaml_store[name]

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.domain.entities.message import MessageRole, MessageStatus
-from src.domain.exceptions import AgentError
+from src.domain.errors.agent import AgentError
 from src.infrastructure.deepagent.adapter import DeepAgentRunner
 
 

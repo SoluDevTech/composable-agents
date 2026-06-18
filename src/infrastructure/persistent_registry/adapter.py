@@ -1,6 +1,7 @@
 import asyncio
 import logging
 
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_config_loader import AgentConfigLoader
 from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.domain.ports.agent_config_store import AgentConfigStore
@@ -26,6 +27,8 @@ class PersistentAgentRegistry(AgentRegistry):
         mcp_tool_loader: McpToolLoader,
         tracing_provider: TracingProvider | None = None,
         prompt_manager: PromptManager | None = None,
+        stream_idle_timeout: float = 120.0,
+        invoke_timeout: float = 120.0,
     ) -> None:
         self._config_loader = config_loader
         self._config_store = config_store
@@ -33,6 +36,8 @@ class PersistentAgentRegistry(AgentRegistry):
         self._mcp_tool_loader = mcp_tool_loader
         self._tracing_provider = tracing_provider
         self._prompt_manager = prompt_manager
+        self._stream_idle_timeout = stream_idle_timeout
+        self._invoke_timeout = invoke_timeout
         self._runners: dict[str, AgentRunner] = {}
         self._lock = asyncio.Lock()
 
@@ -49,20 +54,26 @@ class PersistentAgentRegistry(AgentRegistry):
             AgentNotFoundError: If no config exists for this agent.
         """
         if agent_name in self._runners:
-            logger.info("Agent '%s' loaded from cache", agent_name)
+            logger.info(LogMessage.AGENT_CACHE_HIT, agent_name)
             return self._runners[agent_name]
 
         async with self._lock:
             if agent_name in self._runners:
                 return self._runners[agent_name]
 
-            logger.info("Building agent '%s' from persistent store", agent_name)
+            logger.info(LogMessage.AGENT_BUILDING, agent_name)
             yaml_content = await self._config_store.get(agent_name)
             config = self._config_loader.load_from_string(yaml_content)
             graph, response_format_model = await create_agent_from_config(config, self._mcp_tool_loader, self._prompt_manager)
-            runner = DeepAgentRunner(graph, tracing_provider=self._tracing_provider, response_format_model=response_format_model)
+            runner = DeepAgentRunner(
+                graph,
+                tracing_provider=self._tracing_provider,
+                response_format_model=response_format_model,
+                stream_idle_timeout=self._stream_idle_timeout,
+                invoke_timeout=self._invoke_timeout,
+            )
             self._runners[agent_name] = runner
-            logger.info("Agent '%s' ready and cached", agent_name)
+            logger.info(LogMessage.AGENT_CACHED, agent_name)
             return runner
 
     async def list_agents(self) -> list[str]:
@@ -74,9 +85,9 @@ class PersistentAgentRegistry(AgentRegistry):
         """Remove cached runner for the given agent, forcing rebuild on next access."""
         async with self._lock:
             self._runners.pop(agent_name, None)
-            logger.info("Invalidated cached agent '%s'", agent_name)
+            logger.info(LogMessage.AGENT_CACHE_INVALIDATED, agent_name)
 
     async def close(self) -> None:
         """Clear all cached runners."""
-        logger.info("Closing persistent registry, clearing %d cached agents", len(self._runners))
+        logger.info(LogMessage.REGISTRY_CLOSING, len(self._runners))
         self._runners.clear()

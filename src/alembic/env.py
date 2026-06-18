@@ -1,20 +1,22 @@
 import asyncio
-from logging.config import fileConfig
 
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
+# Centralized logging configuration (replaces the legacy alembic.ini fileConfig).
+from src.config import Settings
+
 # Side-effect imports: register all models so Base.metadata is populated
 from src.infrastructure.database.models.agent_config import AgentConfigModel  # noqa: F401
 from src.infrastructure.database.models.base import Base
 from src.infrastructure.database.models.thread import MessageModel, ThreadModel  # noqa: F401
+from src.infrastructure.logging import configure_logging
 
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+configure_logging(Settings())
 
 target_metadata = Base.metadata
 

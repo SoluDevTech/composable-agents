@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.domain.entities.mcp_server_config import McpServerConfig, McpTransportType
-from src.domain.exceptions import McpConnectionError, McpToolLoadError
+from src.domain.errors.mcp import McpConnectionError, McpToolLoadError
 from src.infrastructure.mcp.adapter import LangchainMcpToolLoader
 
 
@@ -159,4 +159,50 @@ class TestClose:
         assert len(loader._clients) == 2
 
         await loader.close()
+
+
+class TestToolTimeout:
+    """Per-MCP-tool timeout: a hung tool must raise ToolException (recoverable)
+    so the agent can continue, instead of stalling or being killed."""
+
+    async def test_hung_tool_raises_tool_exception(self):
+        import asyncio
+
+        from langchain_core.tools import StructuredTool, ToolException
+
+        async def _hang(**_kwargs):
+            await asyncio.sleep(10)
+            return "never"
+
+        tool = StructuredTool(
+            name="hung_tool",
+            description="a tool that hangs",
+            args_schema=None,
+            coroutine=_hang,
+        )
+
+        loader = LangchainMcpToolLoader(tool_timeout=0.1)
+        patched = loader._patch_sync_support([tool])
+        assert len(patched) == 1
+
+        with pytest.raises(ToolException, match="timed out"):
+            await patched[0].coroutine()
+
+    async def test_fast_tool_succeeds(self):
+        async def _fast(**_kwargs):
+            return "ok"
+
+        from langchain_core.tools import StructuredTool
+
+        tool = StructuredTool(
+            name="fast_tool",
+            description="a fast tool",
+            args_schema=None,
+            coroutine=_fast,
+        )
+
+        loader = LangchainMcpToolLoader(tool_timeout=5.0)
+        patched = loader._patch_sync_support([tool])
+        result = await patched[0].coroutine()
+        assert result == "ok"
         assert len(loader._clients) == 0

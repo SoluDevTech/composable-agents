@@ -13,6 +13,7 @@ from pydantic import Field as PydanticField
 from pydantic import create_model
 
 from src.domain.entities.agent_config import AgentConfig, BackendType
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.mcp_tool_loader import McpToolLoader
 from src.domain.ports.prompt_manager import PromptManager
 from src.infrastructure.deepagent.schema_utils import make_validation_model
@@ -74,7 +75,7 @@ def _resolve_tools(config: AgentConfig) -> list | None:
     for tool_path in config.tools:
         module_path, _, attr_name = tool_path.rpartition(":")
         if not module_path or not attr_name:
-            logger.error(f"Invalid tool format '{tool_path}'")
+            logger.error(LogMessage.TOOL_FORMAT_INVALID, tool_path)
             raise ValueError(
                 f"Invalid tool format '{tool_path}'. "
                 f"Expected: 'module.path:tool_name' (e.g., 'mypackage.tools:my_tool')"
@@ -82,12 +83,12 @@ def _resolve_tools(config: AgentConfig) -> list | None:
         try:
             module = importlib.import_module(module_path)
         except ModuleNotFoundError as e:
-            logger.exception(f"Module not found for tool '{tool_path}'")
+            logger.exception(LogMessage.TOOL_MODULE_NOT_FOUND, tool_path)
             raise ValueError(f"Module not found for tool '{tool_path}': {e}") from e
 
         if not hasattr(module, attr_name):
             available = [a for a in dir(module) if not a.startswith("_")]
-            logger.error(f"Attribute '{attr_name}' not found in '{module_path}'")
+            logger.error(LogMessage.TOOL_ATTRIBUTE_NOT_FOUND, attr_name, module_path)
             raise ValueError(f"Attribute '{attr_name}' not found in '{module_path}'. Available: {available}")
         tools.append(getattr(module, attr_name))
     return tools
@@ -99,7 +100,13 @@ def _resolve_backend(config: AgentConfig):
         case BackendType.STATE:
             return None  # Defaut de create_deep_agent
         case BackendType.FILESYSTEM:
-            return FilesystemBackend(root_dir=config.backend.root_dir or "./workspace")
+            # virtual_mode=False keeps the historical behaviour (root_dir-bounded
+            # persistence without virtual path routing). Specified explicitly to
+            # silence the deepagents>=0.6 default-change deprecation warning.
+            return FilesystemBackend(
+                root_dir=config.backend.root_dir or "./workspace",
+                virtual_mode=False,
+            )
         case BackendType.STORE:
             return lambda rt: StoreBackend(rt)
         case BackendType.COMPOSITE:
@@ -149,7 +156,7 @@ async def _resolve_subagents(
                 content = await prompt_manager.get_prompt_content(sa.name)
                 instructions = content.get("content")
             except Exception:
-                logger.warning(f"Could not load system prompt for sub-agent '{sa.name}' from Phoenix, using YAML instructions if available.")
+                logger.warning(LogMessage.SUBAGENT_PROMPT_LOAD_FAILED, sa.name)
                 instructions = sa.instructions
 
         if sa.response_format:
@@ -196,7 +203,7 @@ async def create_agent_from_config(
     Returns:
         Tuple of (compiled agent graph, response_format_model or None).
     """
-    logger.info("Creating agent '%s' (model=%s)", config.name, config.model)
+    logger.info(LogMessage.AGENT_CREATING, config.name, config.model)
     checkpointer = MemorySaver()
     store = InMemoryStore()
     interrupt_on = _resolve_interrupt_on(config)
@@ -205,11 +212,11 @@ async def create_agent_from_config(
     local_tools = _resolve_tools(config)
     mcp_tools: list = []
     if config.mcp_servers and mcp_tool_loader:
-        logger.info("Loading MCP tools for agent '%s' (%d servers)", config.name, len(config.mcp_servers))
+        logger.info(LogMessage.AGENT_MCP_TOOLS_LOADING, config.name, len(config.mcp_servers))
         mcp_tools = await mcp_tool_loader.load_tools(config.mcp_servers)
-        logger.info("Loaded %d MCP tools for agent '%s'", len(mcp_tools), config.name)
+        logger.info(LogMessage.AGENT_MCP_TOOLS_LOADED, len(mcp_tools), config.name)
     all_tools = (local_tools or []) + mcp_tools if (local_tools or mcp_tools) else None
-    logger.info("Agent '%s' tools: %d total", config.name, len(all_tools) if all_tools else 0)
+    logger.info(LogMessage.AGENT_TOOLS_TOTAL, config.name, len(all_tools) if all_tools else 0)
 
     if prompt_manager:
         system_prompt = await get_system_prompt_from_phoenix(config.name, prompt_manager)
@@ -251,13 +258,13 @@ async def create_agent_from_config(
     subagents = await _resolve_subagents(config, mcp_tool_loader, prompt_manager)
     if subagents:
         kwargs["subagents"] = subagents
-        logger.info("Agent '%s' has %d subagents", config.name, len(subagents))
+        logger.info(LogMessage.AGENT_SUBAGENTS, config.name, len(subagents))
     try:
         graph = create_deep_agent(**kwargs)
     except Exception:
-        logger.exception("Error creating agent '%s'", config.name)
+        logger.exception(LogMessage.AGENT_CREATE_ERROR, config.name)
         raise
-    logger.info("Agent '%s' created successfully", config.name)
+    logger.info(LogMessage.AGENT_CREATED, config.name)
     return graph, response_format_model
 
 

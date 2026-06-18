@@ -1,6 +1,7 @@
 import logging
 
 from src.domain.entities.prompt import PromptVersion
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.prompt_manager import PromptManager
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ class CreatePromptUseCase:
         metadata: dict | None = None,
     ) -> PromptVersion:
         """Create a new prompt."""
-        logger.info(f"Creating prompt: {identifier}")
+        logger.info(LogMessage.PROMPT_CREATING, identifier)
         prompt = await self._prompt_manager.create_prompt(
             identifier=identifier,
             content=content,
@@ -31,5 +32,5 @@ class CreatePromptUseCase:
             tags=tags,
             metadata=metadata,
         )
-        logger.info(f"Prompt created successfully: {identifier}")
+        logger.info(LogMessage.PROMPT_CREATED_SUCCESS, identifier)
         return prompt

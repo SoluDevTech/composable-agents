@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 from src.domain.entities.message import Message
 from src.domain.entities.thread import Thread
-from src.domain.exceptions import ThreadNotFoundError
+from src.domain.errors.thread import ThreadNotFoundError
 from src.domain.ports.thread_repository import ThreadRepository
 
 logger = logging.getLogger("composable-agents")

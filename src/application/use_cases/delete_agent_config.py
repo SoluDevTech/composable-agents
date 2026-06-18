@@ -1,5 +1,6 @@
 import logging
 
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.domain.ports.agent_config_store import AgentConfigStore
 from src.domain.ports.agent_registry import AgentRegistry
@@ -35,4 +36,4 @@ class DeleteAgentConfigUseCase:
         await self._config_repository.delete(name)
         await self._agent_registry.invalidate(name)
 
-        logger.info("Deleted agent config '%s'", name)
+        logger.info(LogMessage.AGENT_CONFIG_DELETED_UC, name)

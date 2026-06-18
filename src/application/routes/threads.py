@@ -17,6 +17,7 @@ from src.dependencies import (
     get_list_threads_use_case,
 )
 from src.domain.entities.thread import Thread
+from src.domain.logging.messages import LogMessage
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +29,9 @@ async def create_thread(
     body: CreateThreadRequest,
     use_case: Annotated[CreateThreadUseCase, Depends(get_create_thread_use_case)],
 ) -> Thread:
-    logger.info("Creating thread for agent=%s", body.agent_name)
+    logger.info(LogMessage.THREAD_CREATING, body.agent_name)
     thread = await use_case.execute(body.agent_name)
-    logger.info("Thread created: id=%s agent=%s", thread.id, thread.agent_name)
+    logger.info(LogMessage.THREAD_CREATED, thread.id, thread.agent_name)
     return thread
 
 
@@ -39,7 +40,7 @@ async def list_threads(
     use_case: Annotated[ListThreadsUseCase, Depends(get_list_threads_use_case)],
 ) -> list[Thread]:
     threads = await use_case.execute()
-    logger.info("Listed %d threads", len(threads))
+    logger.info(LogMessage.THREAD_LISTED, len(threads))
     return threads
 
 
@@ -48,7 +49,7 @@ async def get_thread(
     thread_id: str,
     use_case: Annotated[GetThreadUseCase, Depends(get_get_thread_use_case)],
 ) -> Thread:
-    logger.info("Getting thread=%s", thread_id)
+    logger.info(LogMessage.THREAD_GETTING, thread_id)
     return await use_case.execute(thread_id)
 
 
@@ -57,7 +58,7 @@ async def delete_thread(
     thread_id: str,
     use_case: Annotated[DeleteThreadUseCase, Depends(get_delete_thread_use_case)],
 ) -> None:
-    logger.info("Deleting thread=%s", thread_id)
+    logger.info(LogMessage.THREAD_DELETING, thread_id)
     await use_case.execute(thread_id)
 
 
@@ -67,5 +68,5 @@ async def list_messages(
     use_case: Annotated[GetThreadUseCase, Depends(get_get_thread_use_case)],
 ) -> list:
     thread = await use_case.execute(thread_id)
-    logger.info("[thread=%s] Listed %d messages", thread_id, len(thread.messages))
+    logger.info(LogMessage.THREAD_MESSAGES_LISTED, thread_id, len(thread.messages))
     return thread.messages

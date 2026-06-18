@@ -3,6 +3,9 @@ import time
 
 from src.application.requests.chat import ChatRequest
 from src.domain.entities.message import Message, MessageRole
+from src.domain.errors.hitl import InvalidHitlActionError
+from src.domain.errors.messages import ErrorMessage
+from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.thread_repository import ThreadRepository
 
@@ -43,17 +46,17 @@ class SendMessageUseCase:
         runner = await self._registry.get_runner(thread.agent_name)
 
         if request.message is not None:
-            logger.info("[thread=%s][agent=%s] Sending human message", thread_id, thread.agent_name)
+            logger.info(LogMessage.CHAT_SENDING_HUMAN, thread_id, thread.agent_name)
             if not self._is_duplicate_human_message(thread.messages, request.message):
                 human_msg = Message(role=MessageRole.HUMAN, content=request.message)
                 await self._threads.add_message(thread_id, human_msg)
             else:
-                logger.info("[thread=%s] Skipping duplicate HUMAN message", thread_id)
+                logger.info(LogMessage.CHAT_SKIP_DUPLICATE_HUMAN, thread_id)
             start = time.monotonic()
             response = await runner.invoke(thread_id, request.message)
             elapsed = time.monotonic() - start
             logger.info(
-                "[thread=%s][agent=%s] Invoke elapsed=%.2fs, status=%s, len=%d",
+                LogMessage.CHAT_INVOKE_COMPLETE,
                 thread_id,
                 thread.agent_name,
                 elapsed,
@@ -62,7 +65,7 @@ class SendMessageUseCase:
             )
         else:
             logger.info(
-                "[thread=%s][agent=%s] HITL action=%s tool_call_id=%s",
+                LogMessage.CHAT_HITL_RECEIVED,
                 thread_id,
                 thread.agent_name,
                 request.action,
@@ -77,10 +80,10 @@ class SendMessageUseCase:
                 case "edit":
                     response = await runner.edit_hitl(thread_id, request.tool_call_id, request.edits)
                 case _:
-                    raise ValueError(f"Unsupported HITL action: {request.action}")
+                    raise InvalidHitlActionError(ErrorMessage.INVALID_HITL_ACTION.format(action=request.action))
             elapsed = time.monotonic() - start
             logger.info(
-                "[thread=%s][agent=%s] HITL elapsed=%.2fs, status=%s",
+                LogMessage.CHAT_HITL_COMPLETE,
                 thread_id,
                 thread.agent_name,
                 elapsed,

@@ -15,7 +15,8 @@ from src.application.use_cases.get_agent_config import GetAgentConfigUseCase
 from src.application.use_cases.list_agent_configs import ListAgentConfigsUseCase
 from src.application.use_cases.update_agent_config import UpdateAgentConfigUseCase
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
-from src.domain.exceptions import AgentConfigAlreadyExistsError, AgentNotFoundError, ConfigError
+from src.domain.errors.agent import AgentConfigAlreadyExistsError, AgentNotFoundError
+from src.domain.errors.config import ConfigError
 from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.domain.ports.agent_config_store import AgentConfigStore
 from src.domain.ports.agent_registry import AgentRegistry
