@@ -15,14 +15,6 @@ from src.infrastructure.env_utils import resolve_env_vars
 
 logger = logging.getLogger(__name__)
 
-# Streamable HTTP transport tuning. Explicit values make client/server behaviour
-# deterministic instead of relying on library defaults, and reduce the reconnect
-# storms seen when the SSE GET stream drops between tool calls.
-# Keep aligned with the server (mcp-raganything / fastmcp) SDK version.
-_STREAMABLE_HTTP_TIMEOUT = timedelta(seconds=30)
-_STREAMABLE_HTTP_SSE_READ_TIMEOUT = timedelta(minutes=10)
-
-
 class LangchainMcpToolLoader(McpToolLoader):
     """Adapter MCP utilisant langchain-mcp-adapters pour charger des outils."""
 
@@ -61,8 +53,6 @@ class LangchainMcpToolLoader(McpToolLoader):
                     "transport": "streamable_http",
                     "url": config.url,
                     "headers": self._resolve_env_vars(config.headers),
-                    "timeout": _STREAMABLE_HTTP_TIMEOUT,
-                    "sse_read_timeout": _STREAMABLE_HTTP_SSE_READ_TIMEOUT,
                 }
                 if config.auth_token:
                     server_config["auth_token"] = config.auth_token
