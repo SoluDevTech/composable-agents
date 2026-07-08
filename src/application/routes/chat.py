@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends
 from sse_starlette.sse import EventSourceResponse
 
 from src.application.requests.chat import ChatRequest
+from src.application.use_cases.get_thread import GetThreadUseCase
 from src.application.use_cases.send_message import SendMessageUseCase
 from src.application.use_cases.stream_message import StreamMessageUseCase
-from src.application.use_cases.thread_management import GetThreadUseCase
 from src.dependencies import (
     get_get_thread_use_case,
     get_send_message_use_case,
@@ -30,7 +30,14 @@ async def send_message(
     use_case: Annotated[SendMessageUseCase, Depends(get_send_message_use_case)],
 ) -> Message:
     logger.info(LogMessage.CHAT_RECEIVE, thread_id, "HITL" if body.message is None else body.message[:80])
-    result = await use_case.execute(thread_id, body)
+    result = await use_case.execute(
+        thread_id,
+        message=body.message,
+        action=body.action,
+        tool_call_id=body.tool_call_id,
+        reason=body.reason,
+        edits=body.edits,
+    )
     logger.info(LogMessage.CHAT_RESPONSE, thread_id, result.status, len(result.content or ""))
     return result
 

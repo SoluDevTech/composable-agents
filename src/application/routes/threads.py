@@ -4,18 +4,17 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 
 from src.application.requests.chat import CreateThreadRequest
-from src.application.use_cases.thread_management import (
-    CreateThreadUseCase,
-    DeleteThreadUseCase,
-    GetThreadUseCase,
-    ListThreadsUseCase,
-)
+from src.application.use_cases.create_thread import CreateThreadUseCase
+from src.application.use_cases.delete_thread import DeleteThreadUseCase
+from src.application.use_cases.get_thread import GetThreadUseCase
+from src.application.use_cases.list_threads import ListThreadsUseCase
 from src.dependencies import (
     get_create_thread_use_case,
     get_delete_thread_use_case,
     get_get_thread_use_case,
     get_list_threads_use_case,
 )
+from src.domain.entities.message import Message
 from src.domain.entities.thread import Thread
 from src.domain.logging.messages import LogMessage
 
@@ -62,11 +61,11 @@ async def delete_thread(
     await use_case.execute(thread_id)
 
 
-@router.get("/{thread_id}/messages")
+@router.get("/{thread_id}/messages", response_model=list[Message])
 async def list_messages(
     thread_id: str,
     use_case: Annotated[GetThreadUseCase, Depends(get_get_thread_use_case)],
-) -> list:
+) -> list[Message]:
     thread = await use_case.execute(thread_id)
     logger.info(LogMessage.THREAD_MESSAGES_LISTED, thread_id, len(thread.messages))
     return thread.messages

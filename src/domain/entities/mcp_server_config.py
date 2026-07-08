@@ -1,12 +1,7 @@
-import logging
 from enum import StrEnum
 from typing import Self
 
 from pydantic import BaseModel, Field, model_validator
-
-from src.domain.logging.messages import LogMessage
-
-logger = logging.getLogger(__name__)
 
 
 class McpTransportType(StrEnum):
@@ -29,9 +24,7 @@ class McpServerConfig(BaseModel, frozen=True):
     @model_validator(mode="after")
     def validate_transport_fields(self) -> Self:
         if self.transport == McpTransportType.STDIO and not self.command:
-            logger.error(LogMessage.VALIDATION_COMMAND_REQUIRED)
             raise ValueError("'command' is required for stdio transport")
         if self.transport == McpTransportType.HTTP and not self.url:
-            logger.error(LogMessage.VALIDATION_URL_REQUIRED)
             raise ValueError("'url' is required for http transport")
         return self

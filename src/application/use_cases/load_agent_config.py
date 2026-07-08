@@ -7,8 +7,8 @@ from src.domain.ports.agent_config_loader import AgentConfigLoader
 class LoadAgentConfigUseCase:
     """Charge la configuration d'un agent depuis un fichier."""
 
-    def __init__(self, loader: AgentConfigLoader):
+    def __init__(self, loader: AgentConfigLoader) -> None:
         self._loader = loader
 
-    def execute(self, config_path: str | Path) -> AgentConfig:
+    async def execute(self, config_path: str | Path) -> AgentConfig:
         return self._loader.load(config_path)

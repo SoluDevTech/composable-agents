@@ -1,8 +1,7 @@
 from abc import ABC, abstractmethod
+from typing import Any
 
-from phoenix.client.resources.prompts import PromptVersion
-
-from src.domain.entities.prompt import Prompt
+from src.domain.entities.prompt import Prompt, PromptVersion
 
 
 class PromptManager(ABC):
@@ -19,7 +18,12 @@ class PromptManager(ABC):
         ...
 
     @abstractmethod
-    async def get_prompt_content(self, identifier: str, version_id: str | None = None, tag: str | None = None) -> dict:
+    async def get_prompt_content(
+        self,
+        identifier: str,
+        version_id: str | None = None,
+        tag: str | None = None,
+    ) -> dict[str, Any]:
         """Retrieve the content of a prompt by identifier, version, or tag."""
         ...
 

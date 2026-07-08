@@ -1,23 +1,25 @@
 import logging
+from dataclasses import dataclass
 
 from miniopy_async import Minio
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from src.application.use_cases.create_agent_config import CreateAgentConfigUseCase
+from src.application.use_cases.create_prompt import CreatePromptUseCase
+from src.application.use_cases.create_thread import CreateThreadUseCase
 from src.application.use_cases.delete_agent_config import DeleteAgentConfigUseCase
+from src.application.use_cases.delete_thread import DeleteThreadUseCase
 from src.application.use_cases.get_agent_config import GetAgentConfigUseCase
+from src.application.use_cases.get_prompt import GetPromptContentUseCase, GetPromptUseCase
+from src.application.use_cases.get_thread import GetThreadUseCase
 from src.application.use_cases.list_agent_configs import ListAgentConfigsUseCase
+from src.application.use_cases.list_threads import ListThreadsUseCase
 from src.application.use_cases.load_agent_config import LoadAgentConfigUseCase
 from src.application.use_cases.send_message import SendMessageUseCase
 from src.application.use_cases.stream_message import StreamMessageUseCase
-from src.application.use_cases.thread_management import (
-    CreateThreadUseCase,
-    DeleteThreadUseCase,
-    GetThreadUseCase,
-    ListThreadsUseCase,
-)
 from src.application.use_cases.update_agent_config import UpdateAgentConfigUseCase
+from src.application.use_cases.update_prompt import UpdatePromptUseCase
 from src.config import Settings
 from src.domain.errors.messages import ErrorMessage
 from src.domain.errors.storage import StorageError
@@ -25,12 +27,13 @@ from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.prompt_manager import PromptManager
 from src.domain.ports.thread_repository import ThreadRepository
+from src.domain.ports.tracing_provider import TracingProvider
 from src.infrastructure.mcp.adapter import LangchainMcpToolLoader
 from src.infrastructure.minio_store.adapter import MinioAgentConfigStore
 from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
 from src.infrastructure.postgres_repository.adapter import PostgresAgentConfigRepository
 from src.infrastructure.postgres_thread.adapter import PostgresThreadRepository
-from src.infrastructure.prompt_management.phoenix_prompt_adapter import PhoenixPromptManagerProvider
+from src.infrastructure.prompt_management.adapter import PhoenixPromptManagerProvider
 from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 
@@ -43,7 +46,7 @@ settings = Settings()
 # ============= TRACING =============
 
 
-def _create_tracing_provider(settings: Settings):
+def _create_tracing_provider(settings: Settings) -> TracingProvider:
     """Create the appropriate TracingProvider based on settings.
 
     Args:
@@ -95,11 +98,19 @@ tracing_provider = _create_tracing_provider(settings)
 
 # ============= PERSISTENCE (initialized at startup) =============
 
-_async_engine: AsyncEngine | None = None
-_minio_store: MinioAgentConfigStore | None = None
-_pg_repository: PostgresAgentConfigRepository | None = None
-agent_registry: AgentRegistry | None = None
-thread_repository: ThreadRepository | None = None
+
+@dataclass
+class CompositionRoot:
+    """Container for application-wide persistence state, replacing module-level globals."""
+
+    async_engine: AsyncEngine | None = None
+    minio_store: MinioAgentConfigStore | None = None
+    pg_repository: PostgresAgentConfigRepository | None = None
+    agent_registry: AgentRegistry | None = None
+    thread_repository: ThreadRepository | None = None
+
+
+_root = CompositionRoot()
 
 
 async def init_persistence() -> None:
@@ -107,11 +118,9 @@ async def init_persistence() -> None:
 
     Must be called during application startup.
     """
-    global _async_engine, _minio_store, _pg_repository, agent_registry, thread_repository
-
     logger.info(LogMessage.PERSISTENCE_INITIALIZING)
 
-    _async_engine = create_async_engine(
+    _root.async_engine = create_async_engine(
         settings.database_url,
         poolclass=AsyncAdaptedQueuePool,
         pool_size=20,
@@ -120,8 +129,8 @@ async def init_persistence() -> None:
     )
     logger.info(LogMessage.SQLALCHEMY_ENGINE_CREATED)
 
-    _pg_repository = PostgresAgentConfigRepository(engine=_async_engine)
-    thread_repository = PostgresThreadRepository(engine=_async_engine)
+    _root.pg_repository = PostgresAgentConfigRepository(engine=_root.async_engine)
+    _root.thread_repository = PostgresThreadRepository(engine=_root.async_engine)
     logger.info(LogMessage.POSTGRES_REPOS_INITIALIZED)
 
     minio_client = Minio(
@@ -130,14 +139,14 @@ async def init_persistence() -> None:
         secret_key=settings.minio_secret_key,
         secure=settings.minio_secure,
     )
-    _minio_store = MinioAgentConfigStore(client=minio_client, bucket=settings.minio_bucket)
-    await _minio_store.ensure_bucket()
+    _root.minio_store = MinioAgentConfigStore(client=minio_client, bucket=settings.minio_bucket)
+    await _root.minio_store.ensure_bucket()
     logger.info(LogMessage.MINIO_STORE_INITIALIZED, settings.minio_bucket)
 
-    agent_registry = PersistentAgentRegistry(
+    _root.agent_registry = PersistentAgentRegistry(
         config_loader=agent_config_loader,
-        config_store=_minio_store,
-        config_repository=_pg_repository,
+        config_store=_root.minio_store,
+        config_repository=_root.pg_repository,
         mcp_tool_loader=mcp_tool_loader,
         tracing_provider=tracing_provider,
         prompt_manager=get_prompt_manager(),
@@ -153,13 +162,22 @@ async def close_persistence() -> None:
 
     Must be called during application shutdown.
     """
-    if agent_registry and isinstance(agent_registry, PersistentAgentRegistry):
-        await agent_registry.close()
+    if _root.agent_registry and isinstance(_root.agent_registry, PersistentAgentRegistry):
+        await _root.agent_registry.close()
         logger.info(LogMessage.PERSISTENT_REGISTRY_CLOSED)
 
-    if _async_engine:
-        await _async_engine.dispose()
+    if _root.async_engine:
+        await _root.async_engine.dispose()
         logger.info(LogMessage.SQLALCHEMY_ENGINE_DISPOSED)
+
+
+def reset() -> None:
+    """Reset all persisted state. Useful for testing."""
+    _root.async_engine = None
+    _root.minio_store = None
+    _root.pg_repository = None
+    _root.agent_registry = None
+    _root.thread_repository = None
 
 
 logger.info(LogMessage.DEPENDENCIES_INITIALIZED)
@@ -170,16 +188,16 @@ logger.info(LogMessage.DEPENDENCIES_INITIALIZED)
 
 def _require_thread_repository() -> ThreadRepository:
     """Return thread repository or raise StorageError if not initialized."""
-    if thread_repository is None:
+    if _root.thread_repository is None:
         raise StorageError(ErrorMessage.STORAGE_REPO_NOT_INITIALIZED)
-    return thread_repository
+    return _root.thread_repository
 
 
 def _require_agent_registry() -> AgentRegistry:
     """Return agent registry or raise StorageError if not initialized."""
-    if agent_registry is None:
+    if _root.agent_registry is None:
         raise StorageError(ErrorMessage.STORAGE_REGISTRY_NOT_INITIALIZED)
-    return agent_registry
+    return _root.agent_registry
 
 
 def get_send_message_use_case() -> SendMessageUseCase:
@@ -219,9 +237,9 @@ def get_load_agent_config_use_case() -> LoadAgentConfigUseCase:
 
 def _require_persistence() -> tuple[MinioAgentConfigStore, PostgresAgentConfigRepository]:
     """Return persistence adapters or raise StorageError if not initialized."""
-    if _minio_store is None or _pg_repository is None:
+    if _root.minio_store is None or _root.pg_repository is None:
         raise StorageError(ErrorMessage.STORAGE_PERSISTENCE_NOT_INITIALIZED)
-    return _minio_store, _pg_repository
+    return _root.minio_store, _root.pg_repository
 
 
 def get_create_agent_config_use_case() -> CreateAgentConfigUseCase:
@@ -268,3 +286,23 @@ def get_list_agent_configs_use_case() -> ListAgentConfigsUseCase:
     """Provide a ListAgentConfigsUseCase instance."""
     _, repo = _require_persistence()
     return ListAgentConfigsUseCase(config_repository=repo)
+
+
+def get_create_prompt_use_case() -> CreatePromptUseCase:
+    """Provide a CreatePromptUseCase instance."""
+    return CreatePromptUseCase(get_prompt_manager())
+
+
+def get_get_prompt_use_case() -> GetPromptUseCase:
+    """Provide a GetPromptUseCase instance."""
+    return GetPromptUseCase(get_prompt_manager())
+
+
+def get_update_prompt_use_case() -> UpdatePromptUseCase:
+    """Provide an UpdatePromptUseCase instance."""
+    return UpdatePromptUseCase(get_prompt_manager())
+
+
+def get_get_prompt_content_use_case() -> GetPromptContentUseCase:
+    """Provide a GetPromptContentUseCase instance."""
+    return GetPromptContentUseCase(get_prompt_manager())

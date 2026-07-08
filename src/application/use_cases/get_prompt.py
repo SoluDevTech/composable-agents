@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from src.domain.entities.prompt import Prompt
 from src.domain.logging.messages import LogMessage
@@ -10,7 +11,7 @@ logger = logging.getLogger(__name__)
 class GetPromptUseCase:
     """Retrieve a prompt from the registry."""
 
-    def __init__(self, prompt_manager: PromptManager):
+    def __init__(self, prompt_manager: PromptManager) -> None:
         self._prompt_manager = prompt_manager
 
     async def execute(
@@ -28,7 +29,19 @@ class GetPromptUseCase:
         )
         return prompt
 
-    async def execute_get_prompt_content(self, identifier: str, version_id: str | None = None, tag: str | None = None) -> dict:
+
+class GetPromptContentUseCase:
+    """Retrieve the content of a prompt from the registry."""
+
+    def __init__(self, prompt_manager: PromptManager) -> None:
+        self._prompt_manager = prompt_manager
+
+    async def execute(
+        self,
+        identifier: str,
+        version_id: str | None = None,
+        tag: str | None = None,
+    ) -> dict[str, Any]:
         """Get the content of a prompt."""
         logger.info(LogMessage.PROMPT_RETRIEVING_CONTENT, identifier)
         content = await self._prompt_manager.get_prompt_content(

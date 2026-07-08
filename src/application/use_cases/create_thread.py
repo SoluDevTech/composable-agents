@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class CreateThreadUseCase:
-    def __init__(self, threads: ThreadRepository, registry: AgentRegistry):
+    def __init__(self, threads: ThreadRepository, registry: AgentRegistry) -> None:
         self._threads = threads
         self._registry = registry
 
@@ -21,27 +21,3 @@ class CreateThreadUseCase:
         thread = await self._threads.create(agent_name)
         logger.info(LogMessage.THREAD_CREATED, thread.id, agent_name)
         return thread
-
-
-class GetThreadUseCase:
-    def __init__(self, threads: ThreadRepository):
-        self._threads = threads
-
-    async def execute(self, thread_id: str) -> Thread:
-        return await self._threads.get(thread_id)
-
-
-class ListThreadsUseCase:
-    def __init__(self, threads: ThreadRepository):
-        self._threads = threads
-
-    async def execute(self) -> list[Thread]:
-        return await self._threads.list_all()
-
-
-class DeleteThreadUseCase:
-    def __init__(self, threads: ThreadRepository):
-        self._threads = threads
-
-    async def execute(self, thread_id: str) -> None:
-        await self._threads.delete(thread_id)

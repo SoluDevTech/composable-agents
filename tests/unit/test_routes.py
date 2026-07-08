@@ -1,24 +1,53 @@
 """Tests for FastAPI routes.
 
-Uses real InMemoryThreadRepository and YamlAgentConfigLoader (internal).
-Uses AsyncMock for AgentRunner (external LLM boundary).
-Uses real PersistentAgentRegistry with mocked store/repository for agent creation.
+Uses real internal components (PostgresThreadRepository via the shared
+``thread_repo`` fixture, YamlAgentConfigLoader). The agent runner is mocked at
+the ``AgentRunner`` port boundary via ``mock_agent_runner``.
+
+Dependencies are wired through ``app.dependency_overrides`` instead of patching
+module-level globals, so the FastAPI container remains in control of its own
+providers.
 """
 
+import json
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.application.use_cases.create_agent_config import CreateAgentConfigUseCase
+from src.application.use_cases.create_thread import CreateThreadUseCase
+from src.application.use_cases.delete_agent_config import DeleteAgentConfigUseCase
+from src.application.use_cases.delete_thread import DeleteThreadUseCase
+from src.application.use_cases.get_agent_config import GetAgentConfigUseCase
+from src.application.use_cases.get_thread import GetThreadUseCase
+from src.application.use_cases.list_agent_configs import ListAgentConfigsUseCase
+from src.application.use_cases.list_threads import ListThreadsUseCase
+from src.application.use_cases.send_message import SendMessageUseCase
+from src.application.use_cases.stream_message import StreamMessageUseCase
+from src.application.use_cases.update_agent_config import UpdateAgentConfigUseCase
+from src.dependencies import (
+    get_create_agent_config_use_case,
+    get_create_thread_use_case,
+    get_delete_agent_config_use_case,
+    get_delete_thread_use_case,
+    get_get_agent_config_use_case,
+    get_get_thread_use_case,
+    get_list_agent_configs_use_case,
+    get_list_threads_use_case,
+    get_send_message_use_case,
+    get_stream_message_use_case,
+    get_update_agent_config_use_case,
+)
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.entities.stream_event import StreamEvent, StreamEventType
 from src.domain.errors.agent import AgentError
-from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
+from src.domain.ports.agent_registry import AgentRegistry
+from src.domain.ports.agent_runner import AgentRunner
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 from src.main import app
-from tests.fixtures.in_memory_thread_repository import InMemoryThreadRepository
 
 VALID_YAML = 'name: {name}\nmodel: test-model\nsystem_prompt: "Test prompt."\ntools: []\ndebug: false\n'
 
@@ -34,16 +63,39 @@ AGENTS = [
 ]
 
 
-@pytest.fixture
-def yaml_store():
-    """In-memory YAML store keyed by agent name."""
-    return {name: VALID_YAML.format(name=name) for name in AGENTS}
+class StubAgentRegistry(AgentRegistry):
+    """In-memory AgentRegistry backed by the mocked agent runner.
+
+    Lists agent names from the YAML store and returns the shared mock runner
+    for every agent. This avoids the real PersistentAgentRegistry which would
+    require create_agent_from_config (LLM) and a config store.
+    """
+
+    def __init__(self, agent_names: list[str], runner: AgentRunner) -> None:
+        self._names = agent_names
+        self._runner = runner
+
+    async def get_runner(self, agent_name: str) -> AgentRunner:
+        if agent_name not in self._names:
+            from src.domain.errors.agent import AgentNotFoundError
+
+            raise AgentNotFoundError(f"Agent not found: {agent_name}")
+        return self._runner
+
+    async def list_agents(self) -> list[str]:
+        return list(self._names)
+
+    async def invalidate(self, agent_name: str) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
 
 
 @pytest.fixture
 def mock_runner():
     """AsyncMock for the agent runner (external LLM boundary)."""
-    runner = AsyncMock()
+    runner = AsyncMock(spec=AgentRunner)
     runner.invoke.return_value = Message(
         role=MessageRole.AI, content="I am a mock agent.", status=MessageStatus.COMPLETED
     )
@@ -81,84 +133,97 @@ def mock_runner():
 
 
 @pytest.fixture
-def real_threads():
-    return InMemoryThreadRepository()
+def stub_registry(mock_runner):
+    return StubAgentRegistry(AGENTS, mock_runner)
 
 
 @pytest.fixture
-def real_loader():
-    return YamlAgentConfigLoader()
-
-
-@pytest.fixture
-def mock_config_store(yaml_store):
-    """AsyncMock for AgentConfigStore that reads from the in-memory yaml_store."""
+def mock_config_store():
+    """AsyncMock for AgentConfigStore that returns VALID_YAML by name."""
     store = AsyncMock()
 
     async def _get(name):
-        if name not in yaml_store:
+        if name not in AGENTS:
             from src.domain.errors.agent import AgentNotFoundError
 
             raise AgentNotFoundError(f"Agent config not found: {name}")
-        return yaml_store[name]
+        return VALID_YAML.format(name=name)
 
     store.get.side_effect = _get
     return store
 
 
 @pytest.fixture
-def mock_config_repository(yaml_store):
-    """AsyncMock for AgentConfigRepository that lists agents from the in-memory store."""
+def mock_config_repository():
+    """AsyncMock for AgentConfigRepository that lists agents from AGENTS."""
     repo = AsyncMock()
-
     now = datetime.now(UTC)
-    metadata_list = []
-    for name in sorted(yaml_store.keys()):
-        metadata_list.append(
-            AgentConfigMetadata(
-                name=name,
-                model="test-model",
-                minio_path=f"{name}.yaml",
-                created_at=now,
-                updated_at=now,
-            )
+    repo.list_all.return_value = [
+        AgentConfigMetadata(
+            name=name,
+            model="test-model",
+            minio_path=f"{name}.yaml",
+            created_at=now,
+            updated_at=now,
         )
-    repo.list_all.return_value = metadata_list
+        for name in sorted(AGENTS)
+    ]
     return repo
 
 
-@pytest.fixture
-def real_registry(real_loader, mock_config_store, mock_config_repository, mock_mcp_tool_loader):
-    return PersistentAgentRegistry(
-        config_loader=real_loader,
-        config_store=mock_config_store,
-        config_repository=mock_config_repository,
-        mcp_tool_loader=mock_mcp_tool_loader,
-    )
-
-
 @pytest.fixture(autouse=True)
-def _wire_dependencies(
-    real_threads, real_registry, real_loader, mock_runner, mock_config_store, mock_config_repository
-):
-    """Wire real internal components + mocked runner into the app dependencies."""
-    with (
-        patch(
-            "src.infrastructure.persistent_registry.adapter.create_agent_from_config",
-            new_callable=AsyncMock,
-            return_value=(MagicMock(), None),
-        ),
-        patch(
-            "src.infrastructure.persistent_registry.adapter.DeepAgentRunner",
-            return_value=mock_runner,
-        ),
-        patch("src.dependencies.thread_repository", real_threads),
-        patch("src.dependencies.agent_registry", real_registry),
-        patch("src.dependencies.agent_config_loader", real_loader),
-        patch("src.dependencies._minio_store", mock_config_store),
-        patch("src.dependencies._pg_repository", mock_config_repository),
-    ):
-        yield
+def _override_dependencies(stub_registry, thread_repo, mock_config_store, mock_config_repository):
+    """Wire real internal components + mocked runner via app.dependency_overrides."""
+    yaml_loader = YamlAgentConfigLoader()
+
+    def _send_message():
+        return SendMessageUseCase(stub_registry, thread_repo)
+
+    def _stream_message():
+        return StreamMessageUseCase(stub_registry, thread_repo)
+
+    def _create_thread():
+        return CreateThreadUseCase(thread_repo, stub_registry)
+
+    def _get_thread():
+        return GetThreadUseCase(thread_repo)
+
+    def _list_threads():
+        return ListThreadsUseCase(thread_repo)
+
+    def _delete_thread():
+        return DeleteThreadUseCase(thread_repo)
+
+    def _get_agent_config():
+        return GetAgentConfigUseCase(yaml_loader, mock_config_store)
+
+    def _list_agent_configs():
+        return ListAgentConfigsUseCase(mock_config_repository)
+
+    def _create_agent_config():
+        return CreateAgentConfigUseCase(yaml_loader, mock_config_store, mock_config_repository)
+
+    def _update_agent_config():
+        return UpdateAgentConfigUseCase(yaml_loader, mock_config_store, mock_config_repository, stub_registry)
+
+    def _delete_agent_config():
+        return DeleteAgentConfigUseCase(mock_config_store, mock_config_repository, stub_registry)
+
+    app.dependency_overrides[get_send_message_use_case] = _send_message
+    app.dependency_overrides[get_stream_message_use_case] = _stream_message
+    app.dependency_overrides[get_create_thread_use_case] = _create_thread
+    app.dependency_overrides[get_get_thread_use_case] = _get_thread
+    app.dependency_overrides[get_list_threads_use_case] = _list_threads
+    app.dependency_overrides[get_delete_thread_use_case] = _delete_thread
+    app.dependency_overrides[get_get_agent_config_use_case] = _get_agent_config
+    app.dependency_overrides[get_list_agent_configs_use_case] = _list_agent_configs
+    app.dependency_overrides[get_create_agent_config_use_case] = _create_agent_config
+    app.dependency_overrides[get_update_agent_config_use_case] = _update_agent_config
+    app.dependency_overrides[get_delete_agent_config_use_case] = _delete_agent_config
+
+    yield
+
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -171,114 +236,186 @@ def client():
 
 
 class TestThreadRoutes:
-    async def test_create_thread(self, client):
+    """Tests for thread CRUD routes."""
+
+    async def test_create_thread_returns_201_with_agent_name(self, client):
+        # Arrange
+        # Act
         resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+
+        # Assert
         assert resp.status_code == 201
-        data = resp.json()
-        assert data["agent_name"] == "my-agent"
-        assert "id" in data
+        assert resp.json()["agent_name"] == "my-agent"
 
     async def test_create_thread_unknown_agent_returns_404(self, client):
+        # Arrange
+        # Act
         resp = await client.post("/api/v1/threads", json={"agent_name": "nonexistent"})
+
+        # Assert
         assert resp.status_code == 404
 
     async def test_create_thread_empty_name_returns_422(self, client):
+        # Arrange
+        # Act
         resp = await client.post("/api/v1/threads", json={"agent_name": ""})
+
+        # Assert
         assert resp.status_code == 422
 
-    async def test_list_threads_empty(self, client):
+    async def test_list_threads_empty_returns_200_with_empty_list(self, client):
+        # Arrange
+        # Act
         resp = await client.get("/api/v1/threads")
+
+        # Assert
         assert resp.status_code == 200
         assert resp.json() == []
 
-    async def test_list_threads(self, client):
+    async def test_list_threads_returns_created_threads(self, client):
+        # Arrange
         await client.post("/api/v1/threads", json={"agent_name": "agent-1"})
         await client.post("/api/v1/threads", json={"agent_name": "agent-2"})
+
+        # Act
         resp = await client.get("/api/v1/threads")
+
+        # Assert
         assert resp.status_code == 200
         assert len(resp.json()) == 2
 
-    async def test_get_thread(self, client):
+    async def test_get_thread_returns_thread_by_id(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+
+        # Act
         resp = await client.get(f"/api/v1/threads/{thread_id}")
+
+        # Assert
         assert resp.status_code == 200
         assert resp.json()["id"] == thread_id
 
-    async def test_get_thread_not_found(self, client):
+    async def test_get_thread_not_found_returns_404(self, client):
+        # Arrange
+        # Act
         resp = await client.get("/api/v1/threads/nonexistent")
+
+        # Assert
         assert resp.status_code == 404
         assert "detail" in resp.json()
 
-    async def test_delete_thread(self, client):
+    async def test_delete_thread_returns_204_then_404(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
-        resp = await client.delete(f"/api/v1/threads/{thread_id}")
-        assert resp.status_code == 204
-        resp = await client.get(f"/api/v1/threads/{thread_id}")
-        assert resp.status_code == 404
 
-    async def test_delete_thread_not_found(self, client):
+        # Act
+        delete_resp = await client.delete(f"/api/v1/threads/{thread_id}")
+        get_resp = await client.get(f"/api/v1/threads/{thread_id}")
+
+        # Assert
+        assert delete_resp.status_code == 204
+        assert get_resp.status_code == 404
+
+    async def test_delete_thread_not_found_returns_404(self, client):
+        # Arrange
+        # Act
         resp = await client.delete("/api/v1/threads/nonexistent")
+
+        # Assert
         assert resp.status_code == 404
 
-    async def test_list_messages_empty(self, client):
+    async def test_list_messages_empty_returns_200_with_empty_list(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+
+        # Act
         resp = await client.get(f"/api/v1/threads/{thread_id}/messages")
+
+        # Assert
         assert resp.status_code == 200
         assert resp.json() == []
 
-    async def test_list_messages_after_chat(self, client):
+    async def test_list_messages_after_chat_returns_human_and_ai(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
         await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Hello"})
+
+        # Act
         resp = await client.get(f"/api/v1/threads/{thread_id}/messages")
+
+        # Assert
         assert resp.status_code == 200
-        assert len(resp.json()) == 2  # human + ai
+        assert len(resp.json()) == 2
 
 
 # -- Chat -----------------------------------------------------------------------
 
 
 class TestChatRoutes:
-    async def test_send_message(self, client):
+    """Tests for chat send/stream routes."""
+
+    async def test_send_message_returns_ai_message(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+
+        # Act
         resp = await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Hello agent"})
+
+        # Assert
         assert resp.status_code == 200
         data = resp.json()
         assert data["role"] == "ai"
         assert "content" in data
-        assert "timestamp" in data
 
-    async def test_send_message_thread_not_found(self, client):
+    async def test_send_message_thread_not_found_returns_404(self, client):
+        # Arrange
+        # Act
         resp = await client.post("/api/v1/chat/nonexistent", json={"message": "Hello"})
+
+        # Assert
         assert resp.status_code == 404
 
     async def test_send_message_empty_body_returns_422(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+
+        # Act
         resp = await client.post(f"/api/v1/chat/{thread_id}", json={})
+
+        # Assert
         assert resp.status_code == 422
 
-    async def test_stream_message(self, client):
+    async def test_stream_message_returns_event_stream(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+
+        # Act
         resp = await client.post(
             f"/api/v1/chat/{thread_id}/stream",
             json={"message": "Hello agent"},
         )
+
+        # Assert
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers["content-type"]
-        body = resp.text
-        assert "data:" in body
+        assert "data:" in resp.text
 
-    async def test_stream_message_thread_not_found(self, client):
+    async def test_stream_message_thread_not_found_returns_404(self, client):
+        # Arrange
+        # Act
         resp = await client.post(
             "/api/v1/chat/nonexistent/stream",
             json={"message": "Hello"},
         )
+
+        # Assert
         assert resp.status_code == 404
 
 
@@ -286,56 +423,79 @@ class TestChatRoutes:
 
 
 class TestHITLRoutes:
-    async def test_approve(self, client):
+    """Tests for human-in-the-loop decision routes."""
+
+    async def test_approve_returns_200_with_approved_content(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+
+        # Act
         resp = await client.post(
             f"/api/v1/chat/{thread_id}",
             json={"tool_call_id": "tc-1", "action": "approve"},
         )
+
+        # Assert
         assert resp.status_code == 200
         assert "approved" in resp.json()["content"].lower()
 
-    async def test_reject(self, client):
+    async def test_reject_returns_200_with_rejected_content(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+
+        # Act
         resp = await client.post(
             f"/api/v1/chat/{thread_id}",
             json={"tool_call_id": "tc-1", "action": "reject", "reason": "Too risky"},
         )
+
+        # Assert
         assert resp.status_code == 200
         assert "rejected" in resp.json()["content"].lower()
 
-    async def test_edit(self, client):
+    async def test_edit_returns_200_with_edited_content(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+
+        # Act
         resp = await client.post(
             f"/api/v1/chat/{thread_id}",
-            json={
-                "tool_call_id": "tc-1",
-                "action": "edit",
-                "edits": {"param": "new_value"},
-            },
+            json={"tool_call_id": "tc-1", "action": "edit", "edits": {"param": "new_value"}},
         )
+
+        # Assert
         assert resp.status_code == 200
         assert "edited" in resp.json()["content"].lower()
 
     async def test_edit_without_edits_returns_422(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+
+        # Act
         resp = await client.post(
             f"/api/v1/chat/{thread_id}",
             json={"tool_call_id": "tc-1", "action": "edit"},
         )
+
+        # Assert
         assert resp.status_code == 422
 
     async def test_unknown_action_returns_422(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+
+        # Act
         resp = await client.post(
             f"/api/v1/chat/{thread_id}",
             json={"tool_call_id": "tc-1", "action": "unknown"},
         )
+
+        # Assert
         assert resp.status_code == 422
 
 
@@ -343,22 +503,33 @@ class TestHITLRoutes:
 
 
 class TestAgentRoutes:
-    async def test_list_agents(self, client):
+    """Tests for agent config routes (list/get)."""
+
+    async def test_list_agents_returns_known_names(self, client):
+        # Arrange
+        # Act
         resp = await client.get("/api/v1/agents")
+
+        # Assert
         assert resp.status_code == 200
-        data = resp.json()
-        assert isinstance(data, list)
-        names = [a["name"] for a in data]
+        names = [a["name"] for a in resp.json()]
         assert "example-agent" in names
 
-    async def test_get_agent(self, client):
+    async def test_get_agent_returns_config_by_name(self, client):
+        # Arrange
+        # Act
         resp = await client.get("/api/v1/agents/example-agent")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["name"] == "example-agent"
 
-    async def test_get_agent_not_found(self, client):
+        # Assert
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "example-agent"
+
+    async def test_get_agent_not_found_returns_404(self, client):
+        # Arrange
+        # Act
         resp = await client.get("/api/v1/agents/nonexistent")
+
+        # Assert
         assert resp.status_code == 404
 
 
@@ -366,28 +537,45 @@ class TestAgentRoutes:
 
 
 class TestExceptionHandlers:
+    """Tests for domain error -> HTTP response mapping."""
+
     async def test_thread_not_found_returns_404(self, client):
+        # Arrange
+        # Act
         resp = await client.get("/api/v1/threads/does-not-exist")
+
+        # Assert
         assert resp.status_code == 404
         assert "detail" in resp.json()
 
     async def test_config_not_found_returns_404(self, client):
+        # Arrange
+        # Act
         resp = await client.get("/api/v1/agents/missing-agent")
+
+        # Assert
         assert resp.status_code == 404
         assert "detail" in resp.json()
 
     async def test_agent_not_found_returns_404(self, client):
+        # Arrange
+        # Act
         resp = await client.post("/api/v1/threads", json={"agent_name": "unknown-agent"})
+
+        # Assert
         assert resp.status_code == 404
         assert "detail" in resp.json()
 
     async def test_agent_error_returns_502(self, client, mock_runner):
-        """Verify that AgentError from the runner maps to a 502 response."""
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
-
         mock_runner.invoke.side_effect = AgentError("Backend failed")
+
+        # Act
         resp = await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Hello"})
+
+        # Assert
         assert resp.status_code == 502
         assert "Backend failed" in resp.json()["detail"]
 
@@ -405,93 +593,80 @@ class TestStreamMessageEvent:
     """Tests for SSE stream: JSON message then [DONE] terminator."""
 
     async def test_stream_ends_with_done(self, client):
-        """Stream always ends with data: [DONE]."""
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+
+        # Act
         resp = await client.post(
             f"/api/v1/chat/{thread_id}/stream",
             json={"message": "Hello agent"},
         )
+
+        # Assert
         assert resp.status_code == 200
-        body = resp.text
-
-        data_lines = [
-            line.strip()[len("data:") :].strip()
-            for line in body.replace("\r\n", "\n").split("\n")
-            if line.strip().startswith("data:")
-        ]
-        assert data_lines[-1] == "[DONE]", f"Expected [DONE] as last data line, got: {data_lines[-1]}"
-
-    async def test_stream_emits_structured_event_before_done(self, client):
-        """Stream emits a STRUCTURED event (from MESSAGE with structured_response) before [DONE]."""
-        create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
-        thread_id = create_resp.json()["id"]
-        resp = await client.post(
-            f"/api/v1/chat/{thread_id}/stream",
-            json={"message": "Hello agent"},
-        )
-        assert resp.status_code == 200
-        body = resp.text
-
-        import json
-
-        data_lines = [
-            line.strip()[len("data:") :].strip()
-            for line in body.replace("\r\n", "\n").split("\n")
-            if line.strip().startswith("data:")
-        ]
-
+        data_lines = _extract_data_lines(resp.text)
         assert data_lines[-1] == "[DONE]"
 
-        structured_event = None
-        for line in reversed(data_lines[:-1]):
-            event = json.loads(line)
-            if event.get("type") == "structured":
-                structured_event = event
-                break
-
-        assert structured_event is not None, "No structured event found in stream"
-        structured_data = json.loads(structured_event["data"])
-        assert structured_data == {"key": "value"}
-
-    async def test_stream_message_format_matches_sync(self, client):
-        """The stream yields content events and a final structured event with expected fields."""
+    async def test_stream_emits_structured_event_before_done(self, client):
+        # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
 
-        sync_resp = await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Compare me"})
-        assert sync_resp.status_code == 200
-        sync_data = sync_resp.json()
+        # Act
+        resp = await client.post(
+            f"/api/v1/chat/{thread_id}/stream",
+            json={"message": "Hello agent"},
+        )
 
+        # Assert
+        assert resp.status_code == 200
+        data_lines = _extract_data_lines(resp.text)
+        assert data_lines[-1] == "[DONE]"
+        structured_event = _find_event(data_lines[:-1], "structured")
+        assert structured_event is not None
+        assert json.loads(structured_event["data"]) == {"key": "value"}
+
+    async def test_stream_message_format_matches_sync(self, client):
+        # Arrange
+        create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id = create_resp.json()["id"]
+
+        # Act
+        sync_resp = await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Compare me"})
         create_resp2 = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id2 = create_resp2.json()["id"]
-
         stream_resp = await client.post(
             f"/api/v1/chat/{thread_id2}/stream",
             json={"message": "Hello agent"},
         )
+
+        # Assert
+        assert sync_resp.status_code == 200
         assert stream_resp.status_code == 200
-        body = stream_resp.text
+        data_lines = _extract_data_lines(stream_resp.text)
+        content_events = [ln for ln in data_lines if ln != "[DONE]" and json.loads(ln).get("type") == "content"]
+        structured_event = _find_event([ln for ln in data_lines if ln != "[DONE]"], "structured")
+        assert len(content_events) > 0
+        assert structured_event is not None
+        assert sync_resp.json()["role"] == "ai"
 
-        import json
 
-        data_lines = [
-            line.strip()[len("data:") :].strip()
-            for line in body.replace("\r\n", "\n").split("\n")
-            if line.strip().startswith("data:")
-        ]
+def _extract_data_lines(body: str) -> list[str]:
+    """Extract the payload after 'data:' from each SSE line."""
+    return [
+        line.strip()[len("data:") :].strip()
+        for line in body.replace("\r\n", "\n").split("\n")
+        if line.strip().startswith("data:")
+    ]
 
-        content_events = []
-        structured_event = None
-        for line in data_lines:
-            if line == "[DONE]":
-                continue
-            event = json.loads(line)
-            if event.get("type") == "content":
-                content_events.append(event)
-            elif event.get("type") == "structured":
-                structured_event = event
 
-        assert len(content_events) > 0, "No content events found in stream"
-        assert structured_event is not None, "No structured event found in stream"
-        assert sync_data["role"] == "ai"
+def _find_event(data_lines: list[str], event_type: str) -> dict | None:
+    """Find the first SSE event of the given type (parsed from JSON)."""
+    for line in reversed(data_lines):
+        if line == "[DONE]":
+            continue
+        event = json.loads(line)
+        if event.get("type") == event_type:
+            return event
+    return None

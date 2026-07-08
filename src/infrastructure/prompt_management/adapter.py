@@ -1,8 +1,11 @@
+import asyncio
 import logging
 import os
+import time
+from collections import OrderedDict
+from typing import Any
 
 import httpx
-from cachetools import TTLCache, cached
 from phoenix.client import Client
 from phoenix.client.resources.prompts import PromptVersion as PhoenixPromptVersion
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
@@ -62,6 +65,60 @@ def _wrap_phoenix_error(operation: str, identifier: str, e: Exception) -> Except
     return e
 
 
+def _extract_messages(phoenix_prompt: Any) -> list[dict[str, str]]:
+    """Extract normalized role/content messages from a Phoenix prompt version."""
+    template = getattr(phoenix_prompt, "_template", {})
+    raw_messages = template.get("messages", []) if isinstance(template, dict) else []
+
+    messages: list[dict[str, str]] = []
+    for msg in raw_messages:
+        role = msg.get("role", "")
+        raw_content = msg.get("content", "")
+        if isinstance(raw_content, list):
+            text = " ".join(
+                block.get("text", "") for block in raw_content
+                if isinstance(block, dict) and block.get("type") == "text"
+            )
+        else:
+            text = str(raw_content)
+        messages.append({"role": role, "content": text})
+    return messages
+
+
+class _AsyncTTLCache:
+    """Simple manual async cache with TTL and maxsize, guarded by an asyncio.Lock.
+
+    Replaces cachetools.TTLCache + @cached for async functions, without adding
+    the async_lru dependency.
+    """
+
+    def __init__(self, maxsize: int = 10, ttl: float = 300) -> None:
+        self._maxsize = maxsize
+        self._ttl = ttl
+        self._store: OrderedDict[tuple, tuple[Any, float]] = OrderedDict()
+        self._lock = asyncio.Lock()
+
+    async def get(self, key: tuple) -> Any:
+        async with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                return None
+            value, expires_at = entry
+            if time.monotonic() > expires_at:
+                self._store.pop(key, None)
+                return None
+            # Refresh LRU ordering.
+            self._store.move_to_end(key)
+            return value
+
+    async def set(self, key: tuple, value: Any) -> None:
+        async with self._lock:
+            self._store[key] = (value, time.monotonic() + self._ttl)
+            self._store.move_to_end(key)
+            while len(self._store) > self._maxsize:
+                self._store.popitem(last=False)
+
+
 class PhoenixPromptManagerProvider(PromptManager):
     """Phoenix implementation of PromptManager port."""
 
@@ -70,10 +127,11 @@ class PhoenixPromptManagerProvider(PromptManager):
         base_url: str | None = None,
         api_key: str | None = None,
         timeout: float = 10.0,  # configurable timeout
-    ):
+    ) -> None:
         base_url = base_url or os.getenv("PHOENIX_COLLECTOR_ENDPOINT", "http://localhost:6006")
         api_key = api_key or os.getenv("PHOENIX_API_KEY")
         self._timeout = timeout
+        self._content_cache = _AsyncTTLCache(maxsize=10, ttl=300)
         try:
             self._client = Client(
                 base_url=base_url,
@@ -108,23 +166,40 @@ class PhoenixPromptManagerProvider(PromptManager):
                 raise PromptNotFoundError(ErrorMessage.PROMPT_NOT_FOUND.format(identifier=identifier))
 
             tags = self._client.prompts.tags.list(prompt_version_id=prompt_obj.id) if prompt_obj and prompt_obj.id else []
-            logger.info(LogMessage.PROMPT_RETRIEVED, identifier, version_id, [t["name"] for t in tags])
+            tag_names = [t["name"] for t in tags]
+            logger.info(LogMessage.PROMPT_RETRIEVED, identifier, version_id, tag_names)
 
-            return self._to_domain_prompt(prompt_obj, identifier=identifier, description=prompt_obj._description, tags=[t["name"] for t in tags])
+            messages = _extract_messages(prompt_obj)
+            return Prompt(
+                identifier=identifier,
+                description=getattr(prompt_obj, "_description", None),
+                current_version=PromptVersion(
+                    version_id=prompt_obj.id or "v1",
+                    content=messages,
+                    model_name=getattr(prompt_obj, "_model_name", ""),
+                    tags=tag_names,
+                ),
+                created_at=None,
+                updated_at=None,
+            )
         except _PROPAGATED_ERRORS:
             raise
         except Exception as e:
             logger.exception(LogMessage.PROMPT_GET_ERROR, identifier)
             raise _wrap_phoenix_error("get_prompt", identifier, e) from e
 
-    @cached(cache=TTLCache(maxsize=10, ttl=300))
     @_phoenix_retry
     async def get_prompt_content(
         self,
         identifier: str,
         version_id: str | None = None,
         tag: str | None = None,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
+        cache_key = (identifier, version_id, tag)
+        cached = await self._content_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         if not self._client:
             raise PromptManagerUnavailableError(ErrorMessage.PROMPT_MANAGER_NOT_INITIALIZED)
         try:
@@ -137,9 +212,10 @@ class PhoenixPromptManagerProvider(PromptManager):
             tags = self._client.prompts.tags.list(prompt_version_id=prompt_obj.id) if prompt_obj and prompt_obj.id else []
             logger.info(LogMessage.PROMPT_RETRIEVED, identifier, version_id, [t["name"] for t in tags])
 
-            domain = self._to_domain_prompt(prompt_obj, identifier=identifier, tags=[t["name"] for t in tags])
-            messages = domain.current_version.content
-            return messages[0] if messages else {}
+            messages = _extract_messages(prompt_obj)
+            content = messages[0] if messages else {}
+            await self._content_cache.set(cache_key, content)
+            return content
         except _PROPAGATED_ERRORS:
             raise
         except Exception as e:
@@ -155,7 +231,7 @@ class PhoenixPromptManagerProvider(PromptManager):
         description: str | None = None,
         tags: list[str] | None = None,
         metadata: dict | None = None,
-    ) -> PhoenixPromptVersion:
+    ) -> PromptVersion:
         if not self._client:
             raise PromptManagerUnavailableError(ErrorMessage.PROMPT_MANAGER_NOT_INITIALIZED)
         try:
@@ -176,7 +252,13 @@ class PhoenixPromptManagerProvider(PromptManager):
                         logger.warning(LogMessage.PROMPT_TAG_ADD_FAILED, tag, identifier, tag_error)
 
             logger.info(LogMessage.PROMPT_VERSION_CREATED, identifier)
-            return prompt_obj
+            return PromptVersion(
+                version_id=prompt_obj.id,
+                content=content,
+                model_name=model_name,
+                tags=tags or [],
+                created_at=None,
+            )
         except _PROPAGATED_ERRORS:
             raise
         except Exception as e:
@@ -191,7 +273,7 @@ class PhoenixPromptManagerProvider(PromptManager):
         model_name: str | None = None,
         description: str | None = None,
         metadata: dict | None = None,
-    ) -> PhoenixPromptVersion:
+    ) -> PromptVersion:
         if not self._client:
             raise PromptManagerUnavailableError(ErrorMessage.PROMPT_MANAGER_NOT_INITIALIZED)
         if description is not None:
@@ -205,10 +287,16 @@ class PhoenixPromptManagerProvider(PromptManager):
                 name=identifier,
                 version=PhoenixPromptVersion(content, model_name=model_name),
                 prompt_description=description or current.description,
-                prompt_metadata=metadata or current.metadata,
+                prompt_metadata=metadata,
             )
             logger.info(LogMessage.PROMPT_VERSION_UPDATED, identifier)
-            return updated
+            return PromptVersion(
+                version_id=updated.id,
+                content=content or [],
+                model_name=model_name or "",
+                tags=[],
+                created_at=None,
+            )
         except _PROPAGATED_ERRORS:
             raise
         except Exception as e:
@@ -229,39 +317,3 @@ class PhoenixPromptManagerProvider(PromptManager):
         except Exception as e:
             logger.exception(LogMessage.PROMPT_TAG_ADD_ERROR, tag, identifier)
             raise _wrap_phoenix_error("add_tag", identifier, e) from e
-
-    def _to_domain_prompt(
-        self,
-        phoenix_prompt,
-        identifier: str | None = None,
-        description: str | None = None,
-        tags: list[str] | None = None,
-    ) -> Prompt:
-        template = getattr(phoenix_prompt, "_template", {})
-        raw_messages = template.get("messages", []) if isinstance(template, dict) else []
-
-        messages = []
-        for msg in raw_messages:
-            role = msg.get("role", "")
-            raw_content = msg.get("content", "")
-            if isinstance(raw_content, list):
-                text = " ".join(
-                    block.get("text", "") for block in raw_content
-                    if isinstance(block, dict) and block.get("type") == "text"
-                )
-            else:
-                text = str(raw_content)
-            messages.append({"role": role, "content": text})
-
-        return Prompt(
-            identifier=identifier or "",
-            description=description or getattr(phoenix_prompt, "_description", None),
-            current_version=PromptVersion(
-                version_id=phoenix_prompt.id or "v1",
-                content=messages,
-                model_name=getattr(phoenix_prompt, "_model_name", ""),
-                tags=tags or [],
-            ),
-            created_at=None,
-            updated_at=None,
-        )

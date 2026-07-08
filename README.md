@@ -276,7 +276,7 @@ All endpoints are prefixed appropriately. The server runs on `http://localhost:8
 | `GET` | `/api/v1/agents` | List all agent configs from `agents/` directory | `200` |
 | `GET` | `/api/v1/agents/{agent_name}` | Get a specific agent configuration | `200` |
 | `WS` | `/api/v1/ws/{thread_id}` | WebSocket endpoint for streaming chat | -- |
-| `POST` | `/prompts/create` | Create a new prompt | `200` |
+| `POST` | `/prompts/create` | Create a new prompt | `201` |
 | `GET` | `/prompts/get/{identifier}` | Get a specific prompt by identifier, version, or tag | `200` |
 | `PUT` | `/prompts/update/{identifier}` | Update an existing prompt (creates new version) | `200` |
 
@@ -774,10 +774,11 @@ Prompt management follows the **Clean Architecture** pattern:
 
 - **Domain Entity** (`src/domain/entities/prompt.py`): `Prompt`, `PromptVersion`
 - **Domain Port** (`src/domain/ports/prompt_manager.py`): `PromptManager` interface
-- **Use Cases** (`src/application/use_cases/`): `CreatePromptUseCase`, `GetPromptUseCase`, `SearchPromptsUseCase`, `UpdatePromptUseCase`
+- **Use Cases** (`src/application/use_cases/`): `CreatePromptUseCase`, `GetPromptUseCase`, `GetPromptContentUseCase`, `UpdatePromptUseCase`
 - **Request DTOs** (`src/application/requests/prompt.py`): Request models for each endpoint
-- **Routes** (`src/application/routes/prompts.py`): FastAPI endpoint handlers
-- **Infrastructure Adapter** (`src/infrastructure/tracing/phoenix_prompt_manager.py`): Phoenix REST API implementation
+- **Response DTOs** (`src/application/responses/prompt.py`): `PromptResponse`, `PromptVersionResponse`
+- **Routes** (`src/application/routes/prompt.py`): FastAPI endpoint handlers
+- **Infrastructure Adapter** (`src/infrastructure/prompt_management/adapter.py`): Phoenix REST API implementation
 
 All prompt management operations are async and fully integrated with the FastAPI dependency injection system.
 

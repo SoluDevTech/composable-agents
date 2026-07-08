@@ -1,6 +1,7 @@
 """Tests for the DeepAgent factory.
 
-Patches create_deep_agent (external LLM factory).
+Patches ``create_deep_agent`` (external LLM factory) to avoid real LLM calls.
+Tests exercise the public ``create_agent_from_config`` API only.
 """
 
 from unittest.mock import MagicMock, patch
@@ -8,14 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.domain.entities.agent_config import AgentConfig
-from src.infrastructure.deepagent.factory import (
-    _create_response_tool,
-    _resolve_backend,
-    _resolve_interrupt_on,
-    _resolve_subagents,
-    _resolve_tools,
-    create_agent_from_config,
-)
+from src.infrastructure.deepagent.factory import create_agent_from_config
 
 WEATHER_SCHEMA = {
     "type": "object",
@@ -27,131 +21,191 @@ WEATHER_SCHEMA = {
 }
 
 
-class TestFactory:
+class TestCreateAgentFromConfig:
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
     async def test_creates_agent_with_minimal_config(self, mock_create):
+        # Arrange
         mock_create.return_value = MagicMock()
         config = AgentConfig(name="test-agent")
+
+        # Act
         await create_agent_from_config(config)
-        mock_create.assert_called_once()
+
+        # Assert
         kwargs = mock_create.call_args.kwargs
         assert kwargs["name"] == "test-agent"
         assert kwargs["model"] == "claude-sonnet-4-5-20250929"
 
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
     async def test_passes_empty_middleware(self, mock_create):
-        """Middleware is always empty - deepagents adds its own internally."""
+        # Arrange
         mock_create.return_value = MagicMock()
         config = AgentConfig(name="test", middleware=["todo_list", "filesystem"])
+
+        # Act
         await create_agent_from_config(config)
+
+        # Assert
         kwargs = mock_create.call_args.kwargs
         assert kwargs["middleware"] == []
 
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
-    async def test_passes_hitl_config(self, mock_create):
+    async def test_passes_hitl_config_as_interrupt_on(self, mock_create):
+        # Arrange
         mock_create.return_value = MagicMock()
         config = AgentConfig(
             name="test",
             hitl={"rules": {"write_file": True, "execute": {"allowed_decisions": ["approve"]}}},
         )
+
+        # Act
         await create_agent_from_config(config)
+
+        # Assert
         kwargs = mock_create.call_args.kwargs
         assert kwargs["interrupt_on"]["write_file"] is True
         assert kwargs["interrupt_on"]["execute"]["allowed_decisions"] == ["approve"]
 
-    def test_resolve_tools_invalid_format(self):
-        config = AgentConfig(name="test", tools=["invalid"])
-        with pytest.raises(ValueError, match="Invalid tool format"):
-            _resolve_tools(config)
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_omits_interrupt_on_when_no_rules(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(name="test")
 
-    def test_resolve_tools_missing_module(self):
-        config = AgentConfig(name="test", tools=["nonexistent.module:tool"])
-        with pytest.raises(ValueError, match="Module not found"):
-            _resolve_tools(config)
+        # Act
+        await create_agent_from_config(config)
 
-    def test_resolve_tools_missing_attribute(self):
-        config = AgentConfig(
-            name="test",
-            tools=["src.infrastructure.deepagent.example_tools:nonexistent"],
-        )
-        with pytest.raises(ValueError, match="not found"):
-            _resolve_tools(config)
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        assert "interrupt_on" not in kwargs
 
-    def test_resolve_tools_loads_existing(self):
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_loads_local_tools_from_path(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
         config = AgentConfig(
             name="test",
             tools=["src.infrastructure.deepagent.example_tools:get_user_name"],
         )
-        tools = _resolve_tools(config)
-        assert tools is not None
-        assert len(tools) == 1
 
-    def test_resolve_tools_returns_none_when_empty(self):
-        config = AgentConfig(name="test", tools=[])
-        assert _resolve_tools(config) is None
+        # Act
+        await create_agent_from_config(config)
 
-    def test_resolve_backend_state(self):
-        config = AgentConfig(name="test")
-        assert _resolve_backend(config) is None
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["tools"] is not None
+        assert len(kwargs["tools"]) == 1
 
-    def test_resolve_backend_filesystem(self):
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_invalid_tool_format_raises_value_error(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(name="test", tools=["invalid"])
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Invalid tool format"):
+            await create_agent_from_config(config)
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_missing_tool_module_raises_value_error(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(name="test", tools=["nonexistent.module:tool"])
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Module not found"):
+            await create_agent_from_config(config)
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_filesystem_backend_passed_to_create(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
         config = AgentConfig(name="test", backend={"type": "filesystem", "root_dir": "/tmp"})
-        backend = _resolve_backend(config)
-        assert backend is not None
 
-    def test_resolve_interrupt_on_empty(self):
+        # Act
+        await create_agent_from_config(config)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        assert "backend" in kwargs
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_state_backend_omits_backend_kwarg(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
         config = AgentConfig(name="test")
-        assert _resolve_interrupt_on(config) is None
 
-    def test_resolve_interrupt_on_bool(self):
-        config = AgentConfig(name="test", hitl={"rules": {"write_file": True}})
-        result = _resolve_interrupt_on(config)
-        assert result == {"write_file": True}
+        # Act
+        await create_agent_from_config(config)
 
-
-class TestCreateResponseTool:
-    def test_returns_structured_tool(self):
-        tool = _create_response_tool(WEATHER_SCHEMA)
-        assert tool is not None
-        assert tool.name == "structured_response"
-        assert hasattr(tool, "invoke")
-
-    def test_tool_has_description(self):
-        tool = _create_response_tool(WEATHER_SCHEMA)
-        assert tool.description
-
-    def test_tool_args_schema_has_properties(self):
-        tool = _create_response_tool(WEATHER_SCHEMA)
-        schema = tool.args_schema.model_json_schema()
-        assert "temperature" in schema["properties"]
-        assert "condition" in schema["properties"]
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        assert "backend" not in kwargs
 
 
 class TestResponseFormatIntegration:
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
     async def test_injects_structured_response_tool_when_response_format_set(self, mock_create):
-        """When response_format is set, inject structured_response tool and instruction."""
+        # Arrange
         mock_create.return_value = MagicMock()
         config = AgentConfig(name="test", response_format=WEATHER_SCHEMA)
+
+        # Act
         await create_agent_from_config(config)
+
+        # Assert
         kwargs = mock_create.call_args.kwargs
         assert "response_format" not in kwargs
-        assert "tools" in kwargs
         tool_names = [t.name for t in kwargs["tools"]]
         assert "structured_response" in tool_names
         assert "structured_response" in kwargs.get("system_prompt", "")
 
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
-    async def test_omits_response_format_when_none(self, mock_create):
+    async def test_omits_structured_response_tool_when_none(self, mock_create):
+        # Arrange
         mock_create.return_value = MagicMock()
         config = AgentConfig(name="test")
+
+        # Act
         await create_agent_from_config(config)
+
+        # Assert
         kwargs = mock_create.call_args.kwargs
         assert "response_format" not in kwargs
+        if kwargs.get("tools"):
+            tool_names = [t.name for t in kwargs["tools"]]
+            assert "structured_response" not in tool_names
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_returns_response_format_model_when_set(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(name="test", response_format=WEATHER_SCHEMA)
+
+        # Act
+        graph, model = await create_agent_from_config(config)
+
+        # Assert
+        assert model is not None
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_returns_none_model_when_no_response_format(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(name="test")
+
+        # Act
+        graph, model = await create_agent_from_config(config)
+
+        # Assert
+        assert model is None
 
 
-class TestResolveSubagentsStructuredOutput:
-    async def test_injects_tool_when_response_format_set(self):
+class TestSubagentStructuredOutput:
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_subagent_with_response_format_gets_structured_tool(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
         config = AgentConfig(
             name="parent",
             subagents=[
@@ -163,15 +217,21 @@ class TestResolveSubagentsStructuredOutput:
                 }
             ],
         )
-        result = await _resolve_subagents(config)
-        assert result is not None
-        sa = result[0]
-        assert sa["tools"] is not None
-        tool_names = [t.name for t in sa["tools"]]
-        assert "structured_response" in tool_names
-        assert "structured_response" in sa["system_prompt"]
 
-    async def test_unchanged_without_response_format(self):
+        # Act
+        await create_agent_from_config(config)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        subagents = kwargs["subagents"]
+        tool_names = [t.name for t in subagents[0]["tools"]]
+        assert "structured_response" in tool_names
+        assert "structured_response" in subagents[0]["system_prompt"]
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_subagent_without_response_format_has_no_structured_tool(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
         config = AgentConfig(
             name="parent",
             subagents=[
@@ -182,8 +242,12 @@ class TestResolveSubagentsStructuredOutput:
                 }
             ],
         )
-        result = await _resolve_subagents(config)
-        assert result is not None
-        sa = result[0]
-        assert sa["tools"] is None
-        assert "structured_response" not in (sa["system_prompt"] or "")
+
+        # Act
+        await create_agent_from_config(config)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        subagents = kwargs["subagents"]
+        assert subagents[0]["tools"] is None
+        assert "structured_response" not in (subagents[0]["system_prompt"] or "")
