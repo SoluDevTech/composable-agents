@@ -1,16 +1,16 @@
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-class MessageRole(str, Enum):
-    system = "system"
-    user = "user"
-    assistant = "assistant"
+class PromptMessageRole(StrEnum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
 
 
 class PromptMessage(BaseModel):
-    role: MessageRole
+    role: PromptMessageRole
     content: str = Field(..., min_length=1)
 
 
@@ -25,7 +25,7 @@ class CreatePromptRequest(BaseModel):
     @model_validator(mode="after")
     def validate_content_roles(self) -> "CreatePromptRequest":
         roles = [msg.role for msg in self.content]
-        if MessageRole.user not in roles and MessageRole.system not in roles:
+        if PromptMessageRole.USER not in roles and PromptMessageRole.SYSTEM not in roles:
             raise ValueError("content must contain at least one 'user' or 'system' message")
         return self
 

@@ -1,10 +1,12 @@
 import asyncio
+import contextlib
 import json
 import logging
 import re
 import time
 from collections.abc import AsyncIterator
 
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from pydantic import BaseModel
 
@@ -22,7 +24,7 @@ logger = logging.getLogger(__name__)
 class DeepAgentRunner(AgentRunner):
     def __init__(
         self,
-        graph,
+        graph: CompiledStateGraph,
         tracing_provider: TracingProvider | None = None,
         response_format_model: type[BaseModel] | None = None,
         stream_idle_timeout: float = 120.0,
@@ -260,7 +262,10 @@ class DeepAgentRunner(AgentRunner):
         finally:
             aclose = getattr(stream_iter, "aclose", None)
             if aclose is not None:
-                await aclose()
+                # Generator may already be running (e.g. consumer closed us
+                # mid-yield); let Python GC handle the underlying iterator.
+                with contextlib.suppress(RuntimeError):
+                    await aclose()
         stats["chunk_count"] = chunk_count
         stats["elapsed"] = time.monotonic() - start
 

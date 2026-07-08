@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class CreatePromptUseCase:
     """Create a new prompt in the registry."""
 
-    def __init__(self, prompt_manager: PromptManager):
+    def __init__(self, prompt_manager: PromptManager) -> None:
         self._prompt_manager = prompt_manager
 
     async def execute(

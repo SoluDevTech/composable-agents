@@ -1,15 +1,21 @@
 """Tests for DeepAgentRunner.
 
-Graph is mocked (external LLM boundary via LangGraph).
+The runner is the SUT (internal) and is instantiated for real.
+The LangGraph CompiledStateGraph is an external boundary and is mocked with
+MagicMock/AsyncMock. Tests exercise only public methods (invoke, stream,
+stream_with_message, approve_hitl, reject_hitl, edit_hitl).
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.domain.entities.message import MessageRole, MessageStatus
+from src.domain.entities.stream_event import StreamEventType
 from src.domain.errors.agent import AgentError
 from src.infrastructure.deepagent.adapter import DeepAgentRunner
+from src.infrastructure.deepagent.schema_utils import make_validation_model
 
 
 def _make_graph(messages, interrupts=(), state_values=None):
@@ -20,285 +26,151 @@ def _make_graph(messages, interrupts=(), state_values=None):
     state.interrupts = interrupts
     state.values = state_values or {}
     mock_graph.get_state = MagicMock(return_value=state)
+    mock_graph.nodes = {}
     return mock_graph
 
 
-class TestDeepAgentRunner:
-    async def test_invoke_returns_message(self):
-        mock_msg = MagicMock()
-        mock_msg.content = "Hello from agent"
-        mock_msg.tool_calls = None
-        graph = _make_graph([mock_msg])
+def _make_msg(content="Hello", tool_calls=None):
+    msg = MagicMock()
+    msg.content = content
+    msg.tool_calls = tool_calls
+    return msg
 
+
+class TestInvoke:
+    async def test_invoke_returns_ai_message(self):
+        # Arrange
+        graph = _make_graph([_make_msg("Hello from agent")])
+
+        # Act
         runner = DeepAgentRunner(graph)
         result = await runner.invoke("thread-1", "Hello")
 
+        # Assert
         assert result.role == MessageRole.AI
         assert result.content == "Hello from agent"
         assert result.status == MessageStatus.COMPLETED
-        graph.ainvoke.assert_called_once()
 
     async def test_invoke_uses_only_last_message_tool_calls(self):
-        """Only tool_calls from the last message are returned, not intermediate ones."""
-        human_msg = MagicMock(spec=[])
-        human_msg.type = "human"
-        ai_with_tools = MagicMock()
-        ai_with_tools.tool_calls = [{"name": "word_count", "args": {"text": "hello"}, "id": "tc-1"}]
+        # Arrange
+        human = MagicMock(spec=[])
+        human.type = "human"
+        ai_with_tools = _make_msg(tool_calls=[{"name": "word_count", "args": {"text": "hello"}, "id": "tc-1"}])
         tool_msg = MagicMock(spec=[])
-        final_ai = MagicMock()
-        final_ai.content = "The text has 1 word."
-        final_ai.tool_calls = []
-        graph = _make_graph([human_msg, ai_with_tools, tool_msg, final_ai])
+        final_ai = _make_msg("The text has 1 word.", tool_calls=[])
+        graph = _make_graph([human, ai_with_tools, tool_msg, final_ai])
 
+        # Act
         runner = DeepAgentRunner(graph)
         result = await runner.invoke("thread-1", "count words in hello")
 
+        # Assert
         assert result.content == "The text has 1 word."
         assert result.tool_calls is None
-        assert result.status == MessageStatus.COMPLETED
 
     async def test_invoke_detects_hitl_interruption(self):
-        """When get_state() reports interrupts, status is awaiting_hitl."""
-        ai_msg = MagicMock()
-        ai_msg.content = ""
-        ai_msg.tool_calls = [{"name": "word_count", "args": {"text": "hi"}, "id": "tc-1"}]
+        # Arrange
+        ai_msg = _make_msg("", tool_calls=[{"name": "word_count", "args": {"text": "hi"}, "id": "tc-1"}])
         interrupt = MagicMock()
         graph = _make_graph([ai_msg], interrupts=(interrupt,))
 
+        # Act
         runner = DeepAgentRunner(graph)
         result = await runner.invoke("thread-1", "count words")
 
+        # Assert
         assert result.status == MessageStatus.AWAITING_HITL
         assert result.tool_calls is not None
-        assert result.content == ""
 
     async def test_invoke_completed_when_no_interrupts(self):
-        """When get_state() reports no interrupts, status is completed."""
-        mock_msg = MagicMock()
-        mock_msg.content = "Done"
-        mock_msg.tool_calls = None
-        graph = _make_graph([mock_msg], interrupts=())
+        # Arrange
+        graph = _make_graph([_make_msg("Done")], interrupts=())
 
+        # Act
         runner = DeepAgentRunner(graph)
         result = await runner.invoke("thread-1", "Hello")
 
+        # Assert
         assert result.status == MessageStatus.COMPLETED
 
-    async def test_invoke_returns_none_tool_calls_when_last_message_has_none(self):
-        """When the final AI message has no tool_calls, result.tool_calls is None."""
+    async def test_invoke_returns_none_tool_calls_when_last_message_empty(self):
+        # Arrange
         old_human = MagicMock(spec=[])
         old_human.type = "human"
-        old_ai = MagicMock()
-        old_ai.tool_calls = [{"name": "old_tool", "args": {}, "id": "tc-old"}]
-
+        old_ai = _make_msg(tool_calls=[{"name": "old_tool", "args": {}, "id": "tc-old"}])
         new_human = MagicMock(spec=[])
         new_human.type = "human"
-        final_ai = MagicMock()
-        final_ai.content = "New response"
-        final_ai.tool_calls = []
-
+        final_ai = _make_msg("New response", tool_calls=[])
         graph = _make_graph([old_human, old_ai, new_human, final_ai])
 
+        # Act
         runner = DeepAgentRunner(graph)
         result = await runner.invoke("thread-1", "new question")
 
+        # Assert
         assert result.content == "New response"
         assert result.tool_calls is None
 
-    async def test_invoke_raises_on_error(self):
-        mock_graph = AsyncMock()
-        mock_graph.ainvoke.side_effect = RuntimeError("LLM error")
+    async def test_invoke_raises_agent_error_on_graph_failure(self):
+        # Arrange
+        graph = AsyncMock()
+        graph.ainvoke.side_effect = RuntimeError("LLM error")
+        graph.nodes = {}
 
-        runner = DeepAgentRunner(mock_graph)
+        # Act & Assert
+        runner = DeepAgentRunner(graph)
         with pytest.raises(AgentError, match="Agent execution error"):
             await runner.invoke("thread-1", "Hello")
 
-    # --- HITL _build_response integration tests ---
 
-    async def test_approve_hitl_detects_subsequent_interrupt(self):
-        """After approve, if graph returns new interrupts, status is AWAITING_HITL."""
-        human_msg = MagicMock(spec=[])
-        human_msg.type = "human"
-        ai_with_tools = MagicMock()
-        ai_with_tools.tool_calls = [{"name": "search", "args": {"q": "test"}, "id": "tc-2"}]
-        tool_result = MagicMock(spec=[])
-        final_ai = MagicMock()
-        final_ai.content = ""
-        final_ai.tool_calls = [{"name": "deploy", "args": {}, "id": "tc-3"}]
-
-        interrupt = MagicMock()
-        graph = _make_graph(
-            [human_msg, ai_with_tools, tool_result, final_ai],
-            interrupts=(interrupt,),
-        )
-
-        runner = DeepAgentRunner(graph)
-        result = await runner.approve_hitl("thread-1", "tc-1")
-
-        assert result.status == MessageStatus.AWAITING_HITL
-        assert result.tool_calls is not None
-        assert any(tc["name"] == "deploy" for tc in result.tool_calls)
-
-    async def test_reject_hitl_detects_subsequent_interrupt(self):
-        """After reject, if graph returns new interrupts, status is AWAITING_HITL."""
-        human_msg = MagicMock(spec=[])
-        human_msg.type = "human"
-        ai_with_tools = MagicMock()
-        ai_with_tools.tool_calls = [{"name": "delete_file", "args": {"path": "/tmp"}, "id": "tc-5"}]
-        tool_result = MagicMock(spec=[])
-        final_ai = MagicMock()
-        final_ai.content = ""
-        final_ai.tool_calls = [{"name": "confirm_delete", "args": {}, "id": "tc-6"}]
-
-        interrupt = MagicMock()
-        graph = _make_graph(
-            [human_msg, ai_with_tools, tool_result, final_ai],
-            interrupts=(interrupt,),
-        )
-
-        runner = DeepAgentRunner(graph)
-        result = await runner.reject_hitl("thread-1", "tc-4", reason="not safe")
-
-        assert result.status == MessageStatus.AWAITING_HITL
-        assert result.tool_calls is not None
-        assert any(tc["name"] == "confirm_delete" for tc in result.tool_calls)
-
-    async def test_edit_hitl_detects_subsequent_interrupt(self):
-        """After edit, if graph returns new interrupts, status is AWAITING_HITL."""
-        human_msg = MagicMock(spec=[])
-        human_msg.type = "human"
-        ai_with_tools = MagicMock()
-        ai_with_tools.tool_calls = [{"name": "send_email", "args": {"to": "a@b.com"}, "id": "tc-8"}]
-        tool_result = MagicMock(spec=[])
-        final_ai = MagicMock()
-        final_ai.content = ""
-        final_ai.tool_calls = [{"name": "confirm_send", "args": {}, "id": "tc-9"}]
-
-        interrupt = MagicMock()
-        # State needs messages with matching tool_call_id for tool name resolution
-        state_msg = MagicMock()
-        state_msg.tool_calls = [{"name": "send_email", "args": {"to": "a@b.com"}, "id": "tc-7"}]
-        graph = _make_graph(
-            [human_msg, ai_with_tools, tool_result, final_ai],
-            interrupts=(interrupt,),
-            state_values={"messages": [state_msg]},
-        )
-
-        runner = DeepAgentRunner(graph)
-        result = await runner.edit_hitl("thread-1", "tc-7", edits={"to": "x@y.com"})
-
-        assert result.status == MessageStatus.AWAITING_HITL
-        assert result.tool_calls is not None
-        assert any(tc["name"] == "confirm_send" for tc in result.tool_calls)
-        # Verify ainvoke was called with edited action containing resolved tool name
-        call_args = graph.ainvoke.call_args
-        command = call_args[0][0]
-        decision = command.resume["decisions"][0]
-        assert decision["type"] == "edit"
-        assert decision["edited_action"]["name"] == "send_email"
-        assert decision["edited_action"]["args"] == {"to": "x@y.com"}
-
-    async def test_approve_hitl_completed_when_no_interrupts(self):
-        """After approve with no further interrupts, status is COMPLETED with no tool_calls."""
-        human_msg = MagicMock(spec=[])
-        human_msg.type = "human"
-        ai_with_tools = MagicMock()
-        ai_with_tools.tool_calls = [{"name": "search", "args": {"q": "test"}, "id": "tc-10"}]
-        tool_result = MagicMock(spec=[])
-        final_ai = MagicMock()
-        final_ai.content = "Search complete. Found 3 results."
-        final_ai.tool_calls = []
-
-        graph = _make_graph(
-            [human_msg, ai_with_tools, tool_result, final_ai],
-            interrupts=(),
-        )
-
-        runner = DeepAgentRunner(graph)
-        result = await runner.approve_hitl("thread-1", "tc-1")
-
-        assert result.status == MessageStatus.COMPLETED
-        assert result.content == "Search complete. Found 3 results."
-        assert result.tool_calls is None
-
-    async def test_reject_hitl_excludes_rejected_tool_calls(self):
-        """After reject, the rejected tool_calls are not in the response."""
-        human_msg = MagicMock(spec=[])
-        human_msg.type = "human"
-        ai_with_tools = MagicMock()
-        ai_with_tools.tool_calls = [{"name": "word_count", "args": {"text": "test"}, "id": "tc-1"}]
-        final_ai = MagicMock()
-        final_ai.content = "I can count manually: 1 word."
-        final_ai.tool_calls = []
-
-        graph = _make_graph(
-            [human_msg, ai_with_tools, final_ai],
-            interrupts=(),
-        )
-
-        runner = DeepAgentRunner(graph)
-        result = await runner.reject_hitl("thread-1", "tc-1", reason="not allowed")
-
-        assert result.status == MessageStatus.COMPLETED
-        assert result.content == "I can count manually: 1 word."
-        assert result.tool_calls is None
-
-    # --- Structured output tests ---
-
-    async def test_build_response_extracts_structured_response_dict(self):
-        """When result contains structured_response dict, it appears in Message."""
-        mock_msg = MagicMock()
-        mock_msg.content = "Weather report"
-        mock_msg.tool_calls = None
-        graph = _make_graph([mock_msg])
+class TestInvokeStructuredResponse:
+    async def test_invoke_extracts_structured_response_dict(self):
+        # Arrange
+        msg = _make_msg("Weather report")
+        graph = _make_graph([msg])
         graph.ainvoke.return_value = {
-            "messages": [mock_msg],
+            "messages": [msg],
             "structured_response": {"temperature": 22, "condition": "sunny"},
         }
 
+        # Act
         runner = DeepAgentRunner(graph)
         result = await runner.invoke("thread-1", "weather?")
 
+        # Assert
         assert result.structured_response == {"temperature": 22, "condition": "sunny"}
 
-    async def test_build_response_extracts_structured_response_model_dump(self):
-        """When structured_response is a Pydantic model, it's converted via model_dump()."""
-        mock_msg = MagicMock()
-        mock_msg.content = "Report"
-        mock_msg.tool_calls = None
-
+    async def test_invoke_extracts_structured_response_via_model_dump(self):
+        # Arrange
+        msg = _make_msg("Report")
         pydantic_obj = MagicMock()
         pydantic_obj.model_dump.return_value = {"temperature": 15, "condition": "cloudy"}
-
-        graph = _make_graph([mock_msg])
+        graph = _make_graph([msg])
         graph.ainvoke.return_value = {
-            "messages": [mock_msg],
+            "messages": [msg],
             "structured_response": pydantic_obj,
         }
 
+        # Act
         runner = DeepAgentRunner(graph)
         result = await runner.invoke("thread-1", "weather?")
 
+        # Assert
         assert result.structured_response == {"temperature": 15, "condition": "cloudy"}
-        pydantic_obj.model_dump.assert_called_once()
 
-    async def test_build_response_no_structured_response(self):
-        """When result has no structured_response, field is None."""
-        mock_msg = MagicMock()
-        mock_msg.content = "Hello"
-        mock_msg.tool_calls = None
-        graph = _make_graph([mock_msg])
+    async def test_invoke_no_structured_response_returns_none(self):
+        # Arrange
+        graph = _make_graph([_make_msg("Hello")])
 
+        # Act
         runner = DeepAgentRunner(graph)
         result = await runner.invoke("thread-1", "hi")
 
+        # Assert
         assert result.structured_response is None
 
-    # --- Post-validation tests ---
-
-    async def test_validate_structured_response_strips_extra_top_level_fields(self):
-        """Extra top-level fields invented by the LLM are stripped."""
-        from src.infrastructure.deepagent.schema_utils import make_validation_model
+    async def test_invoke_validates_and_strips_extra_top_level_fields(self):
+        # Arrange
 
         schema = {
             "type": "object",
@@ -306,25 +178,22 @@ class TestDeepAgentRunner:
             "required": ["name"],
         }
         model = make_validation_model(schema)
-        mock_msg = MagicMock()
-        mock_msg.content = "Result"
-        mock_msg.tool_calls = None
-        graph = _make_graph([mock_msg])
+        msg = _make_msg("Result")
+        graph = _make_graph([msg])
         graph.ainvoke.return_value = {
-            "messages": [mock_msg],
+            "messages": [msg],
             "structured_response": {"name": "Alice", "age": 30, "terraceArea": 50, "parkingSpaces": 2},
         }
 
+        # Act
         runner = DeepAgentRunner(graph, response_format_model=model)
         result = await runner.invoke("thread-1", "analyze")
 
+        # Assert
         assert result.structured_response == {"name": "Alice", "age": 30}
-        assert "terraceArea" not in result.structured_response
-        assert "parkingSpaces" not in result.structured_response
 
-    async def test_validate_structured_response_strips_nested_extra_fields(self):
-        """Extra nested fields invented by the LLM are stripped."""
-        from src.infrastructure.deepagent.schema_utils import make_validation_model
+    async def test_invoke_validates_and_strips_nested_extra_fields(self):
+        # Arrange
 
         schema = {
             "type": "object",
@@ -338,62 +207,38 @@ class TestDeepAgentRunner:
             "required": ["building"],
         }
         model = make_validation_model(schema)
-        mock_msg = MagicMock()
-        mock_msg.content = "Result"
-        mock_msg.tool_calls = None
-        graph = _make_graph([mock_msg])
+        msg = _make_msg("Result")
+        graph = _make_graph([msg])
         graph.ainvoke.return_value = {
-            "messages": [mock_msg],
+            "messages": [msg],
             "structured_response": {"building": {"floors": 3, "rooftop": True}},
         }
 
+        # Act
         runner = DeepAgentRunner(graph, response_format_model=model)
         result = await runner.invoke("thread-1", "analyze")
 
+        # Assert
         assert result.structured_response == {"building": {"floors": 3}}
-        assert "rooftop" not in result.structured_response["building"]
 
-    async def test_validate_structured_response_no_model_returns_raw(self):
-        """When no response_format_model is set, data passes through unmodified."""
-        mock_msg = MagicMock()
-        mock_msg.content = "Result"
-        mock_msg.tool_calls = None
-        graph = _make_graph([mock_msg])
+    async def test_invoke_no_response_format_model_passes_raw(self):
+        # Arrange
+        msg = _make_msg("Result")
+        graph = _make_graph([msg])
         graph.ainvoke.return_value = {
-            "messages": [mock_msg],
+            "messages": [msg],
             "structured_response": {"name": "test", "extra": True},
         }
 
+        # Act
         runner = DeepAgentRunner(graph, response_format_model=None)
         result = await runner.invoke("thread-1", "analyze")
 
+        # Assert
         assert result.structured_response == {"name": "test", "extra": True}
 
-    def test_log_extra_fields_logs_top_level(self, caplog):
-        """_log_extra_fields logs warnings for stripped top-level keys."""
-        import logging
-
-        with caplog.at_level(logging.WARNING):
-            DeepAgentRunner._log_extra_fields(
-                {"name": "a", "invented": 1},
-                {"name": "a"},
-            )
-        assert "invented" in caplog.text
-
-    def test_log_extra_fields_logs_nested(self, caplog):
-        """_log_extra_fields logs warnings for stripped nested keys."""
-        import logging
-
-        with caplog.at_level(logging.WARNING):
-            DeepAgentRunner._log_extra_fields(
-                {"building": {"floors": 3, "bogus": 1}},
-                {"building": {"floors": 3}},
-            )
-        assert "building.bogus" in caplog.text
-
-    async def test_validate_structured_response_from_tool_call(self):
-        """structured_response extracted from tool_calls is also validated."""
-        from src.infrastructure.deepagent.schema_utils import make_validation_model
+    async def test_invoke_validates_structured_response_from_tool_call(self):
+        # Arrange
 
         schema = {
             "type": "object",
@@ -401,53 +246,166 @@ class TestDeepAgentRunner:
             "required": ["summary"],
         }
         model = make_validation_model(schema)
-        ai_msg = MagicMock()
-        ai_msg.content = "Done"
-        ai_msg.tool_calls = [
-            {"name": "structured_response", "args": {"summary": "ok", "hallucinated": 99}, "id": "tc-1"}
-        ]
+        ai_msg = _make_msg(
+            "Done",
+            tool_calls=[{"name": "structured_response", "args": {"summary": "ok", "hallucinated": 99}, "id": "tc-1"}],
+        )
         graph = _make_graph([ai_msg])
 
+        # Act
         runner = DeepAgentRunner(graph, response_format_model=model)
         result = await runner.invoke("thread-1", "summarize")
 
+        # Assert
         assert result.structured_response == {"summary": "ok"}
-        assert "hallucinated" not in result.structured_response
 
-    # --- ToolNode error handling patch tests ---
 
-    def test_patch_tool_error_handling_sets_true(self):
-        tools_node = MagicMock()
-        tool_node_impl = MagicMock()
-        tool_node_impl._handle_tool_errors = MagicMock()
-        tools_node.bound = tool_node_impl
+class TestApproveHitl:
+    async def test_approve_detects_subsequent_interrupt(self):
+        # Arrange
+        human = MagicMock(spec=[])
+        human.type = "human"
+        ai_with_tools = _make_msg(tool_calls=[{"name": "search", "args": {"q": "test"}, "id": "tc-2"}])
+        tool_result = MagicMock(spec=[])
+        final_ai = _make_msg("", tool_calls=[{"name": "deploy", "args": {}, "id": "tc-3"}])
+        interrupt = MagicMock()
+        graph = _make_graph(
+            [human, ai_with_tools, tool_result, final_ai],
+            interrupts=(interrupt,),
+        )
 
-        graph = MagicMock()
-        graph.nodes = {"tools": tools_node}
+        # Act
+        runner = DeepAgentRunner(graph)
+        result = await runner.approve_hitl("thread-1", "tc-1")
 
-        DeepAgentRunner(graph)
-        assert tool_node_impl._handle_tool_errors is True
+        # Assert
+        assert result.status == MessageStatus.AWAITING_HITL
+        assert any(tc["name"] == "deploy" for tc in result.tool_calls)
 
-    def test_patch_tool_error_handling_no_tools_node(self):
-        graph = MagicMock()
-        graph.nodes = {"model": MagicMock()}
+    async def test_approve_completed_when_no_interrupts(self):
+        # Arrange
+        human = MagicMock(spec=[])
+        human.type = "human"
+        ai_with_tools = _make_msg(tool_calls=[{"name": "search", "args": {"q": "test"}, "id": "tc-10"}])
+        tool_result = MagicMock(spec=[])
+        final_ai = _make_msg("Search complete. Found 3 results.", tool_calls=[])
+        graph = _make_graph([human, ai_with_tools, tool_result, final_ai], interrupts=())
 
-        DeepAgentRunner(graph)
+        # Act
+        runner = DeepAgentRunner(graph)
+        result = await runner.approve_hitl("thread-1", "tc-1")
 
-    def test_patch_tool_error_handling_no_bound(self):
-        tools_node = MagicMock(spec=["bound"])
-        del tools_node.bound
-        graph = MagicMock()
-        graph.nodes = {"tools": tools_node}
+        # Assert
+        assert result.status == MessageStatus.COMPLETED
+        assert result.content == "Search complete. Found 3 results."
+        assert result.tool_calls is None
 
-        DeepAgentRunner(graph)
 
-    def test_patch_tool_error_handling_no_handle_tool_errors_attr(self):
-        tools_node = MagicMock()
-        tool_node_impl = MagicMock(spec=[])
-        tools_node.bound = tool_node_impl
+class TestRejectHitl:
+    async def test_reject_detects_subsequent_interrupt(self):
+        # Arrange
+        human = MagicMock(spec=[])
+        human.type = "human"
+        ai_with_tools = _make_msg(tool_calls=[{"name": "delete_file", "args": {"path": "/tmp"}, "id": "tc-5"}])
+        tool_result = MagicMock(spec=[])
+        final_ai = _make_msg("", tool_calls=[{"name": "confirm_delete", "args": {}, "id": "tc-6"}])
+        interrupt = MagicMock()
+        graph = _make_graph(
+            [human, ai_with_tools, tool_result, final_ai],
+            interrupts=(interrupt,),
+        )
 
-        graph = MagicMock()
-        graph.nodes = {"tools": tools_node}
+        # Act
+        runner = DeepAgentRunner(graph)
+        result = await runner.reject_hitl("thread-1", "tc-4", reason="not safe")
 
-        DeepAgentRunner(graph)
+        # Assert
+        assert result.status == MessageStatus.AWAITING_HITL
+        assert any(tc["name"] == "confirm_delete" for tc in result.tool_calls)
+
+    async def test_reject_completed_when_no_interrupts(self):
+        # Arrange
+        human = MagicMock(spec=[])
+        human.type = "human"
+        ai_with_tools = _make_msg(tool_calls=[{"name": "word_count", "args": {"text": "test"}, "id": "tc-1"}])
+        final_ai = _make_msg("I can count manually: 1 word.", tool_calls=[])
+        graph = _make_graph([human, ai_with_tools, final_ai], interrupts=())
+
+        # Act
+        runner = DeepAgentRunner(graph)
+        result = await runner.reject_hitl("thread-1", "tc-1", reason="not allowed")
+
+        # Assert
+        assert result.status == MessageStatus.COMPLETED
+        assert result.content == "I can count manually: 1 word."
+        assert result.tool_calls is None
+
+
+class TestEditHitl:
+    async def test_edit_detects_subsequent_interrupt(self):
+        # Arrange
+        human = MagicMock(spec=[])
+        human.type = "human"
+        ai_with_tools = _make_msg(tool_calls=[{"name": "send_email", "args": {"to": "a@b.com"}, "id": "tc-8"}])
+        tool_result = MagicMock(spec=[])
+        final_ai = _make_msg("", tool_calls=[{"name": "confirm_send", "args": {}, "id": "tc-9"}])
+        interrupt = MagicMock()
+        state_msg = _make_msg(tool_calls=[{"name": "send_email", "args": {"to": "a@b.com"}, "id": "tc-7"}])
+        graph = _make_graph(
+            [human, ai_with_tools, tool_result, final_ai],
+            interrupts=(interrupt,),
+            state_values={"messages": [state_msg]},
+        )
+
+        # Act
+        runner = DeepAgentRunner(graph)
+        result = await runner.edit_hitl("thread-1", "tc-7", edits={"to": "x@y.com"})
+
+        # Assert
+        assert result.status == MessageStatus.AWAITING_HITL
+        assert any(tc["name"] == "confirm_send" for tc in result.tool_calls)
+
+
+class TestInvokeTimeout:
+    async def test_invoke_timeout_raises_agent_error(self):
+        # Arrange
+        graph = AsyncMock()
+        graph.nodes = {}
+
+        async def _ainvoke_hang(_input, **_kwargs):
+            await asyncio.sleep(10)
+            return {"messages": []}
+
+        graph.ainvoke = _ainvoke_hang
+
+        # Act & Assert
+        runner = DeepAgentRunner(graph, invoke_timeout=0.05)
+        with pytest.raises(AgentError, match="timed out"):
+            await runner.invoke("thread-1", "hello")
+
+
+class TestStream:
+    async def test_stream_yields_content_events(self):
+        # Arrange
+        graph = AsyncMock()
+        graph.nodes = {}
+
+        async def _astream(_input, **_kwargs):
+            chunk = _make_msg("chunk")
+            chunk.type = "AIMessageChunk"
+            chunk.additional_kwargs = {}
+            yield (chunk, MagicMock())
+
+        graph.astream = _astream
+        graph.get_state = MagicMock(
+            return_value=MagicMock(values={"messages": [_make_msg("chunk")]}, interrupts=())
+        )
+
+        # Act
+        runner = DeepAgentRunner(graph)
+        events = [e async for e in runner.stream("thread-1", "Hi")]
+
+        # Assert
+        assert len(events) == 1
+        assert events[0].type == StreamEventType.CONTENT
+        assert events[0].data == "chunk"

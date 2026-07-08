@@ -1,7 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.infrastructure.database.models.base import Base
@@ -32,11 +31,9 @@ class MessageModel(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    tool_calls: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)
+    tool_calls: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    structured_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    thinking: Mapped[str | None] = mapped_column(
-        Text, nullable=True
-    )  # chain-of-thought / reasoning text from extended-thinking models
+    structured_response: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    thinking: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     thread: Mapped["ThreadModel"] = relationship("ThreadModel", back_populates="messages")

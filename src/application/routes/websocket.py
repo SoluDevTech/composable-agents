@@ -1,5 +1,6 @@
 import json
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
@@ -17,7 +18,7 @@ router = APIRouter(tags=["websocket"])
 async def websocket_chat(
     websocket: WebSocket,
     thread_id: str,
-    use_case: StreamMessageUseCase = Depends(get_stream_message_use_case),
+    use_case: Annotated[StreamMessageUseCase, Depends(get_stream_message_use_case)],
 ) -> None:
     await websocket.accept()
     logger.info(LogMessage.WS_CONNECTED, thread_id)

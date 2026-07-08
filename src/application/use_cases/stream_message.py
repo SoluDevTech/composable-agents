@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 class StreamMessageUseCase:
     """Envoie un message a l'agent et streame la reponse avec le Message final."""
 
-    def __init__(self, registry: AgentRegistry, threads: ThreadRepository):
+    def __init__(self, registry: AgentRegistry, threads: ThreadRepository) -> None:
         self._registry = registry
         self._threads = threads
 

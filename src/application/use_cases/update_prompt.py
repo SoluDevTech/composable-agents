@@ -1,7 +1,6 @@
 import logging
 
-from phoenix.client.resources.prompts import PromptVersion
-
+from src.domain.entities.prompt import PromptVersion
 from src.domain.logging.messages import LogMessage
 from src.domain.ports.prompt_manager import PromptManager
 
@@ -11,7 +10,7 @@ logger = logging.getLogger(__name__)
 class UpdatePromptUseCase:
     """Update an existing prompt."""
 
-    def __init__(self, prompt_manager: PromptManager):
+    def __init__(self, prompt_manager: PromptManager) -> None:
         self._prompt_manager = prompt_manager
 
     async def execute(
@@ -24,7 +23,7 @@ class UpdatePromptUseCase:
     ) -> PromptVersion:
         """Update a prompt."""
         logger.info(LogMessage.PROMPT_UPDATING, identifier)
-        prompt = await self._prompt_manager.update_prompt(
+        prompt_version = await self._prompt_manager.update_prompt(
             identifier=identifier,
             content=content,
             model_name=model_name,
@@ -32,4 +31,4 @@ class UpdatePromptUseCase:
             metadata=metadata,
         )
         logger.info(LogMessage.PROMPT_UPDATED_SUCCESS, identifier)
-        return prompt
+        return prompt_version

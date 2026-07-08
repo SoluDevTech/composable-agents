@@ -1,4 +1,6 @@
+import re
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -24,14 +26,12 @@ class Prompt(BaseModel):
 
     def extract_template_variables(self) -> list[str]:
         """Extract template variable names from current version."""
-        import re
-
         content_str = str(self.current_version.content)
         pattern = r"\{([^{}]+)\}"
         matches = re.findall(pattern, content_str)
         return list(set(matches))
 
-    def validate_variables(self, required: list[str]) -> dict[str, any]:
+    def validate_variables(self, required: list[str]) -> dict[str, Any]:
         """Validate template has required variables."""
         found = self.extract_template_variables()
         missing = set(required) - set(found)
