@@ -20,7 +20,7 @@ from src.domain.logging.messages import LogMessage
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/prompts", tags=["prompts"])
+router = APIRouter(prefix="/api/v1/prompts", tags=["prompts"])
 
 
 @router.post("/create", status_code=201, response_model=PromptVersionResponse)

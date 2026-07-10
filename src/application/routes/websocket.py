@@ -5,9 +5,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from src.application.use_cases.stream_message import StreamMessageUseCase
-from src.dependencies import get_stream_message_use_case
+from src.dependencies import get_security, get_stream_message_use_case
 from src.domain.entities.stream_event import StreamEvent, StreamEventType
 from src.domain.logging.messages import LogMessage
+from src.security import ComposableAgentsSecurity
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +19,11 @@ router = APIRouter(tags=["websocket"])
 async def websocket_chat(
     websocket: WebSocket,
     thread_id: str,
+    security: Annotated[ComposableAgentsSecurity, Depends(get_security)],
     use_case: Annotated[StreamMessageUseCase, Depends(get_stream_message_use_case)],
 ) -> None:
+    # Validate API key before accepting the WebSocket handshake.
+    await security.verify_api_key_ws(websocket)
     await websocket.accept()
     logger.info(LogMessage.WS_CONNECTED, thread_id)
     try:
