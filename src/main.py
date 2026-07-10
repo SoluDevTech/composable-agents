@@ -20,6 +20,7 @@ from src.dependencies import (
     close_persistence,
     init_persistence,
     mcp_tool_loader,
+    security,
     tracing_provider,
 )
 from src.domain.errors.agent import AgentConfigAlreadyExistsError, AgentError, AgentNotFoundError
@@ -37,10 +38,8 @@ from src.domain.errors.storage import StorageError
 from src.domain.errors.thread import ThreadNotFoundError
 from src.domain.logging.messages import LogMessage
 from src.infrastructure.logging import RequestIdMiddleware, configure_logging
-from src.security import ComposableAgentsSecurity
 
 settings = Settings()
-security = ComposableAgentsSecurity(master_key=settings.api_key)
 
 configure_logging(settings)
 
@@ -106,12 +105,15 @@ app.add_middleware(
 
 app.include_router(health_router)
 
-# All routes except health are protected behind the API key check.
+# WebSocket routes manage their own API key validation via verify_api_key_ws
+# because FastAPI APIRouter(dependencies=...) does not apply to WebSocket endpoints.
+app.include_router(websocket_router)
+
+# All non-WebSocket routes except health are protected behind the API key check.
 protected = APIRouter(dependencies=[Depends(security.verify_api_key)])
 protected.include_router(threads_router)
 protected.include_router(chat_router)
 protected.include_router(agents_router)
-protected.include_router(websocket_router)
 protected.include_router(prompt_router)
 app.include_router(protected)
 

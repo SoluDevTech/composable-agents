@@ -227,6 +227,27 @@ mcp_servers:
 
 Environment variables in `env` fields support the `${VAR_NAME}` resolution syntax.
 
+### Authenticating to MCP servers with API keys
+
+When an MCP server requires authentication via a custom HTTP header (e.g. `X-API-Key`), use the `headers` field. The `${VAR_NAME}` syntax is supported for resolving environment variables at runtime:
+
+```yaml
+mcp_servers:
+  - name: bricks
+    transport: http
+    url: https://raganything.soludev.tech/bricks/mcp
+    headers:
+      X-API-Key: "${MCP_RAGANYTHING_API_KEY}"
+```
+
+Set the corresponding environment variable in `.env`:
+
+```dotenv
+MCP_RAGANYTHING_API_KEY=your-shared-secret-key
+```
+
+The value must match the `API_KEY` configured on the [mcp-raganything](https://github.com/soludev/mcp-raganything) server.
+
 ---
 
 ## Middlewares
@@ -1102,6 +1123,7 @@ Configured via `.env` file or environment variables. See `.env.example`.
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL for OpenAI-compatible endpoints. Set to use OpenRouter, LiteLLM, vLLM, etc. |
 | `HOST` | `0.0.0.0` | Server bind host. |
 | `PORT` | `8000` | Server bind port. |
+| `MCP_RAGANYTHING_API_KEY` | -- | Shared API key for authenticating to mcp-raganything MCP servers. Must match the `API_KEY` set on the raganything server. |
 
 ### PostgreSQL Variables
 
@@ -1190,6 +1212,79 @@ uv sync --extra phoenix
 # All tracing providers
 uv sync --extra tracing
 ```
+
+---
+
+## Deployment on Railway
+
+[Railway](https://railway.app/) is a deployment platform that supports Docker-based services with managed PostgreSQL.
+
+### Architecture on Railway
+
+```
+Railway project
+├── PostgreSQL (Railway managed plugin)
+├── composable-agents (Dockerfile deploy)
+└── (mcp-raganything — separate Railway service or project)
+```
+
+### Step-by-step
+
+1. **Create a Railway project** and add a PostgreSQL plugin.
+
+2. **Deploy composable-agents**:
+   - New Service → GitHub Repo → select this repository.
+   - Railway detects the `Dockerfile` automatically.
+   - Set the port to `8000`.
+
+3. **Deploy mcp-raganything** (separate Railway service or project):
+   - See the [mcp-raganything README](https://github.com/soludev/mcp-raganything#deployment-on-railway) for Railway deployment instructions.
+   - Note the generated public domain (e.g. `mcp-raganything-production.up.railway.app`).
+
+4. **Configure environment variables** in the Railway dashboard:
+
+   | Variable | Example | Notes |
+   |----------|---------|-------|
+   | `OPENAI_API_KEY` | `sk-...` | OpenAI API key |
+   | `OPENAI_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible endpoint |
+   | `POSTGRES_HOST` | `roundhouse.proxy.rlwy.net` | Railway PostgreSQL host |
+   | `POSTGRES_PORT` | `33019` | Railway PostgreSQL port (not 5432) |
+   | `POSTGRES_USER` | `postgres` | Railway PostgreSQL user |
+   | `POSTGRES_PASSWORD` | `********` | Railway PostgreSQL password |
+   | `POSTGRES_DATABASE` | `railway` | Railway PostgreSQL database name |
+   | `AGENTS_DIR` | `./agents` | Directory containing agent YAML configs |
+   | `MCP_RAGANYTHING_API_KEY` | `your-shared-secret` | Must match `API_KEY` on mcp-raganything |
+   | `TRACING_PROVIDER` | `phoenix` | Tracing backend: `none`, `langfuse`, or `phoenix` |
+   | `PHOENIX_COLLECTOR_ENDPOINT` | `https://phoenix.xxx.railway.app` | Phoenix collector URL |
+
+5. **Update agent YAML configs** to point MCP server URLs to the Railway-deployed mcp-raganything domain:
+
+   ```yaml
+   mcp_servers:
+     - name: bricks
+       transport: http
+       url: https://mcp-raganything-production.up.railway.app/bricks/mcp
+       headers:
+         X-API-Key: "${MCP_RAGANYTHING_API_KEY}"
+   ```
+
+   The `${MCP_RAGANYTHING_API_KEY}` placeholder is resolved from the environment variable at runtime.
+
+6. **MinIO** (optional — only if using MinIO for agent config storage):
+   - Deploy MinIO as a separate Railway service or use an external S3-compatible service.
+   - Set `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET` accordingly.
+
+7. **Verify deployment**:
+
+   ```bash
+   curl https://composable-agents-production.up.railway.app/health
+   ```
+
+### Notes
+
+- Railway automatically generates a public domain for each service.
+- The `agents/` directory is baked into the Docker image at build time. To update agent configs without redeploying, use MinIO-backed agent config storage (see `AGENTS_DIR` and MinIO variables).
+- Alembic migrations run automatically on startup.
 
 ---
 

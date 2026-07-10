@@ -36,6 +36,7 @@ from src.infrastructure.postgres_thread.adapter import PostgresThreadRepository
 from src.infrastructure.prompt_management.adapter import PhoenixPromptManagerProvider
 from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
+from src.security import ComposableAgentsSecurity
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,18 @@ def get_prompt_manager() -> PromptManager:
 agent_config_loader = YamlAgentConfigLoader()
 mcp_tool_loader = LangchainMcpToolLoader(tool_timeout=settings.mcp_tool_timeout)
 tracing_provider = _create_tracing_provider(settings)
+
+# Security instance shared across all routes (HTTP + WebSocket).
+security = ComposableAgentsSecurity(master_key=settings.api_key)
+
+
+def get_security() -> ComposableAgentsSecurity:
+    """Provide the singleton ``ComposableAgentsSecurity`` instance.
+
+    Used as a FastAPI dependency by the WebSocket endpoint, which cannot
+    inherit router-level ``dependencies=[...]``.
+    """
+    return security
 
 # ============= PERSISTENCE (initialized at startup) =============
 
