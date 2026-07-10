@@ -47,7 +47,7 @@ from src.domain.errors.agent import AgentError
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.agent_runner import AgentRunner
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
-from src.main import app
+from src.main import app, security
 
 VALID_YAML = 'name: {name}\nmodel: test-model\nsystem_prompt: "Test prompt."\ntools: []\ndebug: false\n'
 
@@ -208,6 +208,10 @@ def _override_dependencies(stub_registry, thread_repo, mock_config_store, mock_c
 
     def _delete_agent_config():
         return DeleteAgentConfigUseCase(mock_config_store, mock_config_repository, stub_registry)
+
+    # Bypass API key security for route tests — security is covered by
+    # tests/unit/test_security.py with a dedicated minimal app.
+    app.dependency_overrides[security.verify_api_key] = lambda: ""
 
     app.dependency_overrides[get_send_message_use_case] = _send_message
     app.dependency_overrides[get_stream_message_use_case] = _stream_message
