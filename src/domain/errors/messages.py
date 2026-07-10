@@ -89,6 +89,11 @@ class ErrorMessage(StrEnum):
         "Prompt manager server error ({status_code}) during '{operation}' for '{identifier}'"
     )
 
+    # --- Security ---
+    API_KEY_UNAUTHORIZED = "The Api Key you provided is unauthorized"
+    API_KEY_EMPTY = "The Api Key is empty"
+    API_KEY_DISABLED = "Auth by Api key is disabled"
+
 
 def tmpl(template: str) -> Template:
     """Return a ``string.Template`` for ``$name`` style templates when needed."""

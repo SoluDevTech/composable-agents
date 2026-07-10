@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -32,12 +32,15 @@ from src.domain.errors.prompt import (
     PromptManagerUnavailableError,
     PromptNotFoundError,
 )
+from src.domain.errors.security import InvalidApiKeyError
 from src.domain.errors.storage import StorageError
 from src.domain.errors.thread import ThreadNotFoundError
 from src.domain.logging.messages import LogMessage
 from src.infrastructure.logging import RequestIdMiddleware, configure_logging
+from src.security import ComposableAgentsSecurity
 
 settings = Settings()
+security = ComposableAgentsSecurity(master_key=settings.api_key)
 
 configure_logging(settings)
 
@@ -102,11 +105,15 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
-app.include_router(threads_router)
-app.include_router(chat_router)
-app.include_router(agents_router)
-app.include_router(websocket_router)
-app.include_router(prompt_router)
+
+# All routes except health are protected behind the API key check.
+protected = APIRouter(dependencies=[Depends(security.verify_api_key)])
+protected.include_router(threads_router)
+protected.include_router(chat_router)
+protected.include_router(agents_router)
+protected.include_router(websocket_router)
+protected.include_router(prompt_router)
+app.include_router(protected)
 
 
 def _error_response(exc: DomainError) -> JSONResponse:
@@ -192,6 +199,11 @@ async def domain_error_handler(_request: Request, exc: DomainError) -> JSONRespo
     return _error_response(exc)
 
 
+async def invalid_api_key_handler(_request: Request, exc: InvalidApiKeyError) -> JSONResponse:
+    logger.warning(LogMessage.LOG_INVALID_API_KEY, exc.detail)
+    return _error_response(exc)
+
+
 # Register one handler per domain error type explicitly. Each handler reads the
 # exception's own status_code/detail, so no separate error->HTTP mapping table
 # is required. Most-specific types are registered first.
@@ -208,6 +220,7 @@ app.add_exception_handler(McpError, mcp_error_handler)
 app.add_exception_handler(PromptNotFoundError, prompt_not_found_handler)
 app.add_exception_handler(PromptAlreadyExistsError, prompt_already_exists_handler)
 app.add_exception_handler(PromptManagerUnavailableError, prompt_manager_unavailable_handler)
+app.add_exception_handler(InvalidApiKeyError, invalid_api_key_handler)
 app.add_exception_handler(DomainError, domain_error_handler)
 
 

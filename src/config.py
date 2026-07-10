@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     log_level: str = "info"
     uvicorn_log_level: str = "info"
     allowed_origins: list[str] = ["http://localhost:8080"]
+    api_key: str = ""
     tracing: TracingSettings = TracingSettings()
     # Agent execution timeouts (seconds). The per-tool timeout isolates a hung
     # MCP tool as a recoverable ToolMessage error (agent continues). The graph

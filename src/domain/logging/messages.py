@@ -247,3 +247,6 @@ class LogMessage(StrEnum):
     LOG_AGENT_ERROR = "Agent error: %s"
     LOG_MCP_ERROR = "MCP error: %s"
     LOG_UNHANDLED_DOMAIN_ERROR = "Unhandled domain error: %s"
+
+    # --- Security ---
+    LOG_INVALID_API_KEY = "Invalid API key: %s"
