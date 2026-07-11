@@ -1,4 +1,5 @@
 import logging
+import ssl
 from dataclasses import dataclass
 
 from miniopy_async import Minio
@@ -136,12 +137,15 @@ async def init_persistence() -> None:
     connect_args: dict = {}
     if settings.postgres_statement_cache_size is not None:
         connect_args["statement_cache_size"] = settings.postgres_statement_cache_size
-    if settings.ssl_mode:
-        import ssl as ssl_module
 
-        ctx = ssl_module.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl_module.CERT_NONE
+    ssl_mode = settings.ssl_mode
+    if ssl_mode and ssl_mode not in ("disable", "allow"):
+        if ssl_mode in ("verify-ca", "verify-full"):
+            ctx = ssl.create_default_context()
+        else:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
         connect_args["ssl"] = ctx
 
     _root.async_engine = create_async_engine(

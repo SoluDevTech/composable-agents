@@ -32,12 +32,10 @@ Edit `.env` and add your API key and database credentials:
 OPENAI_API_KEY=sk-...
 
 # PostgreSQL (required)
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5433
-POSTGRES_USER=raganything
-POSTGRES_PASSWORD=raganything
-POSTGRES_DATABASE=raganything
+DATABASE_URL=postgresql://raganything:raganything@localhost:5433/raganything
 ```
+
+> **⚠️ Breaking change:** The `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DATABASE` environment variables have been replaced by a single `DATABASE_URL` variable. If you are upgrading from a previous version, construct your `DATABASE_URL` as `postgresql://<user>:<password>@<host>:<port>/<database>` and remove the old `POSTGRES_*` variables from your `.env`.
 
 ### Configure your agents
 
@@ -851,7 +849,7 @@ composable-agents/
     code-reviewer.yaml                 #   Code reviewer with HITL + subagents
   src/
     main.py                            # FastAPI app creation and lifespan (runs migrations)
-    config.py                          # Pydantic Settings (env vars, database_url property)
+    config.py                          # Pydantic Settings (env vars, DATABASE_URL normalization)
     dependencies.py                    # Dependency injection wiring
     alembic.ini                        # Alembic configuration
     alembic/
@@ -1129,13 +1127,10 @@ Configured via `.env` file or environment variables. See `.env.example`.
 
 | Variable | Default | Description |
 |---|---|---|
-| `POSTGRES_HOST` | `localhost` | PostgreSQL server hostname. |
-| `POSTGRES_PORT` | `5433` | PostgreSQL server port. |
-| `POSTGRES_USER` | `raganything` | Database user. |
-| `POSTGRES_PASSWORD` | `raganything` | Database password. |
-| `POSTGRES_DATABASE` | `raganything` | Database name. |
+| `DATABASE_URL` | **required** | PostgreSQL connection URL (e.g. `postgresql://user:pass@host:5432/db`). Automatically normalized to `postgresql+asyncpg://` for async SQLAlchemy. `sslmode` and `channel_binding` query params are extracted and passed via `connect_args` (asyncpg doesn't accept them in the URL). |
+| `POSTGRES_STATEMENT_CACHE_SIZE` | `100` (asyncpg default) | Set to `0` when using a connection pooler (Neon, PgBouncer, etc.). |
 
-The async connection URL is built automatically as `postgresql+asyncpg://<user>:<password>@<host>:<port>/<database>`.
+> **⚠️ Breaking change:** `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DATABASE` are no longer used. Migrate to `DATABASE_URL`.
 
 ### MinIO Variables
 
@@ -1247,11 +1242,7 @@ Railway project
    |----------|---------|-------|
    | `OPENAI_API_KEY` | `sk-...` | OpenAI API key |
    | `OPENAI_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible endpoint |
-   | `POSTGRES_HOST` | `roundhouse.proxy.rlwy.net` | Railway PostgreSQL host |
-   | `POSTGRES_PORT` | `33019` | Railway PostgreSQL port (not 5432) |
-   | `POSTGRES_USER` | `postgres` | Railway PostgreSQL user |
-   | `POSTGRES_PASSWORD` | `********` | Railway PostgreSQL password |
-   | `POSTGRES_DATABASE` | `railway` | Railway PostgreSQL database name |
+   | `DATABASE_URL` | `postgresql://postgres:pass@roundhouse.proxy.rlwy.net:33019/railway` | Railway PostgreSQL connection URL |
    | `AGENTS_DIR` | `./agents` | Directory containing agent YAML configs |
    | `MCP_RAGANYTHING_API_KEY` | `your-shared-secret` | Must match `API_KEY` on mcp-raganything |
    | `TRACING_PROVIDER` | `phoenix` | Tracing backend: `none`, `langfuse`, or `phoenix` |
