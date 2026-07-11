@@ -1,7 +1,7 @@
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
-from pydantic import PrivateAttr, model_validator
+from pydantic import Field, PrivateAttr, model_validator
 from pydantic_settings import BaseSettings
 
 load_dotenv()
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     minio_bucket: str = "composable-agents"
     minio_secure: bool = False
 
-    database_url: str
+    database_url: str = Field(description="PostgreSQL connection string (postgresql://, postgres://, or postgresql+asyncpg://). Required.")
     postgres_statement_cache_size: int | None = None
     _ssl_mode: str | None = PrivateAttr(default=None)
 

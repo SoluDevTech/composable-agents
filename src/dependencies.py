@@ -138,6 +138,12 @@ async def init_persistence() -> None:
     if settings.postgres_statement_cache_size is not None:
         connect_args["statement_cache_size"] = settings.postgres_statement_cache_size
 
+    # Build asyncpg SSL context from the sslmode extracted by Settings.
+    # verify-ca / verify-full: use the default context (CA + hostname verification).
+    # require / prefer: encryption without CA verification (matches asyncpg's
+    #   defaults for these modes). Note: "prefer" here forces SSL on with no
+    #   plaintext fallback (unlike libpq's try-SSL-then-fallback semantics);
+    #   this is acceptable for hosts that require SSL (e.g. Neon).
     ssl_mode = settings.ssl_mode
     if ssl_mode and ssl_mode not in ("disable", "allow"):
         if ssl_mode in ("verify-ca", "verify-full"):
