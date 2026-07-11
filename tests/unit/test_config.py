@@ -5,7 +5,12 @@ or already-asyncpg) is normalized to postgresql+asyncpg:// for SQLAlchemy async,
 with sslmode extracted and stripped (asyncpg doesn't accept it as a query param).
 """
 
+import pytest
+from pydantic import ValidationError
+
 from src.config import Settings
+
+_DUMMY_URL = "postgresql://user:pass@host:5432/db"
 
 
 class TestDatabaseUrlNormalization:
@@ -40,10 +45,9 @@ class TestDatabaseUrlNormalization:
         settings = Settings(database_url="postgresql://user:pass@host:5432/db")
         assert settings.ssl_mode is None
 
-    def test_empty_database_url_stays_empty(self):
-        settings = Settings(database_url="")
-        assert settings.database_url == ""
-        assert settings.ssl_mode is None
+    def test_missing_database_url_raises_validation_error(self):
+        with pytest.raises(ValidationError):
+            Settings()
 
     def test_other_query_params_preserved(self):
         settings = Settings(
@@ -55,13 +59,13 @@ class TestDatabaseUrlNormalization:
 
 class TestPostgresStatementCacheSize:
     def test_default_is_none(self):
-        settings = Settings()
+        settings = Settings(database_url=_DUMMY_URL)
         assert settings.postgres_statement_cache_size is None
 
     def test_can_set_to_zero_for_poolers(self):
-        settings = Settings(postgres_statement_cache_size=0)
+        settings = Settings(database_url=_DUMMY_URL, postgres_statement_cache_size=0)
         assert settings.postgres_statement_cache_size == 0
 
     def test_can_set_to_custom_value(self):
-        settings = Settings(postgres_statement_cache_size=50)
+        settings = Settings(database_url=_DUMMY_URL, postgres_statement_cache_size=50)
         assert settings.postgres_statement_cache_size == 50

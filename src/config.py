@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     minio_bucket: str = "composable-agents"
     minio_secure: bool = False
 
-    database_url: str = ""
+    database_url: str
     postgres_statement_cache_size: int | None = None
     _ssl_mode: str | None = PrivateAttr(default=None)
 
@@ -56,30 +56,25 @@ class Settings(BaseSettings):
         - Extract sslmode and store it (passed via connect_args, not URL)
         - Strip sslmode and channel_binding (asyncpg doesn't accept them as query params)
         """
-        if not self.database_url:
-            return self
+        for old, new in (
+            ("postgresql://", "postgresql+asyncpg://"),
+            ("postgres://", "postgresql+asyncpg://"),
+        ):
+            if self.database_url.startswith(old):
+                self.database_url = self.database_url.replace(old, new, 1)
+                break
 
         parsed = urlsplit(self.database_url)
         params = parse_qs(parsed.query)
-        ssl_values = params.get("sslmode")
-        if ssl_values:
-            self._ssl_mode = ssl_values[0]
-
-        if self.database_url.startswith("postgresql://"):
-            self.database_url = self.database_url.replace(
-                "postgresql://", "postgresql+asyncpg://", 1
-            )
-        elif self.database_url.startswith("postgres://"):
-            self.database_url = self.database_url.replace(
-                "postgres://", "postgresql+asyncpg://", 1
-            )
-
-        parsed = urlsplit(self.database_url)
-        params = parse_qs(parsed.query)
-        params.pop("sslmode", None)
+        self._ssl_mode = (params.pop("sslmode", [None]) or [None])[0]
         params.pop("channel_binding", None)
-        new_query = urlencode(params, doseq=True)
         self.database_url = urlunsplit(
-            (parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment)
+            (
+                parsed.scheme,
+                parsed.netloc,
+                parsed.path,
+                urlencode(params, doseq=True),
+                parsed.fragment,
+            )
         )
         return self
