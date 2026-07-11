@@ -114,11 +114,11 @@ class ComposableAgentsSecurity:
             return ""
         api_key = websocket.headers.get("x-api-key")
         if not api_key:
-            logger.warning(ErrorMessage.API_KEY_EMPTY)
+            logger.error(ErrorMessage.API_KEY_EMPTY)
             await _reject_ws_with_401(websocket, str(ErrorMessage.API_KEY_EMPTY))
             return ""
         if not secrets.compare_digest(api_key, self.master_key):
-            logger.warning(ErrorMessage.API_KEY_UNAUTHORIZED)
+            logger.error(ErrorMessage.API_KEY_UNAUTHORIZED)
             await _reject_ws_with_401(websocket, str(ErrorMessage.API_KEY_UNAUTHORIZED))
             return ""
         return api_key
