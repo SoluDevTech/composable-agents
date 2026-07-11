@@ -5,6 +5,13 @@ SQLite, YamlAgentConfigLoader, NoopTracingProvider). External adapters are mocke
 via tests/fixtures/external.py.
 """
 
+import os
+
+# Provide a DATABASE_URL so Settings() (instantiated at import time in
+# src.dependencies) can validate. Tests that need a real engine use the
+# in-memory SQLite db_engine fixture, not this value.
+os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
+
 from collections.abc import AsyncGenerator
 
 import pytest
