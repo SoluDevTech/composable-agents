@@ -1,6 +1,7 @@
-from urllib.parse import quote_plus
+from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from dotenv import load_dotenv
+from pydantic import PrivateAttr, model_validator
 from pydantic_settings import BaseSettings
 
 load_dotenv()
@@ -39,16 +40,46 @@ class Settings(BaseSettings):
     minio_bucket: str = "composable-agents"
     minio_secure: bool = False
 
-    postgres_host: str = "localhost"
-    postgres_port: int = 5433
-    postgres_user: str = "raganything"
-    postgres_password: str = "raganything"
-    postgres_database: str = "raganything"
+    database_url: str = ""
+    postgres_statement_cache_size: int | None = None
+    _ssl_mode: str | None = PrivateAttr(default=None)
 
     @property
-    def database_url(self) -> str:
-        """Build the async PostgreSQL connection URL for SQLAlchemy."""
-        return (
-            f"postgresql+asyncpg://{quote_plus(self.postgres_user)}:{quote_plus(self.postgres_password)}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_database}"
+    def ssl_mode(self) -> str | None:
+        return self._ssl_mode
+
+    @model_validator(mode="after")
+    def normalize_database_url(self) -> "Settings":
+        """Normalize DATABASE_URL for asyncpg.
+
+        - postgresql:// or postgres:// → postgresql+asyncpg://
+        - Extract sslmode and store it (passed via connect_args, not URL)
+        - Strip sslmode and channel_binding (asyncpg doesn't accept them as query params)
+        """
+        if not self.database_url:
+            return self
+
+        parsed = urlsplit(self.database_url)
+        params = parse_qs(parsed.query)
+        ssl_values = params.get("sslmode")
+        if ssl_values:
+            self._ssl_mode = ssl_values[0]
+
+        if self.database_url.startswith("postgresql://"):
+            self.database_url = self.database_url.replace(
+                "postgresql://", "postgresql+asyncpg://", 1
+            )
+        elif self.database_url.startswith("postgres://"):
+            self.database_url = self.database_url.replace(
+                "postgres://", "postgresql+asyncpg://", 1
+            )
+
+        parsed = urlsplit(self.database_url)
+        params = parse_qs(parsed.query)
+        params.pop("sslmode", None)
+        params.pop("channel_binding", None)
+        new_query = urlencode(params, doseq=True)
+        self.database_url = urlunsplit(
+            (parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment)
         )
+        return self

@@ -133,12 +133,24 @@ async def init_persistence() -> None:
     """
     logger.info(LogMessage.PERSISTENCE_INITIALIZING)
 
+    connect_args: dict = {}
+    if settings.postgres_statement_cache_size is not None:
+        connect_args["statement_cache_size"] = settings.postgres_statement_cache_size
+    if settings.ssl_mode:
+        import ssl as ssl_module
+
+        ctx = ssl_module.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl_module.CERT_NONE
+        connect_args["ssl"] = ctx
+
     _root.async_engine = create_async_engine(
         settings.database_url,
         poolclass=AsyncAdaptedQueuePool,
         pool_size=20,
         max_overflow=20,
         pool_pre_ping=True,
+        connect_args=connect_args,
     )
     logger.info(LogMessage.SQLALCHEMY_ENGINE_CREATED)
 
