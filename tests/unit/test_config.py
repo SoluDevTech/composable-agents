@@ -45,7 +45,8 @@ class TestDatabaseUrlNormalization:
         settings = Settings(database_url="postgresql://user:pass@host:5432/db")
         assert settings.ssl_mode is None
 
-    def test_missing_database_url_raises_validation_error(self):
+    def test_missing_database_url_raises_validation_error(self, monkeypatch):
+        monkeypatch.delenv("DATABASE_URL", raising=False)
         with pytest.raises(ValidationError):
             Settings()
 
