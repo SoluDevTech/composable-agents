@@ -11,7 +11,8 @@ from src.config import Settings
 # Side-effect imports: register all models so Base.metadata is populated
 from src.infrastructure.database.models.agent_config import AgentConfigModel  # noqa: F401
 from src.infrastructure.database.models.base import Base
-from src.infrastructure.database.models.thread import MessageModel, ThreadModel  # noqa: F401
+from src.infrastructure.database.models.thread import ThreadModel  # noqa: F401
+from src.infrastructure.database.models.trace_event import TraceEventModel  # noqa: F401
 from src.infrastructure.logging import configure_logging
 
 config = context.config

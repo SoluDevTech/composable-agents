@@ -4,7 +4,8 @@ Private helpers (_sanitize, _build_array_model) are tested indirectly via the
 public functions below.
 """
 
-from pydantic import BaseModel
+import pytest
+from pydantic import BaseModel, ValidationError
 
 from src.infrastructure.deepagent.schema_utils import (
     make_validation_model,
@@ -241,9 +242,7 @@ class TestSchemaToPydanticModel:
         # Arrange
         schema = {
             "type": "object",
-            "properties": {
-                "tags": {"type": "array", "items": {"type": "string"}}
-            },
+            "properties": {"tags": {"type": "array", "items": {"type": "string"}}},
             "required": ["tags"],
         }
         model = schema_to_pydantic_model(schema, "ArrayModel")
@@ -416,3 +415,448 @@ class TestMakeValidationModel:
 
         # Assert
         assert model1.__name__ != model2.__name__
+
+
+# --------------------------------------------------------------------------- #
+# anyOf / nullable types — NEW (red phase for response_format migration)
+# --------------------------------------------------------------------------- #
+
+
+class TestSchemaAnyOf:
+    """Tests for schema_to_pydantic_model with `anyOf` constructs.
+
+    JSON Schema expresses nullable fields via ``anyOf: [{type: X}, {type: "null"}]``.
+    The converter must produce a ``X | None`` field.
+    """
+
+    def test_anyof_number_and_null_accepts_float(self):
+        """A nullable number field should accept a float value."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "temperature": {
+                    "anyOf": [{"type": "number"}, {"type": "null"}],
+                }
+            },
+            "required": ["temperature"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "NullableNumberModel")
+        instance = model.model_validate({"temperature": 22.5})
+
+        # Assert
+        assert instance.temperature == 22.5
+
+    def test_anyof_number_and_null_accepts_none(self):
+        """A nullable number field should accept None."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "temperature": {
+                    "anyOf": [{"type": "number"}, {"type": "null"}],
+                }
+            },
+            "required": ["temperature"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "NullableNumberModel")
+        instance = model.model_validate({"temperature": None})
+
+        # Assert
+        assert instance.temperature is None
+
+    def test_anyof_number_and_null_rejects_string(self):
+        """A nullable number field should reject a string value."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "temperature": {
+                    "anyOf": [{"type": "number"}, {"type": "null"}],
+                }
+            },
+            "required": ["temperature"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "NullableNumberModel")
+
+        # Assert
+        with pytest.raises(ValidationError):
+            model.model_validate({"temperature": "not a number"})
+
+    def test_anyof_integer_and_null_accepts_integer(self):
+        """A nullable integer field should accept an int value."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "anyOf": [{"type": "integer"}, {"type": "null"}],
+                }
+            },
+            "required": ["count"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "NullableIntModel")
+        instance = model.model_validate({"count": 7})
+
+        # Assert
+        assert instance.count == 7
+
+    def test_anyof_string_and_null_accepts_none(self):
+        """A nullable string field should accept None."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "anyOf": [{"type": "string"}, {"type": "null"}],
+                }
+            },
+            "required": ["city"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "NullableStrModel")
+        instance = model.model_validate({"city": None})
+
+        # Assert
+        assert instance.city is None
+
+    def test_anyof_optional_when_not_in_required_defaults_to_none(self):
+        """A nullable field that is NOT required should default to None."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "score": {
+                    "anyOf": [{"type": "number"}, {"type": "null"}],
+                }
+            },
+            "required": [],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "OptionalNullableModel")
+        instance = model.model_validate({})
+
+        # Assert
+        assert instance.score is None
+
+
+class TestSchemaEnum:
+    """Tests for schema_to_pydantic_model with `enum` constraints.
+
+    JSON Schema enums restrict a field to a fixed set of values. The converter
+    must produce a ``Literal[...]`` field.
+    """
+
+    def test_enum_string_accepts_allowed_value(self):
+        """A string enum field should accept one of the allowed values."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["active", "inactive"]},
+            },
+            "required": ["status"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "EnumModel")
+        instance = model.model_validate({"status": "active"})
+
+        # Assert
+        assert instance.status == "active"
+
+    def test_enum_string_rejects_value_outside_enum(self):
+        """A string enum field should reject a value not in the enum."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["active", "inactive"]},
+            },
+            "required": ["status"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "EnumModel")
+
+        # Assert
+        with pytest.raises(ValidationError):
+            model.model_validate({"status": "canceled"})
+
+    def test_enum_string_accepts_second_allowed_value(self):
+        """A string enum field should accept any of the allowed values."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["active", "inactive"]},
+            },
+            "required": ["status"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "EnumModel")
+        instance = model.model_validate({"status": "inactive"})
+
+        # Assert
+        assert instance.status == "inactive"
+
+    def test_enum_without_explicit_type_treats_as_string_enum(self):
+        """An enum block without an explicit `type` should be treated as a string enum."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "level": {"enum": ["low", "medium", "high"]},
+            },
+            "required": ["level"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "LevelEnumModel")
+        instance = model.model_validate({"level": "medium"})
+
+        # Assert
+        assert instance.level == "medium"
+
+    def test_enum_without_explicit_type_rejects_outside_enum(self):
+        """An enum block without an explicit `type` should reject values outside the enum."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "level": {"enum": ["low", "medium", "high"]},
+            },
+            "required": ["level"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "LevelEnumModel")
+
+        # Assert
+        with pytest.raises(ValidationError):
+            model.model_validate({"level": "critical"})
+
+
+class TestSchemaTypeArray:
+    """Tests for schema_to_pydantic_model with `type: ["string", "null"]` array form.
+
+    OpenAPI/JSON Schema allows expressing nullable types as a list:
+    ``type: ["string", "null"]``. The converter must produce a ``str | None`` field.
+    """
+
+    def test_type_array_string_null_accepts_string(self):
+        """A `type: ["string", "null"]` field should accept a string."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "nickname": {"type": ["string", "null"]},
+            },
+            "required": ["nickname"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "TypeArrayModel")
+        instance = model.model_validate({"nickname": "toto"})
+
+        # Assert
+        assert instance.nickname == "toto"
+
+    def test_type_array_string_null_accepts_none(self):
+        """A `type: ["string", "null"]` field should accept None."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "nickname": {"type": ["string", "null"]},
+            },
+            "required": ["nickname"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "TypeArrayModel")
+        instance = model.model_validate({"nickname": None})
+
+        # Assert
+        assert instance.nickname is None
+
+    def test_type_array_string_null_rejects_integer(self):
+        """A `type: ["string", "null"]` field should reject an integer."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "nickname": {"type": ["string", "null"]},
+            },
+            "required": ["nickname"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "TypeArrayModel")
+
+        # Assert
+        with pytest.raises(ValidationError):
+            model.model_validate({"nickname": 42})
+
+    def test_type_array_number_null_accepts_float(self):
+        """A `type: ["number", "null"]` field should accept a float."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "price": {"type": ["number", "null"]},
+            },
+            "required": ["price"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "TypeArrayNumModel")
+        instance = model.model_validate({"price": 9.99})
+
+        # Assert
+        assert instance.price == 9.99
+
+    def test_type_array_number_null_accepts_none(self):
+        """A `type: ["number", "null"]` field should accept None."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "price": {"type": ["number", "null"]},
+            },
+            "required": ["price"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "TypeArrayNumModel")
+        instance = model.model_validate({"price": None})
+
+        # Assert
+        assert instance.price is None
+
+
+class TestSchemaNestedRegression:
+    """Regression tests ensuring nested object + array of objects still work.
+
+    These must keep passing after the migration adds anyOf/enum/type-array support.
+    """
+
+    def test_nested_object_with_array_of_objects_parses(self):
+        """A schema combining a nested object and an array of objects should still parse."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "metadata": {
+                    "type": "object",
+                    "properties": {"version": {"type": "integer"}},
+                    "required": ["version"],
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"id": {"type": "string"}},
+                        "required": ["id"],
+                    },
+                },
+            },
+            "required": ["metadata", "items"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "ComplexModel")
+        instance = model.model_validate(
+            {
+                "metadata": {"version": 3},
+                "items": [{"id": "a"}, {"id": "b"}],
+            }
+        )
+
+        # Assert
+        assert instance.metadata.version == 3
+        assert len(instance.items) == 2
+        assert instance.items[0].id == "a"
+
+    def test_nested_object_with_array_of_objects_strips_extras(self):
+        """Extras in nested objects/arrays should still be stripped."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"id": {"type": "string"}},
+                        "required": ["id"],
+                    },
+                }
+            },
+            "required": ["items"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "StripArrayModel")
+        instance = model.model_validate({"items": [{"id": "a", "junk": 1}]})
+
+        # Assert
+        assert "junk" not in instance.items[0].model_dump()
+
+
+class TestSchemaExtraIgnore:
+    """Tests that extra='ignore' is preserved across all generated models.
+
+    Extra fields in input dicts must be silently stripped (no ValidationError).
+    """
+
+    def test_extra_top_level_field_stripped_no_error(self):
+        """Extra top-level fields should be stripped without raising."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "StrictModel")
+        instance = model.model_validate({"name": "Alice", "ghost": "boo"})
+
+        # Assert
+        assert instance.name == "Alice"
+        assert "ghost" not in instance.model_dump()
+
+    def test_extra_nested_field_stripped_no_error(self):
+        """Extra nested fields should be stripped without raising."""
+        # Arrange
+        schema = {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                }
+            },
+            "required": ["address"],
+        }
+
+        # Act
+        model = schema_to_pydantic_model(schema, "NestedStrictModel")
+        instance = model.model_validate({"address": {"city": "Paris", "phantom": 1}})
+
+        # Assert
+        assert instance.address.city == "Paris"
+        assert "phantom" not in instance.address.model_dump()

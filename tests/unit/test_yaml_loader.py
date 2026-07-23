@@ -98,11 +98,11 @@ class TestYamlAgentConfigLoaderLoad:
             'model: "openai:gpt-4o"\n'
             'system_prompt: "You are helpful."\n'
             "middleware:\n  - todo_list\n  - filesystem\n"
-            "backend:\n  type: filesystem\n  root_dir: \"./workspace\"\n"
+            'backend:\n  type: filesystem\n  root_dir: "./workspace"\n'
             "hitl:\n  rules:\n    write_file: true\n"
-            "memory:\n  - \"./AGENTS.md\"\n"
-            "skills:\n  - \"./skills/\"\n"
-            "subagents:\n  - name: sub\n    description: \"A subagent\"\n"
+            'memory:\n  - "./AGENTS.md"\n'
+            'skills:\n  - "./skills/"\n'
+            'subagents:\n  - name: sub\n    description: "A subagent"\n'
             "debug: true\n"
         )
         yaml_file = tmp_path / "agent.yaml"
@@ -117,11 +117,7 @@ class TestYamlAgentConfigLoaderLoad:
     def test_loads_full_config_returns_middleware(self, yaml_loader, tmp_path):
         """Should parse the middleware list from a full YAML config."""
         # Arrange
-        yaml_content = (
-            "name: full-agent\n"
-            "middleware:\n  - todo_list\n  - filesystem\n"
-            "debug: true\n"
-        )
+        yaml_content = "name: full-agent\nmiddleware:\n  - todo_list\n  - filesystem\ndebug: true\n"
         yaml_file = tmp_path / "agent.yaml"
         yaml_file.write_text(yaml_content)
 
@@ -134,10 +130,7 @@ class TestYamlAgentConfigLoaderLoad:
     def test_loads_full_config_returns_backend_root_dir(self, yaml_loader, tmp_path):
         """Should parse backend root_dir from a full YAML config."""
         # Arrange
-        yaml_content = (
-            "name: full-agent\n"
-            "backend:\n  type: filesystem\n  root_dir: \"./workspace\"\n"
-        )
+        yaml_content = 'name: full-agent\nbackend:\n  type: filesystem\n  root_dir: "./workspace"\n'
         yaml_file = tmp_path / "agent.yaml"
         yaml_file.write_text(yaml_content)
 
@@ -150,10 +143,7 @@ class TestYamlAgentConfigLoaderLoad:
     def test_loads_full_config_returns_subagents(self, yaml_loader, tmp_path):
         """Should parse the subagents list from a full YAML config."""
         # Arrange
-        yaml_content = (
-            "name: full-agent\n"
-            "subagents:\n  - name: sub\n    description: \"A subagent\"\n"
-        )
+        yaml_content = 'name: full-agent\nsubagents:\n  - name: sub\n    description: "A subagent"\n'
         yaml_file = tmp_path / "agent.yaml"
         yaml_file.write_text(yaml_content)
 
@@ -197,11 +187,7 @@ class TestYamlAgentConfigLoaderLoadFromString:
     def test_returns_model_for_valid_yaml(self, yaml_loader):
         """Should parse valid YAML string and return the agent model."""
         # Arrange
-        yaml_content = (
-            "name: test-agent\n"
-            "model: claude-sonnet-4-5-20250929\n"
-            'system_prompt: "You are a test agent."\n'
-        )
+        yaml_content = 'name: test-agent\nmodel: claude-sonnet-4-5-20250929\nsystem_prompt: "You are a test agent."\n'
 
         # Act
         config = yaml_loader.load_from_string(yaml_content)
@@ -212,10 +198,7 @@ class TestYamlAgentConfigLoaderLoadFromString:
     def test_returns_system_prompt_for_valid_yaml(self, yaml_loader):
         """Should parse valid YAML string and return the system_prompt."""
         # Arrange
-        yaml_content = (
-            "name: test-agent\n"
-            'system_prompt: "You are a test agent."\n'
-        )
+        yaml_content = 'name: test-agent\nsystem_prompt: "You are a test agent."\n'
 
         # Act
         config = yaml_loader.load_from_string(yaml_content)

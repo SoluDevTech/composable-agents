@@ -4,7 +4,7 @@ Configure Deep Agent LangGraph agents in YAML and expose them via FastAPI.
 
 **composable-agents** is a Python framework that lets you declare AI agents as simple YAML files and instantly expose them as a full-featured HTTP API. It is built on [deepagents](https://pypi.org/project/deepagents/) (LangGraph-based Deep Agent) with a strict hexagonal architecture, making every component testable and replaceable.
 
-The server supports **multi-agent mode**: multiple agents are defined as separate YAML files in an `agents/` directory, each thread is bound to a specific agent at creation time, and agents are lazily instantiated on first use.
+The server supports **multi-agent mode**: multiple agents are defined as separate YAML files in an `agents/` directory, each thread is bound to a specific agent at creation time, and agents are lazily instantiated on first use. Sub-agents declared in the `subagents` config are fully traced: every event emitted by a sub-agent carries its name in the `source` field of the corresponding `TraceEvent`, so the client can group events per sub-agent (see [TraceEvent](#traceevent-format)).
 
 ---
 
@@ -36,6 +36,8 @@ DATABASE_URL=postgresql://raganything:raganything@localhost:5433/raganything
 ```
 
 > **⚠️ Breaking change:** The `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DATABASE` environment variables have been replaced by a single `DATABASE_URL` variable. If you are upgrading from a previous version, construct your `DATABASE_URL` as `postgresql://<user>:<password>@<host>:<port>/<database>` and remove the old `POSTGRES_*` variables from your `.env`.
+
+> **⚠️ Breaking change (trace events):** The legacy `StreamEvent` SSE format and the `messages` table have been removed. The `/stream` and WebSocket endpoints now emit `TraceEvent` JSON objects. See [Breaking Changes](#breaking-changes) for migration details.
 
 ### Configure your agents
 
@@ -82,13 +84,24 @@ curl -X POST http://localhost:8000/api/v1/threads \
 curl -X POST http://localhost:8000/api/v1/chat/<thread_id> \
   -H "Content-Type: application/json" \
   -d '{"message": "Hello, what can you do?"}'
+
+# Stream a message (yields TraceEvent JSON objects, one per SSE line, ends with [DONE])
+curl -N -X POST http://localhost:8000/api/v1/chat/<thread_id>/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello, what can you do?"}'
+
+# Get the full thread history (thread + turns grouped by turn_id)
+curl http://localhost:8000/api/v1/threads/<thread_id>/history
+
+# Get the flat trace of events for a thread
+curl http://localhost:8000/api/v1/threads/<thread_id>/trace
 ```
 
 ---
 
 ## Multi-Agent Architecture
 
-composable-agents now supports running **multiple agents simultaneously**. Each agent is defined by a separate YAML file in the `agents/` directory.
+composable-agents now supports running **multiple agents simultaneously**. Each agent is defined by a separate YAML file in the `agents/` directory. Sub-agents declared via `subagents` are traced individually: each `TraceEvent` they emit includes the sub-agent name in its `source` field, so the timeline can be grouped per sub-agent on the client side.
 
 ### How it works
 
@@ -151,6 +164,7 @@ Every agent is defined by a single YAML file validated against the `AgentConfig`
 | `subagents` | `list[SubAgentConfig]` | `[]` | Sub-agent definitions for delegation. |
 | `mcp_servers` | `list[McpServerConfig]` | `[]` | MCP server connections. See [MCP Servers](#mcp-servers). |
 | `debug` | `bool` | `false` | Enable debug mode. |
+| `response_format` | `dict` | `null` | Inline JSON Schema dict for structured output. See [Structured Output (response_format)](#structured-output-response_format). |
 
 ### SubAgentConfig
 
@@ -194,7 +208,81 @@ Allowed decisions: `approve`, `edit`, `reject`.
 
 ---
 
-## Supported Models
+## Structured Output (`response_format`)
+
+The `response_format` field in agent YAML configures structured output — forcing the LLM to reply with JSON conforming to a JSON Schema. Define it inline as a dict (a valid JSON Schema) in the agent's YAML:
+
+```yaml
+name: invoice-extractor
+model: claude-sonnet-4-5-20250929
+response_format:
+  type: object
+  properties:
+    invoice_number: { type: string }
+    total_cents: { type: integer }
+    currency: { type: string, enum: ["USD", "EUR", "GBP"] }
+    paid: { anyOf: [{ type: boolean }, { type: "null" }] }
+  required: [invoice_number, total_cents, currency]
+  additionalProperties: false
+```
+
+### Native passthrough to deepagents/langchain
+
+The dict is passed **natively** to `create_deep_agent(response_format=dict)`. No custom tool injection or prompt instruction concatenation is performed — the previous "tool leurre" hack (`_create_response_tool`, `_JSON_TYPE_MAP`, `STRUCTURED_OUTPUT_INSTRUCTION`) has been deleted.
+
+langchain uses an **`AutoStrategy`** internally to pick the right delivery mechanism based on the model name:
+
+- **`ProviderStrategy`** — the schema is passed as a native provider parameter (Anthropic `response_format`/tool_use strict mode, OpenAI `response_format` with `json_schema`, etc.).
+- **`ToolStrategy`** — when the provider does not support native structured output, langchain injects a real tool whose schema is the JSON Schema, and the LLM is asked to call it.
+
+You do not need to choose the strategy yourself — `AutoStrategy` selects based on the configured `model`.
+
+### `structured_response` delivery
+
+When the LLM produces a structured response, it is attached to the `Message` as `structured_response` (a dict validated against the schema). The `AI_MESSAGE` trace event carries the structured payload **inside `content`** as a JSON-serialized `Message` — it is **not** placed in `metadata`. The `metadata` of an `AI_MESSAGE` now only contains `{"status": ...}`.
+
+Clients consuming `AI_MESSAGE` events must JSON-parse `content` and read `structured_response` from the resulting `Message` object.
+
+### Missing structured response
+
+If the LLM fails to produce a structured response despite a `response_format` being configured:
+
+- A warning is logged (`STRUCTURED_RESPONSE_MISSING`).
+- `Message.structured_response` is set to `None`.
+- **No error is raised** — the client decides how to handle the absence.
+
+### Supported JSON Schema constructs
+
+`schema_utils.py` converts the JSON Schema dict to a Pydantic model at agent build time. The converter supports:
+
+- `type` (string, integer, number, boolean, object, array, string)
+- `type: ["string", "null"]` — array form for nullable scalars
+- `anyOf` — nullable fields (use `anyOf: [{type: <T>}, {type: "null"}]`)
+- `enum` — maps to `Literal` on the Pydantic side
+- `properties` / `required` — nested objects
+- `items` — arrays of objects or scalars
+
+Not supported (will raise at build time or be ignored):
+
+- `$ref`, `$defs`
+- `oneOf`, `allOf`
+- `if` / `then` / `else`
+- `dependentSchemas`
+- `patternProperties`
+
+### Provider strict-mode constraints
+
+When `AutoStrategy` selects `ProviderStrategy` against a provider that enforces strict mode (e.g. Anthropic's strict tool-use), the schema must satisfy the provider's constraints or the request will be rejected:
+
+- Set `additionalProperties: false` on every object (recommended default).
+- Use `anyOf` for nullable fields — do not use `type: ["string", "null"]` for Anthropic strict mode; use `anyOf: [{type: "string"}, {type: "null"}]` instead.
+- Do **not** put `default` on `required` fields (Anthropic strict mode forbids it).
+- All properties listed in `required` must appear in `properties`.
+
+These constraints only apply when the provider enforces strict mode; `ToolStrategy` is more permissive. Since `AutoStrategy` picks automatically, authoring schemas that satisfy the strict constraints up front is the safest approach.
+
+---
+
 
 | Provider | Format | Example |
 |---|---|---|
@@ -288,7 +376,9 @@ All endpoints are prefixed appropriately. The server runs on `http://localhost:8
 | `GET` | `/api/v1/threads` | List all threads | `200` |
 | `GET` | `/api/v1/threads/{thread_id}` | Get a specific thread | `200` |
 | `DELETE` | `/api/v1/threads/{thread_id}` | Delete a thread | `204` |
-| `GET` | `/api/v1/threads/{thread_id}/messages` | List messages in a thread | `200` |
+| `GET` | `/api/v1/threads/{thread_id}/history` | Get thread history grouped by turn (`ThreadHistory`) | `200` |
+| `GET` | `/api/v1/threads/{thread_id}/trace` | Get the flat list of `TraceEvent`s for a thread | `200` |
+| `GET` | `/api/v1/threads/{thread_id}/messages` | List messages in a thread (projection from `trace_events`: `HUMAN_MESSAGE` + `AI_MESSAGE` only, backward-compat) | `200` |
 | `POST` | `/api/v1/chat/{thread_id}` | Send a message and get the full response | `200` |
 | `POST` | `/api/v1/chat/{thread_id}/stream` | Send a message and stream the response (SSE) | `200` |
 | `POST` | `/api/v1/threads/{thread_id}/hitl` | Submit a human-in-the-loop decision | `200` |
@@ -460,41 +550,115 @@ curl -N -X POST http://localhost:8000/api/v1/chat/a1b2c3d4-e5f6-7890-abcd-ef1234
   -d '{"message": "Write a haiku about programming."}'
 ```
 
-Response (Server-Sent Events):
+Response (Server-Sent Events, one `TraceEvent` JSON object per line):
 
 ```
-data: {"type":"thinking","data":"Hmm, a haiku needs 5-7-5 syllables..."}
+data: {"id":"...","thread_id":"...","turn_id":"...","type":"HUMAN_MESSAGE","source":null,"name":null,"content":"Write a haiku about programming.","metadata":{},"timestamp":"2025-04-24T10:30:00.000000Z","sequence":0}
 
-data: {"type":"content","data":"Lines"}
+data: {"id":"...","thread_id":"...","turn_id":"...","type":"THINKING","source":null,"name":null,"content":"Hmm, a haiku needs 5-7-5 syllables...","metadata":{},"timestamp":"...","sequence":1}
 
-data: {"type":"content","data":" of"}
+data: {"id":"...","thread_id":"...","turn_id":"...","type":"CONTENT","source":null,"name":null,"content":"Lines","metadata":{},"timestamp":"...","sequence":2}
 
-data: {"type":"content","data":" code"}
+data: {"id":"...","thread_id":"...","turn_id":"...","type":"CONTENT","source":null,"name":null,"content":" of","metadata":{},"timestamp":"...","sequence":3}
 
-data: {"type":"content","data":" align"}
+data: {"id":"...","thread_id":"...","turn_id":"...","type":"CONTENT","source":null,"name":null,"content":" code","metadata":{},"timestamp":"...","sequence":4}
 
-data: {"type":"content","data":"..."}
-
-data: {"type":"message","data":"{\"role\":\"ai\",\"content\":\"Lines of code align...\",\"timestamp\":\"2025-04-24T10:30:05.000000Z\",\"tool_calls\":null,\"status\":\"completed\",\"structured_response\":null,\"thinking\":\"Hmm, a haiku needs 5-7-5 syllables...\"}"}
+data: {"id":"...","thread_id":"...","turn_id":"...","type":"AI_MESSAGE","source":null,"name":null,"content":"Lines of code align...","metadata":{},"timestamp":"...","sequence":5}
 
 data: [DONE]
 ```
 
-The stream emits **typed `StreamEvent` JSON objects** over SSE:
+#### `TraceEvent` format
 
-| `type` | Description | Persisted? |
+Each `data:` line (except the final `[DONE]`) is a JSON-serialized `TraceEvent` with the following fields:
+
+| Field | Type | Description |
 |---|---|---|
-| `thinking` | Reasoning / chain-of-thought tokens from extended-thinking models (e.g., Claude reasoning). | Yes — saved in `Message.thinking` |
-| `content` | Response text / markdown tokens as they are generated. | Yes — aggregated into `Message.content` |
-| `message` | The final complete `Message` JSON with all fields (`role`, `content`, `timestamp`, `tool_calls`, `status`, `structured_response`, `thinking`). Identical in format to the synchronous `POST /chat/{thread_id}` response. | Yes — persisted as the AI turn in the thread |
+| `id` | `string` | Unique event ID. |
+| `thread_id` | `string` | Owning thread ID. |
+| `turn_id` | `string` | Turn ID grouping all events from one user message to the next AI reply. |
+| `type` | `enum` | One of `HUMAN_MESSAGE`, `AI_MESSAGE`, `THINKING`, `CONTENT`, `TOOL_CALL`, `TOOL_RESULT`. |
+| `source` | `string \| null` | Sub-agent name when the event was emitted by a sub-agent, `null` for the parent agent. |
+| `name` | `string \| null` | Tool name (only for `TOOL_CALL` / `TOOL_RESULT`). |
+| `content` | `string` | Text payload (message text, thinking text, content chunk, tool arguments/result). |
+| `metadata` | `object` | Additional structured data (e.g. tool call ID, `{"status": ...}` for `AI_MESSAGE`). The structured response for an `AI_MESSAGE` is **not** in `metadata` — it lives in `content` as part of the JSON-serialized `Message`. See [Structured Output](#structured-output-response_format). |
+| `timestamp` | `string` | ISO 8601 timestamp. |
+| `sequence` | `int` | Monotonic sequence number within the thread (ordering). |
 
-The stream ends with `data: [DONE]`.
+#### Error payload
 
-This design prevents Cloudflare timeout issues (~100s on idle connections) because chunks and SSE pings (every 15s) keep the connection active. Clients can switch rendering based on `type`:
+On error the stream emits a single JSON object (NOT a valid `TraceEvent`) followed by `[DONE]`:
 
-- Render `thinking` events in a collapsible reasoning panel.
-- Append `content` events directly to the chat bubble.
-- Wait for the `message` event to finalize metadata (status, structure, tool calls).
+```
+data: {"type":"error","data":"Agent execution failed: ..."}
+
+data: [DONE]
+```
+
+Clients should check for `type === "error"` before parsing as `TraceEvent`.
+
+#### Rendering guidance
+
+- Render `THINKING` events in a collapsible reasoning panel.
+- Append `CONTENT` events directly to the chat bubble (or the relevant sub-agent panel when `source` is set).
+- Render `TOOL_CALL` as a badge and `TOOL_RESULT` as a terminal-style block.
+- Group events by `source` to display sub-agent panels separately.
+- Wait for the `AI_MESSAGE` event to finalize the turn.
+
+This design prevents Cloudflare timeout issues (~100s on idle connections) because chunks and SSE pings (every 15s) keep the connection active.
+
+### 6b. Get Thread History
+
+```bash
+curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/history
+```
+
+Response (`200`) — `ThreadHistory`:
+
+```json
+{
+  "thread": {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "agent_name": "example-agent",
+    "created_at": "2025-01-15T10:30:00.000000",
+    "updated_at": "2025-01-15T10:30:05.000000"
+  },
+  "turns": [
+    {
+      "turn_id": "turn-uuid-1",
+      "human_message": { "id": "...", "type": "HUMAN_MESSAGE", "content": "Hello", ... },
+      "ai_message": { "id": "...", "type": "AI_MESSAGE", "content": "Hi!", ... },
+      "events": [
+        { "id": "...", "type": "THINKING", "source": null, "content": "...", ... },
+        { "id": "...", "type": "TOOL_CALL", "source": "researcher", "name": "search", ... },
+        { "id": "...", "type": "TOOL_RESULT", "source": "researcher", "name": "search", ... }
+      ]
+    }
+  ]
+}
+```
+
+`events` contains the intermediate events (`THINKING`, `CONTENT`, `TOOL_CALL`, `TOOL_RESULT`) for the turn, in `sequence` order. `human_message` and `ai_message` are the terminal `HUMAN_MESSAGE` / `AI_MESSAGE` events.
+
+### 6c. Get Flat Trace
+
+```bash
+curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/trace
+```
+
+Response (`200`):
+
+```json
+{
+  "events": [
+    { "id": "...", "type": "HUMAN_MESSAGE", "content": "Hello", ... },
+    { "id": "...", "type": "THINKING", "content": "...", ... },
+    { "id": "...", "type": "AI_MESSAGE", "content": "Hi!", ... }
+  ]
+}
+```
+
+Returns the full flat list of `TraceEvent`s for the thread, ordered by `sequence`.
 
 ### 7. List All Threads
 
@@ -747,15 +911,18 @@ ws.onmessage = (event) => {
     return;
   }
   const data = JSON.parse(event.data);
+  if (data.type === "error") { console.error("Error:", data.data); return; }
   switch (data.type) {
-    case "thinking": console.log("[Thinking]", data.data); break;
-    case "content":  process.stdout.write(data.data); break;
-    case "message":  console.log("Final message:", data.data); break;
+    case "THINKING":   console.log("[Thinking]", data.content); break;
+    case "CONTENT":    process.stdout.write(data.content); break;
+    case "AI_MESSAGE": console.log("Final message:", data.content); break;
+    case "TOOL_CALL":  console.log("Tool call:", data.name, data.content); break;
+    case "TOOL_RESULT":console.log("Tool result:", data.name, data.content); break;
   }
 };
 ```
 
-The WebSocket stream emits typed `StreamEvent` JSON objects: `thinking` (reasoning tokens), `content` (response text), `message` (final full `Message` JSON), then `[END]`.
+The WebSocket stream emits `TraceEvent` JSON objects (same shape as the `/stream` SSE endpoint), then `[END]`. On error, emits `{"type":"error","data":"..."}` before `[END]`.
 
 ---
 
@@ -857,18 +1024,25 @@ composable-agents/
       versions/
         001_create_agent_configs_table.py
         002_create_threads_and_messages_tables.py
+        005_create_trace_events_table.py   # Create trace_events table
+        006_migrate_messages_to_trace_events.py  # Backfill trace_events from messages
+        007_drop_messages_table.py          # Drop legacy messages table
     application/
       requests/
         chat.py                        # Request models (ChatRequest, CreateThreadRequest, HITLDecisionRequest)
+      responses/
+        thread_history.py               # ThreadHistory response DTO (thread + turns)
       routes/
         health.py                      # GET /health
         threads.py                     # CRUD /api/v1/threads
         chat.py                        # POST /api/v1/chat/{id} and /stream
+        trace.py                       # GET /api/v1/threads/{id}/history and /trace
         agents.py                      # GET /api/v1/agents
         websocket.py                   # WS /api/v1/ws/{id}
       use_cases/
         send_message.py                # Invoke agent synchronously
         stream_message.py              # Stream agent response
+        get_thread_history.py          # Build ThreadHistory from trace_events (group by turn_id)
         create_agent_config.py         # Create agent config (MinIO + Postgres)
         update_agent_config.py         # Update agent config
         delete_agent_config.py         # Delete agent config
@@ -882,8 +1056,9 @@ composable-agents/
         agent_config.py                # AgentConfig, BackendConfig, HITLConfig, SubAgentConfig
         agent_config_metadata.py       # AgentConfigMetadata
         mcp_server_config.py           # McpServerConfig, McpTransportType
-        message.py                     # Message (role, content, timestamp, tool_calls)
-        thread.py                      # Thread (id, agent_name, messages, timestamps)
+        message.py                     # Message (role, content, timestamp, tool_calls) — projection model
+        thread.py                       # Thread (id, agent_name, timestamps) — no more MessageModel
+        trace_event.py                  # TraceEvent entity + TraceEventType enum (6 types)
         tracing_config.py              # TracingConfig, TracingProviderType
       ports/
         agent_config_loader.py         # Abstract: load config from file
@@ -893,6 +1068,7 @@ composable-agents/
         agent_runner.py                # Abstract: invoke, stream, HITL operations
         mcp_tool_loader.py             # Abstract: load MCP tools
         thread_repository.py           # Abstract: CRUD for threads
+        trace_event_repository.py      # Abstract: persist/append/list TraceEvents
         tracing_provider.py            # Abstract: tracing lifecycle
       exceptions.py                    # DomainError hierarchy (incl. AgentNotFoundError, StorageError)
     infrastructure/
@@ -901,9 +1077,10 @@ composable-agents/
         models/
           base.py                      # SQLAlchemy DeclarativeBase
           agent_config.py              # AgentConfigModel (ORM)
-          thread.py                    # ThreadModel + MessageModel (ORM)
+          thread.py                    # ThreadModel (ORM) — MessageModel removed
+          trace_event.py               # TraceEventModel (ORM)
       deepagent/
-        adapter.py                     # DeepAgentRunner (LangGraph adapter)
+        adapter.py                     # DeepAgentRunner (LangGraph adapter) — emits TraceEvent
         factory.py                     # create_agent_from_config (resolves tools, middleware, backend)
         registry.py                    # DeepAgentRegistry (lazy loading + caching from agents/ dir)
         example_tools.py               # Example tools: current_time, word_count
@@ -917,7 +1094,9 @@ composable-agents/
         adapter.py                     # PostgresAgentConfigRepository
       postgres_thread/
         adapter.py                     # PostgresThreadRepository (thread persistence)
-        models.py                      # Re-exports ThreadModel, MessageModel
+        models.py                     # Re-exports ThreadModel
+      postgres_trace/
+        adapter.py                     # PostgresTraceEventRepository (trace_events persistence)
       yaml_config/
         adapter.py                     # YamlAgentConfigLoader
       tracing/
@@ -1063,20 +1242,33 @@ Thread and agent config persistence is backed by PostgreSQL, accessed via SQLAlc
 
 ### Schema
 
-The database uses a flat normalized schema with two tables for thread persistence:
+The database uses a flat normalized schema. Thread persistence relies on a single `trace_events` table as the source of truth for all conversation activity (the legacy `messages` table has been dropped — see [Breaking changes](#breaking-changes)).
 
 | Table | Description |
 |---|---|
 | `threads` | One row per conversation thread. Columns: `id` (PK, VARCHAR 36), `agent_name`, `created_at`, `updated_at`. |
-| `messages` | One row per message. Columns: `id` (PK), `thread_id` (FK to `threads.id`, CASCADE delete), `role`, `content`, `timestamp`, `tool_calls` (JSONB), `status`, `structured_response` (JSONB). |
+| `trace_events` | One row per trace event. Columns: `id` (PK), `thread_id` (FK to `threads.id`, CASCADE delete), `turn_id`, `type` (enum: `HUMAN_MESSAGE`, `AI_MESSAGE`, `THINKING`, `CONTENT`, `TOOL_CALL`, `TOOL_RESULT`), `source` (sub-agent name or null), `name` (tool name or null), `content` (text), `metadata` (JSONB), `timestamp`, `sequence` (int, monotonic per thread). |
+| `agent_configs` | Agent configuration metadata. |
 
-Indexes: `ix_messages_thread_id`, `ix_messages_thread_id_timestamp`, `ix_threads_agent_name`.
+Indexes on `trace_events`:
 
-A third table, `agent_configs`, stores agent configuration metadata.
+- `ix_trace_events_thread_id` — fast lookup of all events for a thread.
+- `ix_trace_events_thread_id_sequence` — ordered retrieval of events within a thread (used by `/trace` and `/history`).
+- `ix_trace_events_thread_id_turn_id` — grouping events by turn (used by `/history`).
+
+The `messages` table has been **dropped** (migration `007`). Its data was backfilled into `trace_events` by migration `006` (each old `Message` row became a `HUMAN_MESSAGE` or `AI_MESSAGE` event). The legacy `GET /api/v1/threads/{id}/messages` endpoint is preserved as a backward-compatible projection that filters `trace_events` to `HUMAN_MESSAGE` + `AI_MESSAGE` rows.
 
 ### Migrations (Alembic)
 
 Alembic migrations live in `src/alembic/versions/` and run **automatically at startup** (via `asyncio.to_thread()` in the FastAPI lifespan). You never need to run `alembic upgrade` manually in normal operation.
+
+Relevant migrations for the trace events refactor:
+
+| Migration | Description |
+|---|---|
+| `005_create_trace_events_table` | Creates the `trace_events` table with the 3 indexes above. |
+| `006_migrate_messages_to_trace_events` | Backfills `trace_events` from existing `messages` rows (`role = "human"` → `HUMAN_MESSAGE`, `role = "ai"` → `AI_MESSAGE`). |
+| `007_drop_messages_table` | Drops the legacy `messages` table. |
 
 To create a new migration manually:
 
@@ -1101,12 +1293,40 @@ uv run alembic current
 
 ### Architecture Decisions
 
-- **Hexagonal architecture**: `ThreadRepository` (port) -> `PostgresThreadRepository` (adapter). The domain layer has no knowledge of SQLAlchemy.
+- **Hexagonal architecture**: `ThreadRepository` (port) -> `PostgresThreadRepository` (adapter), `TraceEventRepository` (port) -> `PostgresTraceEventRepository` (adapter). The domain layer has no knowledge of SQLAlchemy.
 - **Session-per-method**: Each repository method creates its own `AsyncSession` from the engine, ensuring thread-safety for concurrent FastAPI requests.
 - **Connection pooling**: `AsyncAdaptedQueuePool` with `pool_size=20`, `max_overflow=20`, and `pool_pre_ping=True`.
-- **Cascade deletes**: Deleting a thread automatically deletes all its messages via `ON DELETE CASCADE` at both the SQL and ORM level.
-- **Message ordering**: Messages are sorted by `timestamp` (oldest first). The ORM relationship specifies `order_by`, and the adapter applies a defensive Python sort as well.
-- **JSONB columns**: `tool_calls` and `structured_response` are stored as PostgreSQL `JSONB`, allowing structured data without additional join tables.
+- **Cascade deletes**: Deleting a thread automatically deletes all its `trace_events` via `ON DELETE CASCADE` at both the SQL and ORM level.
+- **Event ordering**: `trace_events` are sorted by `sequence` (monotonic per thread). The adapter applies a defensive Python sort as well.
+- **JSONB columns**: `metadata` is stored as PostgreSQL `JSONB`, allowing structured data (tool call IDs, structured responses) without additional join tables.
+- **Single source of truth**: `trace_events` is the only persistence for conversation activity. `messages` is no longer a table; the `/messages` endpoint is a read-only projection.
+
+---
+
+## Breaking Changes
+
+This release replaces the legacy `StreamEvent` / `messages`-based model with a unified `TraceEvent` model.
+
+### `StreamEvent` removed
+
+The old SSE payload format (`{"type": "thinking" | "content" | "message" | "structured" | "error", "data": "..."}`) is **removed**. The `/stream` and WebSocket endpoints now emit `TraceEvent.model_dump_json()` objects (see [TraceEvent format](#traceevent-format)). Clients must be updated to parse the new schema. The only non-`TraceEvent` payload is the error object `{"type": "error", "data": "..."}` emitted on failure (followed by `[DONE]`).
+
+### `messages` table dropped
+
+The `messages` PostgreSQL table has been dropped (migration `007`). All conversation activity is now stored in `trace_events`. Migration `006` backfills `trace_events` from existing `messages` rows, so no data is lost when upgrading. The `GET /api/v1/threads/{id}/messages` endpoint is preserved as a backward-compatible projection (filters `trace_events` to `HUMAN_MESSAGE` + `AI_MESSAGE`).
+
+### `AgentRunner` API
+
+The `AgentRunner` port signatures have changed:
+
+- `invoke(thread_id, message, turn_id) -> tuple[Message, list[TraceEvent]]`
+- `stream(thread_id, message, turn_id) -> AsyncIterator[TraceEvent]`
+
+Adapters and tests calling the old `invoke(thread_id, message) -> Message` / `stream(...) -> AsyncIterator[StreamEvent]` signatures must be updated.
+
+### Migrations
+
+Migrations `005`, `006`, `007` run automatically on startup. They are idempotent and safe to run on an existing database with data.
 
 ---
 

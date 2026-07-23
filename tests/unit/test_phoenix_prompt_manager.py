@@ -95,9 +95,7 @@ class TestPhoenixPromptManagerProviderGet:
     @pytest.fixture
     def manager(self):
         with patch("src.infrastructure.prompt_management.adapter.Client") as mock_client_cls:
-            prompt_obj = _make_phoenix_prompt_obj(
-                messages=[{"role": "system", "content": "Hello"}]
-            )
+            prompt_obj = _make_phoenix_prompt_obj(messages=[{"role": "system", "content": "Hello"}])
             client = _make_client_mock(prompt_obj, tags_list=[{"name": "production"}])
             mock_client_cls.return_value = client
             return PhoenixPromptManagerProvider(base_url="http://localhost:6006", api_key="test-key")

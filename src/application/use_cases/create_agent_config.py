@@ -44,9 +44,7 @@ class CreateAgentConfigUseCase:
         config = self._config_loader.load_from_string(yaml_content)
 
         if config.name != name:
-            raise ConfigError(
-                ErrorMessage.AGENT_NAME_MISMATCH.format(yaml_name=config.name, name=name)
-            )
+            raise ConfigError(ErrorMessage.AGENT_NAME_MISMATCH.format(yaml_name=config.name, name=name))
 
         if await self._config_repository.exists(name):
             raise AgentConfigAlreadyExistsError(ErrorMessage.AGENT_CONFIG_ALREADY_EXISTS.format(name=name))

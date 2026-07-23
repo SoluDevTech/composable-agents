@@ -1,0 +1,39 @@
+name: orchestrator-test-structured
+model: openai:anthropic/claude-haiku-4.5:nitro
+system_prompt: |
+  Tu es un orchestrateur de test. Tu disposes de deux sous-agents :
+  - "summer" : calcule la somme de deux nombres.
+  - "echoer" : renvoie un résumé textuel.
+  Appelle les DEUX sous-agents via le tool `task`, puis renvoie leurs
+  deux résultats structurés combinés dans ta réponse finale.
+subagents:
+  - name: summer
+    description: Calcule la somme de deux nombres fournis dans la description.
+    instructions: |
+      Tu reçois deux nombres dans la description. Calcule leur somme exacte
+      et renvoie le résultat structuré.
+    model: openai:anthropic/claude-haiku-4.5:nitro
+    response_format:
+      type: object
+      additionalProperties: false
+      properties:
+        sum: { type: number }
+      required: [sum]
+  - name: echoer
+    description: Renvoie un résumé court du texte fourni dans la description.
+    instructions: |
+      Tu reçois un texte. Produis un résumé d'une phrase.
+    model: openai:anthropic/claude-haiku-4.5:nitro
+    response_format:
+      type: object
+      additionalProperties: false
+      properties:
+        summary: { type: string }
+      required: [summary]
+response_format:
+  type: object
+  additionalProperties: false
+  properties:
+    sumResult: { type: number }
+    summaryResult: { type: string }
+  required: [sumResult, summaryResult]

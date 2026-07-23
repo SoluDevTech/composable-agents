@@ -1,70 +1,37 @@
-import hashlib
 import importlib
-import json
 import logging
 from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend, StoreBackend
-from langchain_core.tools import StructuredTool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.store.memory import InMemoryStore
-from pydantic import Field as PydanticField
-from pydantic import create_model
+from pydantic import BaseModel
 
-from src.domain.entities.agent_config import AgentConfig, BackendType
+from src.domain.entities.agent_config import AgentConfig, BackendType, SubAgentConfig
 from src.domain.logging.messages import LogMessage
 from src.domain.ports.mcp_tool_loader import McpToolLoader
 from src.domain.ports.prompt_manager import PromptManager
-from src.infrastructure.deepagent.schema_utils import make_validation_model
+from src.infrastructure.deepagent.schema_utils import schema_to_pydantic_model
 
 logger = logging.getLogger(__name__)
 
-STRUCTURED_OUTPUT_INSTRUCTION = (
-    "\n\nYou MUST use the 'structured_response' tool to return your final answer in the expected structured format."
-)
 
+def _resolve_response_format(value: dict[str, Any] | None) -> tuple[type[BaseModel] | None, dict[str, Any] | None]:
+    """Resolve a ``response_format`` config value into ``(model, schema_dict)``.
 
-_JSON_TYPE_MAP: dict[str, type] = {
-    "string": str,
-    "number": float,
-    "integer": int,
-    "boolean": bool,
-    "array": list,
-    "object": dict,
-}
+    Args:
+        value: The agent/subagent ``response_format`` config (a JSON Schema dict
+            or ``None``).
 
-
-def _create_response_tool(schema: dict[str, Any]) -> StructuredTool:
-    """Create a StructuredTool from a JSON Schema dict for structured output.
-
-    Builds a Pydantic model dynamically so the LLM knows the expected fields.
-    A sync func is required because deepagents invokes subagent tools synchronously.
+    Returns:
+        Tuple of ``(pydantic_model_or_none, schema_dict_or_none)``. The model is
+        used for post-extraction validation/stripping; the dict is passed to
+        deepagents' native ``response_format`` parameter.
     """
-    properties = schema.get("properties", {})
-    required_fields = set(schema.get("required", []))
-
-    field_definitions: dict[str, Any] = {}
-    for field_name, prop in properties.items():
-        python_type = _JSON_TYPE_MAP.get(prop.get("type", "string"), str)
-        description = prop.get("description", "")
-        if field_name in required_fields:
-            field_definitions[field_name] = (python_type, PydanticField(description=description))
-        else:
-            field_definitions[field_name] = (python_type | None, PydanticField(default=None, description=description))
-
-    schema_hash = hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest()[:8]
-    args_model = create_model(f"StructuredResponseArgs_{schema_hash}", **field_definitions)
-
-    def _return_structured(**kwargs: Any) -> str:
-        return json.dumps(kwargs)
-
-    return StructuredTool.from_function(
-        func=_return_structured,
-        name="structured_response",
-        description="Return your final answer using this tool with the expected structured format.",
-        args_schema=args_model,
-    )
+    if value is None:
+        return None, None
+    return schema_to_pydantic_model(value), value
 
 
 def _resolve_tools(config: AgentConfig) -> list | None:
@@ -126,6 +93,19 @@ def _resolve_interrupt_on(config: AgentConfig) -> dict | None:
     return result
 
 
+async def _resolve_subagent_instructions(sa: SubAgentConfig, prompt_manager: PromptManager | None) -> str | None:
+    """Resolve subagent instructions, falling back to YAML if Phoenix load fails."""
+    instructions = sa.instructions
+    if not prompt_manager:
+        return instructions
+    try:
+        content = await prompt_manager.get_prompt_content(sa.name)
+        return content.get("content")
+    except Exception:
+        logger.warning(LogMessage.SUBAGENT_PROMPT_LOAD_FAILED, sa.name)
+        return sa.instructions
+
+
 async def _resolve_subagents(
     config: AgentConfig,
     mcp_tool_loader: McpToolLoader | None = None,
@@ -150,19 +130,7 @@ async def _resolve_subagents(
             mcp_tools = await mcp_tool_loader.load_tools(sa.mcp_servers)
         all_tools = (local_tools or []) + mcp_tools if (local_tools or mcp_tools) else None
 
-        instructions = sa.instructions
-        if prompt_manager:
-            try:
-                content = await prompt_manager.get_prompt_content(sa.name)
-                instructions = content.get("content")
-            except Exception:
-                logger.warning(LogMessage.SUBAGENT_PROMPT_LOAD_FAILED, sa.name)
-                instructions = sa.instructions
-
-        if sa.response_format:
-            response_tool = _create_response_tool(sa.response_format)
-            all_tools = (all_tools or []) + [response_tool]
-            instructions = (instructions or "") + STRUCTURED_OUTPUT_INSTRUCTION
+        instructions = await _resolve_subagent_instructions(sa, prompt_manager)
 
         subagents.append(
             {
@@ -171,6 +139,7 @@ async def _resolve_subagents(
                 "system_prompt": instructions,
                 "model": sa.model,
                 "tools": all_tools,
+                "response_format": sa.response_format,
             }
         )
     return subagents
@@ -187,6 +156,20 @@ def _resolve_tools_list(tool_paths: list[str]) -> list | None:
             module = importlib.import_module(module_path)
             tools.append(getattr(module, attr_name))
     return tools or None
+
+
+def _apply_optional_kwargs(kwargs: dict, config: AgentConfig) -> None:
+    """Populate optional kwargs from config if their values are set."""
+    backend = _resolve_backend(config)
+    if backend:
+        kwargs["backend"] = backend
+    interrupt_on = _resolve_interrupt_on(config)
+    if interrupt_on:
+        kwargs["interrupt_on"] = interrupt_on
+    if config.memory:
+        kwargs["memory"] = config.memory
+    if config.skills:
+        kwargs["skills"] = config.skills
 
 
 async def create_agent_from_config(
@@ -206,8 +189,6 @@ async def create_agent_from_config(
     logger.info(LogMessage.AGENT_CREATING, config.name, config.model)
     checkpointer = MemorySaver()
     store = InMemoryStore()
-    interrupt_on = _resolve_interrupt_on(config)
-    system_prompt = None
 
     local_tools = _resolve_tools(config)
     mcp_tools: list = []
@@ -218,13 +199,11 @@ async def create_agent_from_config(
     all_tools = (local_tools or []) + mcp_tools if (local_tools or mcp_tools) else None
     logger.info(LogMessage.AGENT_TOOLS_TOTAL, config.name, len(all_tools) if all_tools else 0)
 
-    if prompt_manager:
-        system_prompt = await get_system_prompt_from_phoenix(config.name, prompt_manager)
+    system_prompt = await get_system_prompt_from_phoenix(config.name, prompt_manager) if prompt_manager else None
 
     kwargs = {
         "name": config.name,
         "model": config.model,
-        # Fall back to YAML system_prompt
         "system_prompt": system_prompt if system_prompt else config.system_prompt,
         "tools": all_tools,
         "middleware": [],
@@ -232,26 +211,11 @@ async def create_agent_from_config(
         "store": store,
     }
 
-    backend = _resolve_backend(config)
-    if backend:
-        kwargs["backend"] = backend
-
-    if interrupt_on:
-        kwargs["interrupt_on"] = interrupt_on
-
-    if config.memory:
-        kwargs["memory"] = config.memory
-
-    if config.skills:
-        kwargs["skills"] = config.skills
+    _apply_optional_kwargs(kwargs, config)
 
     if config.response_format:
-        response_format_model = make_validation_model(config.response_format)
-        response_tool = _create_response_tool(config.response_format)
-        all_tools = (all_tools or []) + [response_tool]
-        kwargs["tools"] = all_tools
-        current_prompt = kwargs.get("system_prompt", "")
-        kwargs["system_prompt"] = (current_prompt or "") + STRUCTURED_OUTPUT_INSTRUCTION
+        response_format_model, response_format_dict = _resolve_response_format(config.response_format)
+        kwargs["response_format"] = response_format_dict
     else:
         response_format_model = None
 

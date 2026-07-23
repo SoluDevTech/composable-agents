@@ -47,9 +47,7 @@ class UpdateAgentConfigUseCase:
         config = self._config_loader.load_from_string(yaml_content)
 
         if config.name != name:
-            raise ConfigError(
-                ErrorMessage.AGENT_NAME_MISMATCH_URL.format(yaml_name=config.name, name=name)
-            )
+            raise ConfigError(ErrorMessage.AGENT_NAME_MISMATCH_URL.format(yaml_name=config.name, name=name))
 
         await self._config_store.put(name, yaml_content)
 

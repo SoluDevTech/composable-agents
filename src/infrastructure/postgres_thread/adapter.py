@@ -1,3 +1,10 @@
+"""PostgreSQL adapter for the ThreadRepository port.
+
+Each method opens its own :class:`AsyncSession` (session-per-method). The
+``add_message`` method has been removed — message persistence now goes through
+:class:`~src.infrastructure.postgres_trace.adapter.PostgresTraceEventRepository`.
+"""
+
 import logging
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -7,51 +14,50 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.entities.thread import Thread
+from src.domain.entities.trace_event import TraceEvent, TraceEventType
 from src.domain.errors.messages import ErrorMessage
 from src.domain.errors.storage import StorageError
 from src.domain.errors.thread import ThreadNotFoundError
 from src.domain.ports.thread_repository import ThreadRepository
-from src.infrastructure.database.models.thread import MessageModel, ThreadModel
+from src.infrastructure.database.models.thread import ThreadModel
 
 logger = logging.getLogger(__name__)
 
 
-def _safe_str(val: object) -> str | None:
-    """Return a string if the value is a real string, else None."""
-    return val if isinstance(val, str) else None
-
-
 def _model_to_thread(thread_model: ThreadModel) -> Thread:
-    """Reconstruct a domain Thread from ORM ThreadModel with its MessageModels.
+    """Reconstruct a domain Thread from ORM ThreadModel with its TraceEventModels.
 
-    Messages are sorted by timestamp (oldest first).
-    The database relationship has order_by, but sort is kept as a defensive measure.
+    Trace events are sorted by timestamp (oldest first). The database
+    relationship already has ``order_by``, but sorting here is a defensive
+    measure.
 
     Args:
-        thread_model: The ORM thread model with loaded messages relationship.
+        thread_model: The ORM thread model with loaded trace_events relationship.
 
     Returns:
-        A domain Thread entity with all messages.
+        A domain Thread entity with all trace events.
     """
-    messages_sorted = sorted(thread_model.messages, key=lambda m: m.timestamp)
-    messages = [
-        Message(
-            role=MessageRole(msg.role),
-            content=msg.content,
-            timestamp=msg.timestamp,
-            tool_calls=msg.tool_calls,
-            status=MessageStatus(msg.status) if msg.status else None,
-            structured_response=msg.structured_response,
-            thinking=_safe_str(msg.thinking),
+    events_sorted = sorted(thread_model.trace_events, key=lambda m: m.timestamp)
+    trace_events = [
+        TraceEvent(
+            id=m.id,
+            thread_id=m.thread_id,
+            turn_id=m.turn_id,
+            type=TraceEventType(m.type),
+            source=m.source,
+            name=m.name,
+            content=m.content,
+            metadata=m.event_metadata,
+            timestamp=m.timestamp,
+            sequence=m.sequence,
         )
-        for msg in messages_sorted
+        for m in events_sorted
     ]
     return Thread(
         id=thread_model.id,
         agent_name=thread_model.agent_name,
-        messages=messages,
+        trace_events=trace_events,
         created_at=thread_model.created_at,
         updated_at=thread_model.updated_at,
     )
@@ -90,11 +96,11 @@ class PostgresThreadRepository(ThreadRepository):
                 )
                 session.add(model)
                 await session.commit()
-                # New thread has no messages — construct directly to avoid lazy='raise'
+                # New thread has no trace_events — construct directly to avoid lazy='raise'
                 return Thread(
                     id=model.id,
                     agent_name=model.agent_name,
-                    messages=[],
+                    trace_events=[],
                     created_at=model.created_at,
                     updated_at=model.updated_at,
                 )
@@ -108,7 +114,7 @@ class PostgresThreadRepository(ThreadRepository):
             thread_id: The unique thread identifier.
 
         Returns:
-            The domain Thread with all messages.
+            The domain Thread with all trace events.
 
         Raises:
             ThreadNotFoundError: If no thread exists with this ID.
@@ -116,7 +122,7 @@ class PostgresThreadRepository(ThreadRepository):
         """
         async with AsyncSession(self._engine, expire_on_commit=False) as session:
             try:
-                model = await session.get(ThreadModel, thread_id, options=[selectinload(ThreadModel.messages)])
+                model = await session.get(ThreadModel, thread_id, options=[selectinload(ThreadModel.trace_events)])
                 if model is None:
                     raise ThreadNotFoundError(ErrorMessage.THREAD_NOT_FOUND.format(thread_id=thread_id))
                 return _model_to_thread(model)
@@ -138,7 +144,7 @@ class PostgresThreadRepository(ThreadRepository):
             try:
                 result = await session.execute(
                     select(ThreadModel)
-                    .options(selectinload(ThreadModel.messages))
+                    .options(selectinload(ThreadModel.trace_events))
                     .order_by(ThreadModel.created_at.desc())
                 )
                 models = result.scalars().all()
@@ -147,7 +153,7 @@ class PostgresThreadRepository(ThreadRepository):
                 raise StorageError(ErrorMessage.THREAD_FAILED_LIST.format(error=e)) from e
 
     async def delete(self, thread_id: str) -> None:
-        """Delete a thread and all its messages.
+        """Delete a thread and all its trace events.
 
         Args:
             thread_id: The unique thread identifier.
@@ -167,52 +173,3 @@ class PostgresThreadRepository(ThreadRepository):
                 raise
             except SQLAlchemyError as e:
                 raise StorageError(ErrorMessage.THREAD_FAILED_DELETE.format(thread_id=thread_id, error=e)) from e
-
-    async def add_message(self, thread_id: str, message: Message) -> Thread:
-        """Add a message to an existing thread.
-
-        Args:
-            thread_id: The unique thread identifier.
-            message: The domain Message to add.
-
-        Returns:
-            The updated Thread with the new message included.
-
-        Raises:
-            ThreadNotFoundError: If no thread exists with this ID.
-            StorageError: If the database operation fails.
-        """
-        async with AsyncSession(self._engine, expire_on_commit=False) as session:
-            try:
-                thread_model = await session.get(ThreadModel, thread_id)
-                if thread_model is None:
-                    raise ThreadNotFoundError(ErrorMessage.THREAD_NOT_FOUND.format(thread_id=thread_id))
-
-                msg_model = MessageModel(
-                    id=str(uuid4()),
-                    thread_id=thread_id,
-                    role=message.role.value,
-                    content=message.content,
-                    timestamp=message.timestamp,
-                    tool_calls=message.tool_calls,
-                    status=message.status.value if message.status else None,
-                    structured_response=message.structured_response,
-                    thinking=message.thinking,
-                )
-                session.add(msg_model)
-                thread_model.updated_at = datetime.now(UTC)
-                await session.commit()
-                # session.get() with an expired identity-map object does NOT re-apply
-                # selectinload options — use execute(select(...)) to force a real DB query.
-                result = await session.execute(
-                    select(ThreadModel)
-                    .where(ThreadModel.id == thread_id)
-                    .options(selectinload(ThreadModel.messages))
-                    .execution_options(populate_existing=True)
-                )
-                updated_model = result.scalar_one()
-                return _model_to_thread(updated_model)
-            except ThreadNotFoundError:
-                raise
-            except SQLAlchemyError as e:
-                raise StorageError(ErrorMessage.THREAD_FAILED_ADD_MESSAGE.format(thread_id=thread_id, error=e)) from e

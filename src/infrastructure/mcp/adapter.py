@@ -14,6 +14,7 @@ from src.infrastructure.env_utils import resolve_env_vars
 
 logger = logging.getLogger(__name__)
 
+
 class LangchainMcpToolLoader(McpToolLoader):
     """Adapter MCP utilisant langchain-mcp-adapters pour charger des outils."""
 
