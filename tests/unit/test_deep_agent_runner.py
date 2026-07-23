@@ -12,21 +12,32 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.domain.entities.message import MessageRole, MessageStatus
-from src.domain.entities.stream_event import StreamEventType
+from src.domain.entities.trace_event import TraceEventType
 from src.domain.errors.agent import AgentError
 from src.infrastructure.deepagent.adapter import DeepAgentRunner
-from src.infrastructure.deepagent.schema_utils import make_validation_model
+from src.infrastructure.deepagent.schema_utils import schema_to_pydantic_model
 
 
 def _make_graph(messages, interrupts=(), state_values=None):
-    """Create a mock graph with ainvoke result and get_state."""
+    """Create a mock graph with astream (empty) and get_state.
+
+    The new runner uses ``astream`` + ``get_state`` instead of ``ainvoke``.
+    We make ``astream`` yield nothing so the runner falls back to reading
+    the final state from ``get_state``.
+    """
     mock_graph = AsyncMock()
-    mock_graph.ainvoke.return_value = {"messages": messages}
     state = MagicMock()
     state.interrupts = interrupts
-    state.values = state_values or {}
+    state.values = state_values or {"messages": messages}
     mock_graph.get_state = MagicMock(return_value=state)
     mock_graph.nodes = {}
+
+    async def _empty_astream(_input, **_kwargs):
+        return
+        yield  # noqa: F841 — makes this an async generator
+
+    mock_graph.astream = _empty_astream
+    mock_graph.ainvoke.return_value = {"messages": messages}
     return mock_graph
 
 
@@ -44,7 +55,7 @@ class TestInvoke:
 
         # Act
         runner = DeepAgentRunner(graph)
-        result = await runner.invoke("thread-1", "Hello")
+        result, trace = await runner.invoke("thread-1", "Hello", "turn-1")
 
         # Assert
         assert result.role == MessageRole.AI
@@ -62,7 +73,7 @@ class TestInvoke:
 
         # Act
         runner = DeepAgentRunner(graph)
-        result = await runner.invoke("thread-1", "count words in hello")
+        result, trace = await runner.invoke("thread-1", "count words in hello", "turn-1")
 
         # Assert
         assert result.content == "The text has 1 word."
@@ -76,7 +87,7 @@ class TestInvoke:
 
         # Act
         runner = DeepAgentRunner(graph)
-        result = await runner.invoke("thread-1", "count words")
+        result, trace = await runner.invoke("thread-1", "count words", "turn-1")
 
         # Assert
         assert result.status == MessageStatus.AWAITING_HITL
@@ -88,7 +99,7 @@ class TestInvoke:
 
         # Act
         runner = DeepAgentRunner(graph)
-        result = await runner.invoke("thread-1", "Hello")
+        result, trace = await runner.invoke("thread-1", "Hello", "turn-1")
 
         # Assert
         assert result.status == MessageStatus.COMPLETED
@@ -105,7 +116,7 @@ class TestInvoke:
 
         # Act
         runner = DeepAgentRunner(graph)
-        result = await runner.invoke("thread-1", "new question")
+        result, trace = await runner.invoke("thread-1", "new question", "turn-1")
 
         # Assert
         assert result.content == "New response"
@@ -120,22 +131,18 @@ class TestInvoke:
         # Act & Assert
         runner = DeepAgentRunner(graph)
         with pytest.raises(AgentError, match="Agent execution error"):
-            await runner.invoke("thread-1", "Hello")
+            await runner.invoke("thread-1", "Hello", "turn-1")
 
 
 class TestInvokeStructuredResponse:
     async def test_invoke_extracts_structured_response_dict(self):
         # Arrange
         msg = _make_msg("Weather report")
-        graph = _make_graph([msg])
-        graph.ainvoke.return_value = {
-            "messages": [msg],
-            "structured_response": {"temperature": 22, "condition": "sunny"},
-        }
+        graph = _make_graph([msg], state_values={"messages": [msg], "structured_response": {"temperature": 22, "condition": "sunny"}})
 
         # Act
         runner = DeepAgentRunner(graph)
-        result = await runner.invoke("thread-1", "weather?")
+        result, trace = await runner.invoke("thread-1", "weather?", "turn-1")
 
         # Assert
         assert result.structured_response == {"temperature": 22, "condition": "sunny"}
@@ -145,15 +152,11 @@ class TestInvokeStructuredResponse:
         msg = _make_msg("Report")
         pydantic_obj = MagicMock()
         pydantic_obj.model_dump.return_value = {"temperature": 15, "condition": "cloudy"}
-        graph = _make_graph([msg])
-        graph.ainvoke.return_value = {
-            "messages": [msg],
-            "structured_response": pydantic_obj,
-        }
+        graph = _make_graph([msg], state_values={"messages": [msg], "structured_response": pydantic_obj})
 
         # Act
         runner = DeepAgentRunner(graph)
-        result = await runner.invoke("thread-1", "weather?")
+        result, trace = await runner.invoke("thread-1", "weather?", "turn-1")
 
         # Assert
         assert result.structured_response == {"temperature": 15, "condition": "cloudy"}
@@ -164,7 +167,7 @@ class TestInvokeStructuredResponse:
 
         # Act
         runner = DeepAgentRunner(graph)
-        result = await runner.invoke("thread-1", "hi")
+        result, trace = await runner.invoke("thread-1", "hi", "turn-1")
 
         # Assert
         assert result.structured_response is None
@@ -177,17 +180,13 @@ class TestInvokeStructuredResponse:
             "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
             "required": ["name"],
         }
-        model = make_validation_model(schema)
+        model = schema_to_pydantic_model(schema)
         msg = _make_msg("Result")
-        graph = _make_graph([msg])
-        graph.ainvoke.return_value = {
-            "messages": [msg],
-            "structured_response": {"name": "Alice", "age": 30, "terraceArea": 50, "parkingSpaces": 2},
-        }
+        graph = _make_graph([msg], state_values={"messages": [msg], "structured_response": {"name": "Alice", "age": 30, "terraceArea": 50, "parkingSpaces": 2}})
 
         # Act
         runner = DeepAgentRunner(graph, response_format_model=model)
-        result = await runner.invoke("thread-1", "analyze")
+        result, trace = await runner.invoke("thread-1", "analyze", "turn-1")
 
         # Assert
         assert result.structured_response == {"name": "Alice", "age": 30}
@@ -206,17 +205,13 @@ class TestInvokeStructuredResponse:
             },
             "required": ["building"],
         }
-        model = make_validation_model(schema)
+        model = schema_to_pydantic_model(schema)
         msg = _make_msg("Result")
-        graph = _make_graph([msg])
-        graph.ainvoke.return_value = {
-            "messages": [msg],
-            "structured_response": {"building": {"floors": 3, "rooftop": True}},
-        }
+        graph = _make_graph([msg], state_values={"messages": [msg], "structured_response": {"building": {"floors": 3, "rooftop": True}}})
 
         # Act
         runner = DeepAgentRunner(graph, response_format_model=model)
-        result = await runner.invoke("thread-1", "analyze")
+        result, trace = await runner.invoke("thread-1", "analyze", "turn-1")
 
         # Assert
         assert result.structured_response == {"building": {"floors": 3}}
@@ -224,15 +219,11 @@ class TestInvokeStructuredResponse:
     async def test_invoke_no_response_format_model_passes_raw(self):
         # Arrange
         msg = _make_msg("Result")
-        graph = _make_graph([msg])
-        graph.ainvoke.return_value = {
-            "messages": [msg],
-            "structured_response": {"name": "test", "extra": True},
-        }
+        graph = _make_graph([msg], state_values={"messages": [msg], "structured_response": {"name": "test", "extra": True}})
 
         # Act
         runner = DeepAgentRunner(graph, response_format_model=None)
-        result = await runner.invoke("thread-1", "analyze")
+        result, trace = await runner.invoke("thread-1", "analyze", "turn-1")
 
         # Assert
         assert result.structured_response == {"name": "test", "extra": True}
@@ -245,16 +236,19 @@ class TestInvokeStructuredResponse:
             "properties": {"summary": {"type": "string"}},
             "required": ["summary"],
         }
-        model = make_validation_model(schema)
+        model = schema_to_pydantic_model(schema)
         ai_msg = _make_msg(
             "Done",
             tool_calls=[{"name": "structured_response", "args": {"summary": "ok", "hallucinated": 99}, "id": "tc-1"}],
         )
-        graph = _make_graph([ai_msg])
+        graph = _make_graph(
+            [ai_msg],
+            state_values={"messages": [ai_msg], "structured_response": {"summary": "ok", "hallucinated": 99}},
+        )
 
         # Act
         runner = DeepAgentRunner(graph, response_format_model=model)
-        result = await runner.invoke("thread-1", "summarize")
+        result, trace = await runner.invoke("thread-1", "summarize", "turn-1")
 
         # Assert
         assert result.structured_response == {"summary": "ok"}
@@ -372,16 +366,16 @@ class TestInvokeTimeout:
         graph = AsyncMock()
         graph.nodes = {}
 
-        async def _ainvoke_hang(_input, **_kwargs):
+        async def _astream_hang(_input, **_kwargs):
+            yield ("", MagicMock())
             await asyncio.sleep(10)
-            return {"messages": []}
 
-        graph.ainvoke = _ainvoke_hang
+        graph.astream = _astream_hang
 
         # Act & Assert
-        runner = DeepAgentRunner(graph, invoke_timeout=0.05)
-        with pytest.raises(AgentError, match="timed out"):
-            await runner.invoke("thread-1", "hello")
+        runner = DeepAgentRunner(graph, stream_idle_timeout=0.05)
+        with pytest.raises(AgentError, match="stream idle"):
+            await runner.invoke("thread-1", "hello", "turn-1")
 
 
 class TestStream:
@@ -394,6 +388,7 @@ class TestStream:
             chunk = _make_msg("chunk")
             chunk.type = "AIMessageChunk"
             chunk.additional_kwargs = {}
+            chunk.tool_call_chunks = None
             yield (chunk, MagicMock())
 
         graph.astream = _astream
@@ -403,9 +398,10 @@ class TestStream:
 
         # Act
         runner = DeepAgentRunner(graph)
-        events = [e async for e in runner.stream("thread-1", "Hi")]
+        events = [e async for e in runner.stream("thread-1", "Hi", "turn-1")]
 
-        # Assert
-        assert len(events) == 1
-        assert events[0].type == StreamEventType.CONTENT
-        assert events[0].data == "chunk"
+        # Assert: HUMAN + CONTENT + AI_MESSAGE = 3
+        assert len(events) == 3
+        content_events = [e for e in events if e.type == TraceEventType.CONTENT]
+        assert len(content_events) == 1
+        assert content_events[0].content == "chunk"

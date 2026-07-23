@@ -12,6 +12,7 @@ providers.
 import json
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -22,6 +23,7 @@ from src.application.use_cases.delete_agent_config import DeleteAgentConfigUseCa
 from src.application.use_cases.delete_thread import DeleteThreadUseCase
 from src.application.use_cases.get_agent_config import GetAgentConfigUseCase
 from src.application.use_cases.get_thread import GetThreadUseCase
+from src.application.use_cases.get_thread_history import GetThreadHistoryUseCase
 from src.application.use_cases.list_agent_configs import ListAgentConfigsUseCase
 from src.application.use_cases.list_threads import ListThreadsUseCase
 from src.application.use_cases.send_message import SendMessageUseCase
@@ -33,16 +35,18 @@ from src.dependencies import (
     get_delete_agent_config_use_case,
     get_delete_thread_use_case,
     get_get_agent_config_use_case,
+    get_get_thread_history_use_case,
     get_get_thread_use_case,
     get_list_agent_configs_use_case,
     get_list_threads_use_case,
     get_send_message_use_case,
     get_stream_message_use_case,
+    get_trace_event_repository,
     get_update_agent_config_use_case,
 )
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.entities.message import Message, MessageRole, MessageStatus
-from src.domain.entities.stream_event import StreamEvent, StreamEventType
+from src.domain.entities.trace_event import TraceEvent, TraceEventType
 from src.domain.errors.agent import AgentError
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.agent_runner import AgentRunner
@@ -96,9 +100,20 @@ class StubAgentRegistry(AgentRegistry):
 def mock_runner():
     """AsyncMock for the agent runner (external LLM boundary)."""
     runner = AsyncMock(spec=AgentRunner)
-    runner.invoke.return_value = Message(
-        role=MessageRole.AI, content="I am a mock agent.", status=MessageStatus.COMPLETED
-    )
+    final_msg = Message(role=MessageRole.AI, content="I am a mock agent.", status=MessageStatus.COMPLETED)
+
+    async def _invoke(_thread_id: str, _message: str, _turn_id: str):
+        # Return (Message, list[TraceEvent]) with the real thread_id/turn_id
+        # so persistence FK constraints are satisfied.
+        return (
+            final_msg,
+            [
+                _trace_event(_thread_id, _turn_id, TraceEventType.HUMAN_MESSAGE, _message, seq=0),
+                _trace_event(_thread_id, _turn_id, TraceEventType.AI_MESSAGE, final_msg.model_dump_json(), seq=1),
+            ],
+        )
+
+    runner.invoke.side_effect = _invoke
     runner.approve_hitl.return_value = Message(
         role=MessageRole.AI, content="Action approved.", status=MessageStatus.COMPLETED
     )
@@ -109,27 +124,40 @@ def mock_runner():
         role=MessageRole.AI, content="Action edited and approved.", status=MessageStatus.COMPLETED
     )
 
-    async def mock_stream(_thread_id, _message):
+    async def mock_stream(_thread_id, _message, _turn_id):
+        # Yield a full TraceEvent sequence: HUMAN_MESSAGE, intermediates, AI_MESSAGE.
+        yield _trace_event(_thread_id, _turn_id, TraceEventType.HUMAN_MESSAGE, _message, seq=0)
+        yield _trace_event(_thread_id, _turn_id, TraceEventType.THINKING, "hmm", seq=1)
         for word in ["I", "am", "a", "mock", "agent."]:
-            yield StreamEvent(type=StreamEventType.CONTENT, data=word + " ")
-
-    runner.stream = mock_stream
-
-    async def mock_stream_with_message(_thread_id, _message):
-        for word in ["I", "am", "a", "mock", "agent."]:
-            yield StreamEvent(type=StreamEventType.CONTENT, data=word + " ")
-        yield StreamEvent(
-            type=StreamEventType.MESSAGE,
-            data=Message(
+            yield _trace_event(_thread_id, _turn_id, TraceEventType.CONTENT, word + " ", seq=2)
+        yield _trace_event(
+            _thread_id,
+            _turn_id,
+            TraceEventType.AI_MESSAGE,
+            Message(
                 role=MessageRole.AI,
                 content="I am a mock agent.",
                 status=MessageStatus.COMPLETED,
                 structured_response={"key": "value"},
             ).model_dump_json(),
+            seq=3,
         )
 
-    runner.stream_with_message = mock_stream_with_message
+    runner.stream = mock_stream
     return runner
+
+
+def _trace_event(thread_id: str, turn_id: str, type_: TraceEventType, content: str, seq: int) -> TraceEvent:
+    """Helper to build a TraceEvent for tests."""
+    return TraceEvent(
+        id=str(uuid4()),
+        thread_id=thread_id,
+        turn_id=turn_id,
+        type=type_,
+        content=content,
+        timestamp=datetime.now(UTC),
+        sequence=seq,
+    )
 
 
 @pytest.fixture
@@ -172,15 +200,18 @@ def mock_config_repository():
 
 
 @pytest.fixture(autouse=True)
-def _override_dependencies(stub_registry, thread_repo, mock_config_store, mock_config_repository):
+def _override_dependencies(stub_registry, thread_repo, trace_repo, mock_config_store, mock_config_repository):
     """Wire real internal components + mocked runner via app.dependency_overrides."""
     yaml_loader = YamlAgentConfigLoader()
 
     def _send_message():
-        return SendMessageUseCase(stub_registry, thread_repo)
+        return SendMessageUseCase(stub_registry, thread_repo, trace_repo)
 
     def _stream_message():
-        return StreamMessageUseCase(stub_registry, thread_repo)
+        return StreamMessageUseCase(stub_registry, thread_repo, trace_repo)
+
+    def _get_thread_history():
+        return GetThreadHistoryUseCase(thread_repo, trace_repo)
 
     def _create_thread():
         return CreateThreadUseCase(thread_repo, stub_registry)
@@ -215,6 +246,8 @@ def _override_dependencies(stub_registry, thread_repo, mock_config_store, mock_c
 
     app.dependency_overrides[get_send_message_use_case] = _send_message
     app.dependency_overrides[get_stream_message_use_case] = _stream_message
+    app.dependency_overrides[get_get_thread_history_use_case] = _get_thread_history
+    app.dependency_overrides[get_trace_event_repository] = lambda: trace_repo
     app.dependency_overrides[get_create_thread_use_case] = _create_thread
     app.dependency_overrides[get_get_thread_use_case] = _get_thread
     app.dependency_overrides[get_list_threads_use_case] = _list_threads
@@ -346,14 +379,21 @@ class TestThreadRoutes:
         # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
-        await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Hello"})
 
         # Act
-        resp = await client.get(f"/api/v1/threads/{thread_id}/messages")
+        chat_resp = await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Hello"})
+        msgs_resp = await client.get(f"/api/v1/threads/{thread_id}/messages")
 
         # Assert
-        assert resp.status_code == 200
-        assert len(resp.json()) == 2
+        assert chat_resp.status_code == 200
+        assert chat_resp.json()["role"] == "ai"
+        assert msgs_resp.status_code == 200
+        messages = msgs_resp.json()
+        assert len(messages) == 2
+        assert messages[0]["role"] == "human"
+        assert messages[0]["content"] == "Hello"
+        assert messages[1]["role"] == "ai"
+        assert messages[1]["content"] == "I am a mock agent."
 
 
 # -- Chat -----------------------------------------------------------------------
@@ -372,9 +412,10 @@ class TestChatRoutes:
 
         # Assert
         assert resp.status_code == 200
-        data = resp.json()
-        assert data["role"] == "ai"
-        assert "content" in data
+        body = resp.json()
+        assert body["role"] == "ai"
+        assert body["content"] == "I am a mock agent."
+        assert body["status"] == "completed"
 
     async def test_send_message_thread_not_found_returns_404(self, client):
         # Arrange
@@ -442,7 +483,7 @@ class TestHITLRoutes:
 
         # Assert
         assert resp.status_code == 200
-        assert "approved" in resp.json()["content"].lower()
+        assert resp.json()["content"] == "Action approved."
 
     async def test_reject_returns_200_with_rejected_content(self, client):
         # Arrange
@@ -457,7 +498,7 @@ class TestHITLRoutes:
 
         # Assert
         assert resp.status_code == 200
-        assert "rejected" in resp.json()["content"].lower()
+        assert resp.json()["content"] == "Action rejected: Too risky"
 
     async def test_edit_returns_200_with_edited_content(self, client):
         # Arrange
@@ -472,7 +513,7 @@ class TestHITLRoutes:
 
         # Assert
         assert resp.status_code == 200
-        assert "edited" in resp.json()["content"].lower()
+        assert resp.json()["content"] == "Action edited and approved."
 
     async def test_edit_without_edits_returns_422(self, client):
         # Arrange
@@ -583,20 +624,44 @@ class TestExceptionHandlers:
         assert resp.status_code == 502
         assert "Backend failed" in resp.json()["detail"]
 
-        # Reset for other tests
+        # Reset for other tests — restore the side_effect-based invoke.
         mock_runner.invoke.side_effect = None
-        mock_runner.invoke.return_value = Message(
-            role=MessageRole.AI, content="I am a mock agent.", status=MessageStatus.COMPLETED
-        )
 
 
 # -- Stream Message Event ------------------------------------------------------
 
 
 class TestStreamMessageEvent:
-    """Tests for SSE stream: JSON message then [DONE] terminator."""
+    """Tests for SSE stream: TraceEvents then [DONE] terminator."""
 
-    async def test_stream_ends_with_done(self, client):
+    async def test_stream_yields_trace_events_then_done(self, client):
+        # Arrange
+        create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id = create_resp.json()["id"]
+
+        # Act
+        resp = await client.post(
+            f"/api/v1/chat/{thread_id}/stream",
+            json={"message": "Hello agent"},
+        )
+
+        # Assert
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+        data_lines = _extract_data_lines(resp.text)
+        # Last line is [DONE]
+        assert data_lines[-1] == "[DONE]"
+        # Parse the trace events: HUMAN_MESSAGE, THINKING, CONTENT..., AI_MESSAGE
+        event_types: list[str] = []
+        for line in data_lines[:-1]:
+            event = json.loads(line)
+            event_types.append(event["type"])
+        assert event_types[0] == TraceEventType.HUMAN_MESSAGE.value
+        assert event_types[-1] == TraceEventType.AI_MESSAGE.value
+        assert TraceEventType.THINKING.value in event_types
+        assert TraceEventType.CONTENT.value in event_types
+
+    async def test_stream_emits_ai_message_event(self, client):
         # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
@@ -610,50 +675,86 @@ class TestStreamMessageEvent:
         # Assert
         assert resp.status_code == 200
         data_lines = _extract_data_lines(resp.text)
-        assert data_lines[-1] == "[DONE]"
+        ai_event = _find_event(data_lines, TraceEventType.AI_MESSAGE.value)
+        assert ai_event is not None
+        # AI_MESSAGE content is a JSON-serialized Message payload
+        payload = json.loads(ai_event["content"])
+        assert payload["content"] == "I am a mock agent."
+        assert payload["status"] == "completed"
 
-    async def test_stream_emits_structured_event_before_done(self, client):
-        # Arrange
+
+class TestThreadHistoryRoute:
+    """Tests for GET /api/v1/threads/{id}/history."""
+
+    async def test_history_returns_thread_history(self, client):
+        # Arrange — send a message first so trace events exist
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
+        await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Hello"})
 
         # Act
-        resp = await client.post(
-            f"/api/v1/chat/{thread_id}/stream",
-            json={"message": "Hello agent"},
-        )
+        resp = await client.get(f"/api/v1/threads/{thread_id}/history")
 
         # Assert
         assert resp.status_code == 200
-        data_lines = _extract_data_lines(resp.text)
-        assert data_lines[-1] == "[DONE]"
-        structured_event = _find_event(data_lines[:-1], "structured")
-        assert structured_event is not None
-        assert json.loads(structured_event["data"]) == {"key": "value"}
+        body = resp.json()
+        assert body["thread"]["id"] == thread_id
+        assert len(body["turns"]) == 1
+        turn = body["turns"][0]
+        assert turn["human_message"] is not None
+        assert turn["human_message"]["role"] == "human"
+        assert turn["ai_message"] is not None
+        assert turn["ai_message"]["role"] == "ai"
+        # Intermediate events (THINKING/CONTENT) present, no HUMAN/AI duplicates
+        types = {e["type"] for e in turn["events"]}
+        assert "human_message" not in types
+        assert "ai_message" not in types
 
-    async def test_stream_message_format_matches_sync(self, client):
+    async def test_history_empty_thread_returns_no_turns(self, client):
         # Arrange
         create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
         thread_id = create_resp.json()["id"]
 
         # Act
-        sync_resp = await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Compare me"})
-        create_resp2 = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
-        thread_id2 = create_resp2.json()["id"]
-        stream_resp = await client.post(
-            f"/api/v1/chat/{thread_id2}/stream",
-            json={"message": "Hello agent"},
-        )
+        resp = await client.get(f"/api/v1/threads/{thread_id}/history")
 
         # Assert
-        assert sync_resp.status_code == 200
-        assert stream_resp.status_code == 200
-        data_lines = _extract_data_lines(stream_resp.text)
-        content_events = [ln for ln in data_lines if ln != "[DONE]" and json.loads(ln).get("type") == "content"]
-        structured_event = _find_event([ln for ln in data_lines if ln != "[DONE]"], "structured")
-        assert len(content_events) > 0
-        assert structured_event is not None
-        assert sync_resp.json()["role"] == "ai"
+        assert resp.status_code == 200
+        assert resp.json()["turns"] == []
+
+
+class TestTraceRoute:
+    """Tests for GET /api/v1/threads/{id}/trace (flat list of trace events)."""
+
+    async def test_trace_endpoint_returns_events(self, client):
+        # Arrange — send a message first so trace events exist
+        create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id = create_resp.json()["id"]
+        await client.post(f"/api/v1/chat/{thread_id}", json={"message": "Hello"})
+
+        # Act
+        resp = await client.get(f"/api/v1/threads/{thread_id}/trace")
+
+        # Assert
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "events" in body
+        assert len(body["events"]) >= 2
+        types = [e["type"] for e in body["events"]]
+        assert "human_message" in types
+        assert "ai_message" in types
+
+    async def test_trace_endpoint_empty_thread(self, client):
+        # Arrange
+        create_resp = await client.post("/api/v1/threads", json={"agent_name": "my-agent"})
+        thread_id = create_resp.json()["id"]
+
+        # Act
+        resp = await client.get(f"/api/v1/threads/{thread_id}/trace")
+
+        # Assert
+        assert resp.status_code == 200
+        assert resp.json()["events"] == []
 
 
 def _extract_data_lines(body: str) -> list[str]:

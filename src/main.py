@@ -14,6 +14,7 @@ from src.application.routes.chat import router as chat_router
 from src.application.routes.health import router as health_router
 from src.application.routes.prompt import router as prompt_router
 from src.application.routes.threads import router as threads_router
+from src.application.routes.trace import router as trace_router
 from src.application.routes.websocket import router as websocket_router
 from src.config import Settings
 from src.dependencies import (
@@ -113,6 +114,7 @@ app.include_router(websocket_router)
 protected = APIRouter(dependencies=[Depends(security.verify_api_key)])
 protected.include_router(threads_router)
 protected.include_router(chat_router)
+protected.include_router(trace_router)
 protected.include_router(agents_router)
 protected.include_router(prompt_router)
 app.include_router(protected)

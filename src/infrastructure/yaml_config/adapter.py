@@ -68,8 +68,6 @@ class YamlAgentConfigLoader(AgentConfigLoader):
 
         if raw.get("system_prompt_file"):
             logger.error(LogMessage.YAML_SYSTEM_PROMPT_FILE_DISALLOWED, source)
-            raise ConfigError(
-                ErrorMessage.YAML_SYSTEM_PROMPT_FILE_DISALLOWED.format(source=source)
-            )
+            raise ConfigError(ErrorMessage.YAML_SYSTEM_PROMPT_FILE_DISALLOWED.format(source=source))
 
         return self._validate(raw, source)

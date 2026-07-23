@@ -179,6 +179,4 @@ system_prompt: |
 mcp_servers:
 - name: bricks
   transport: http
-  url: http://raganything:8000/bricks/mcp`
-  headers:
-    X-API-Key: "${MCP_RAGANYTHING_API_KEY}"
+  url: http://composable-api-mcp:8000/bricks/mcp

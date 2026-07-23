@@ -202,9 +202,7 @@ class TestSubAgentConfig:
         }
 
         # Act
-        sa = SubAgentConfig(
-            name="auditor", description="Security auditor", response_format=schema
-        )
+        sa = SubAgentConfig(name="auditor", description="Security auditor", response_format=schema)
 
         # Assert
         assert sa.response_format == schema

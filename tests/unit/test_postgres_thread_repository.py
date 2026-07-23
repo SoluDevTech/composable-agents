@@ -1,29 +1,67 @@
 """Tests for PostgresThreadRepository against a real in-memory SQLite engine."""
 
+import json
 from datetime import UTC, datetime
 
 import pytest
 
-from src.domain.entities.message import Message, MessageRole, MessageStatus
+from src.domain.entities.message import MessageRole, MessageStatus
 from src.domain.entities.thread import Thread
+from src.domain.entities.trace_event import TraceEvent, TraceEventType
 from src.domain.errors.thread import ThreadNotFoundError
 
 
+def _make_trace_event(
+    thread_id: str,
+    turn_id: str,
+    type_: TraceEventType,
+    *,
+    content: str | None = None,
+    sequence: int = 0,
+    timestamp: datetime | None = None,
+    source: str | None = None,
+    name: str | None = None,
+    metadata: dict | None = None,
+) -> TraceEvent:
+    from uuid import uuid4
+
+    return TraceEvent(
+        id=str(uuid4()),
+        thread_id=thread_id,
+        turn_id=turn_id,
+        type=type_,
+        content=content,
+        source=source,
+        name=name,
+        metadata=metadata,
+        timestamp=timestamp or datetime.now(UTC),
+        sequence=sequence,
+    )
+
+
 class TestPostgresThreadRepository:
-    async def test_create_returns_thread_with_empty_messages(self, thread_repo):
+    async def test_create_returns_thread_with_empty_trace_events(self, thread_repo):
         # Act
         result = await thread_repo.create("test-agent")
 
         # Assert
         assert isinstance(result, Thread)
         assert result.agent_name == "test-agent"
-        assert result.messages == []
+        assert result.trace_events == []
         assert result.id is not None
 
-    async def test_get_returns_persisted_thread_with_messages(self, thread_repo):
+    async def test_get_returns_persisted_thread_with_messages_reconstructed(self, thread_repo, trace_repo):
         # Arrange
         created = await thread_repo.create("test-agent")
-        await thread_repo.add_message(created.id, Message(role=MessageRole.HUMAN, content="hello"))
+        await trace_repo.add(
+            created.id,
+            _make_trace_event(
+                created.id,
+                "turn-1",
+                TraceEventType.HUMAN_MESSAGE,
+                content="hello",
+            ),
+        )
 
         # Act
         result = await thread_repo.get(created.id)
@@ -32,8 +70,12 @@ class TestPostgresThreadRepository:
         assert isinstance(result, Thread)
         assert result.id == created.id
         assert result.agent_name == "test-agent"
+        assert len(result.trace_events) == 1
+        assert result.trace_events[0].content == "hello"
+        # Backward compat: messages computed from trace_events
         assert len(result.messages) == 1
         assert result.messages[0].content == "hello"
+        assert result.messages[0].role == MessageRole.HUMAN
 
     async def test_get_not_found_raises(self, thread_repo):
         # Arrange
@@ -86,35 +128,33 @@ class TestPostgresThreadRepository:
         with pytest.raises(ThreadNotFoundError):
             await thread_repo.delete("nonexistent-id")
 
-    async def test_add_message_returns_updated_thread(self, thread_repo):
-        # Arrange
-        created = await thread_repo.create("test-agent")
-        message = Message(role=MessageRole.HUMAN, content="Hello, world!")
-
-        # Act
-        result = await thread_repo.add_message(created.id, message)
-
-        # Assert
-        assert isinstance(result, Thread)
-        assert len(result.messages) == 1
-        assert result.messages[0].content == "Hello, world!"
-        assert result.messages[0].role == MessageRole.HUMAN
-
-    async def test_add_message_not_found_raises(self, thread_repo):
-        # Arrange
-        message = Message(role=MessageRole.HUMAN, content="Hello")
-
-        # Act / Assert
-        with pytest.raises(ThreadNotFoundError):
-            await thread_repo.add_message("nonexistent-id", message)
-
-    async def test_add_message_orders_messages_by_timestamp(self, thread_repo):
+    async def test_messages_ordered_by_timestamp_via_trace_events(self, thread_repo, trace_repo):
         # Arrange
         created = await thread_repo.create("test-agent")
         earlier = datetime(2025, 1, 1, 10, 0, 0, tzinfo=UTC)
         later = datetime(2025, 1, 1, 11, 0, 0, tzinfo=UTC)
-        await thread_repo.add_message(created.id, Message(role=MessageRole.AI, content="late", timestamp=later))
-        await thread_repo.add_message(created.id, Message(role=MessageRole.HUMAN, content="early", timestamp=earlier))
+        await trace_repo.add(
+            created.id,
+            _make_trace_event(
+                created.id,
+                "turn-1",
+                TraceEventType.AI_MESSAGE,
+                content=json.dumps({"content": "late"}),
+                sequence=1,
+                timestamp=later,
+            ),
+        )
+        await trace_repo.add(
+            created.id,
+            _make_trace_event(
+                created.id,
+                "turn-1",
+                TraceEventType.HUMAN_MESSAGE,
+                content="early",
+                sequence=0,
+                timestamp=earlier,
+            ),
+        )
 
         # Act
         result = await thread_repo.get(created.id)
@@ -122,34 +162,29 @@ class TestPostgresThreadRepository:
         # Assert
         assert [m.content for m in result.messages] == ["early", "late"]
 
-    async def test_add_message_updates_thread_updated_at(self, thread_repo):
-        # Arrange
-        created = await thread_repo.create("test-agent")
-        before = (await thread_repo.get(created.id)).updated_at
-        message = Message(role=MessageRole.AI, content="Response")
-
-        # Act
-        await thread_repo.add_message(created.id, message)
-
-        # Assert
-        after = (await thread_repo.get(created.id)).updated_at
-        assert after >= before
-
-    async def test_message_serialization_roundtrip_preserves_all_fields(self, thread_repo):
+    async def test_ai_message_roundtrip_preserves_all_fields(self, thread_repo, trace_repo):
         # Arrange
         created = await thread_repo.create("analyzer")
         now = datetime.now(UTC)
-        original = Message(
-            role=MessageRole.AI,
-            content="Analysis complete",
-            timestamp=now,
-            tool_calls=None,
-            status=MessageStatus.COMPLETED,
-            structured_response={"score": 95, "label": "pass"},
+        payload = {
+            "content": "Analysis complete",
+            "tool_calls": None,
+            "status": "completed",
+            "structured_response": {"score": 95, "label": "pass"},
+        }
+        await trace_repo.add(
+            created.id,
+            _make_trace_event(
+                created.id,
+                "turn-1",
+                TraceEventType.AI_MESSAGE,
+                content=json.dumps(payload),
+                sequence=0,
+                timestamp=now,
+            ),
         )
 
         # Act
-        await thread_repo.add_message(created.id, original)
         result = await thread_repo.get(created.id)
 
         # Assert
@@ -159,21 +194,29 @@ class TestPostgresThreadRepository:
         assert roundtripped.status == MessageStatus.COMPLETED
         assert roundtripped.structured_response == {"score": 95, "label": "pass"}
 
-    async def test_message_with_tool_calls_jsonb_survives_roundtrip(self, thread_repo):
+    async def test_ai_message_with_tool_calls_survives_roundtrip(self, thread_repo, trace_repo):
         # Arrange
         created = await thread_repo.create("search-agent")
         tool_calls_data = [
             {"name": "search_documents", "args": {"query": "python asyncio", "limit": 10}, "id": "call_abc123"},
             {"name": "fetch_url", "args": {"url": "https://docs.python.org"}, "id": "call_def456"},
         ]
-        original = Message(
-            role=MessageRole.AI,
-            content="Let me search for that.",
-            tool_calls=tool_calls_data,
+        payload = {
+            "content": "Let me search for that.",
+            "tool_calls": tool_calls_data,
+        }
+        await trace_repo.add(
+            created.id,
+            _make_trace_event(
+                created.id,
+                "turn-1",
+                TraceEventType.AI_MESSAGE,
+                content=json.dumps(payload),
+                sequence=0,
+            ),
         )
 
         # Act
-        await thread_repo.add_message(created.id, original)
         result = await thread_repo.get(created.id)
 
         # Assert

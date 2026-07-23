@@ -7,6 +7,7 @@ Tests exercise the public ``create_agent_from_config`` API only.
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 
 from src.domain.entities.agent_config import AgentConfig
 from src.infrastructure.deepagent.factory import create_agent_from_config
@@ -18,6 +19,25 @@ WEATHER_SCHEMA = {
         "condition": {"type": "string", "description": "Weather condition"},
     },
     "required": ["temperature", "condition"],
+}
+
+NESTED_SUBAGENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "details": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "label": {"type": "string"},
+                    "value": {"type": "number"},
+                },
+                "required": ["label"],
+            },
+        },
+    },
+    "required": ["summary"],
 }
 
 
@@ -145,7 +165,7 @@ class TestCreateAgentFromConfig:
 
 class TestResponseFormatIntegration:
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
-    async def test_injects_structured_response_tool_when_response_format_set(self, mock_create):
+    async def test_passes_response_format_kwarg_when_set(self, mock_create):
         # Arrange
         mock_create.return_value = MagicMock()
         config = AgentConfig(name="test", response_format=WEATHER_SCHEMA)
@@ -155,13 +175,55 @@ class TestResponseFormatIntegration:
 
         # Assert
         kwargs = mock_create.call_args.kwargs
-        assert "response_format" not in kwargs
-        tool_names = [t.name for t in kwargs["tools"]]
-        assert "structured_response" in tool_names
-        assert "structured_response" in kwargs.get("system_prompt", "")
+        assert "response_format" in kwargs
+        assert kwargs["response_format"] is not None
+        assert kwargs["response_format"] == WEATHER_SCHEMA
 
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
-    async def test_omits_structured_response_tool_when_none(self, mock_create):
+    async def test_does_not_inject_structured_response_tool_when_set(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(name="test", response_format=WEATHER_SCHEMA)
+
+        # Act
+        await create_agent_from_config(config)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        if kwargs.get("tools"):
+            tool_names = [getattr(t, "name", None) for t in kwargs["tools"]]
+            assert "structured_response" not in tool_names
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_does_not_append_structured_output_instruction_when_set(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(name="test", response_format=WEATHER_SCHEMA)
+
+        # Act
+        await create_agent_from_config(config)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        system_prompt = kwargs.get("system_prompt") or ""
+        assert "structured_response" not in system_prompt
+        assert "structured format" not in system_prompt.lower()
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_returns_pydantic_basemodel_subclass_when_set(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(name="test", response_format=WEATHER_SCHEMA)
+
+        # Act
+        _graph, model = await create_agent_from_config(config)
+
+        # Assert
+        assert model is not None
+        assert issubclass(model, BaseModel)
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_omits_response_format_kwarg_when_none(self, mock_create):
         # Arrange
         mock_create.return_value = MagicMock()
         config = AgentConfig(name="test")
@@ -171,22 +233,22 @@ class TestResponseFormatIntegration:
 
         # Assert
         kwargs = mock_create.call_args.kwargs
-        assert "response_format" not in kwargs
-        if kwargs.get("tools"):
-            tool_names = [t.name for t in kwargs["tools"]]
-            assert "structured_response" not in tool_names
+        assert kwargs.get("response_format") is None
 
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
-    async def test_returns_response_format_model_when_set(self, mock_create):
+    async def test_omits_structured_response_tool_when_no_response_format(self, mock_create):
         # Arrange
         mock_create.return_value = MagicMock()
-        config = AgentConfig(name="test", response_format=WEATHER_SCHEMA)
+        config = AgentConfig(name="test")
 
         # Act
-        graph, model = await create_agent_from_config(config)
+        await create_agent_from_config(config)
 
         # Assert
-        assert model is not None
+        kwargs = mock_create.call_args.kwargs
+        if kwargs.get("tools"):
+            tool_names = [getattr(t, "name", None) for t in kwargs["tools"]]
+            assert "structured_response" not in tool_names
 
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
     async def test_returns_none_model_when_no_response_format(self, mock_create):
@@ -195,7 +257,7 @@ class TestResponseFormatIntegration:
         config = AgentConfig(name="test")
 
         # Act
-        graph, model = await create_agent_from_config(config)
+        _graph, model = await create_agent_from_config(config)
 
         # Assert
         assert model is None
@@ -203,7 +265,7 @@ class TestResponseFormatIntegration:
 
 class TestSubagentStructuredOutput:
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
-    async def test_subagent_with_response_format_gets_structured_tool(self, mock_create):
+    async def test_subagent_with_response_format_passes_response_format_in_spec(self, mock_create):
         # Arrange
         mock_create.return_value = MagicMock()
         config = AgentConfig(
@@ -224,9 +286,82 @@ class TestSubagentStructuredOutput:
         # Assert
         kwargs = mock_create.call_args.kwargs
         subagents = kwargs["subagents"]
-        tool_names = [t.name for t in subagents[0]["tools"]]
-        assert "structured_response" in tool_names
-        assert "structured_response" in subagents[0]["system_prompt"]
+        assert subagents[0]["response_format"] == WEATHER_SCHEMA
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_subagent_with_response_format_does_not_inject_structured_tool(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(
+            name="parent",
+            subagents=[
+                {
+                    "name": "auditor",
+                    "description": "Security auditor",
+                    "instructions": "Analyze code",
+                    "response_format": WEATHER_SCHEMA,
+                }
+            ],
+        )
+
+        # Act
+        await create_agent_from_config(config)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        subagents = kwargs["subagents"]
+        tools = subagents[0].get("tools") or []
+        tool_names = [getattr(t, "name", None) for t in tools]
+        assert "structured_response" not in tool_names
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_subagent_with_response_format_does_not_append_instruction(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(
+            name="parent",
+            subagents=[
+                {
+                    "name": "auditor",
+                    "description": "Security auditor",
+                    "instructions": "Analyze code",
+                    "response_format": WEATHER_SCHEMA,
+                }
+            ],
+        )
+
+        # Act
+        await create_agent_from_config(config)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        subagents = kwargs["subagents"]
+        system_prompt = subagents[0].get("system_prompt") or ""
+        assert "structured_response" not in system_prompt
+        assert "structured format" not in system_prompt.lower()
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_subagent_without_response_format_has_response_format_none(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(
+            name="parent",
+            subagents=[
+                {
+                    "name": "helper",
+                    "description": "A helper",
+                    "instructions": "Help the user",
+                }
+            ],
+        )
+
+        # Act
+        await create_agent_from_config(config)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        subagents = kwargs["subagents"]
+        assert subagents[0].get("response_format") is None
 
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
     async def test_subagent_without_response_format_has_no_structured_tool(self, mock_create):
@@ -249,5 +384,30 @@ class TestSubagentStructuredOutput:
         # Assert
         kwargs = mock_create.call_args.kwargs
         subagents = kwargs["subagents"]
-        assert subagents[0]["tools"] is None
-        assert "structured_response" not in (subagents[0]["system_prompt"] or "")
+        tools = subagents[0].get("tools") or []
+        tool_names = [getattr(t, "name", None) for t in tools]
+        assert "structured_response" not in tool_names
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_subagent_with_nested_response_format_passes_dict_as_is(self, mock_create):
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(
+            name="parent",
+            subagents=[
+                {
+                    "name": "reporter",
+                    "description": "Builds structured reports",
+                    "instructions": "Build a report",
+                    "response_format": NESTED_SUBAGENT_SCHEMA,
+                }
+            ],
+        )
+
+        # Act
+        await create_agent_from_config(config)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        subagents = kwargs["subagents"]
+        assert subagents[0]["response_format"] == NESTED_SUBAGENT_SCHEMA

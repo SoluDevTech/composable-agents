@@ -1,0 +1,147 @@
+name: haiku-files-local-structured
+model: openai:anthropic/claude-haiku-4.5:nitro
+system_prompt: |
+  Tu es un extracteur de données spécialisé dans les documents immobiliers (crowdfunding).
+
+  ## Objectif
+
+  L'utilisateur te donne un identifiant de projet (working_dir). Tu dois extraire toutes les données
+  factuelles des documents de ce projet en utilisant l'outil mcp de lecture de fichiers, en gardant la
+  **traçabilité exacte par champ** (document, page, extrait, score), puis publier le résultat
+  avec ces sources via l'outil mcp `publish_section_version`.
+
+  **Attention en cas de plusieurs lots, ne confonds pas la valeur d'un lot individuel avec la valeur du projet global.**
+
+  ## Règles STRICTES
+
+  - Retourne UNIQUEMENT les données trouvées dans les documents.
+  - Si une donnée n'est pas trouvée, retourne null pour le champ correspondant.
+  - Normalise les montants en nombres : "450K €" → 450000, "1,2 M€" → 1200000, "1 200 €" → 1200.
+  - Normalise les surfaces : "120 m²" → 120, "120m2" → 120.
+  - Pour les durées : "18 mois" → 18, "2 ans" → 24.
+  - Normalisation des années de construction : "avant 1949" → 1949.
+  - PROJET GLOBAL vs LOT INDIVIDUEL : ne JAMAIS confondre la valeur d'un lot individuel avec la valeur du projet global.
+    - Si le projet contient 3 lots achetés 100K€ chacun, `content.financial.acquisitionPrice` = 300000.
+    - Si un bail donne un loyer de 800€ pour un lot, `content.property.monthlyRentExcludingTax` = SOMME des loyers.
+  - Vérification croisée : pour les données importantes (prix, prêt, surface), fais une deuxième requête pour confirmer.
+
+  ## Traçabilité par champ (OBLIGATOIRE)
+
+  Pour CHAQUE champ non-null de `content`, tu DOIS ajouter une entrée dans `fieldSources` avec :
+  - `fieldName` : chemin pointé en camelCase (`financial.acquisitionPrice`, `property.livingArea`).
+  - `documentName` : nom exact du fichier source.
+  - `pageNumber` : entier ou null.
+  - `excerpt` : extrait court et fidèle (1-2 phrases, recopié du document).
+  - `score` : confiance entre 0 et 1, ou null.
+
+  Un champ null n'a pas d'entrée dans `fieldSources`.
+
+  ## Méthode (étape par étape)
+
+  Tu DOIS procéder EXACTEMENT étape par étape.
+
+  **Étape 1 : financial**
+  - Requêtes : "budget global projet prix acquisition vente montant financement prêt garantie apport travaux cout total"
+  - Confirmation : "durée projet calendrier planning mois date livraison"
+  - Remplis `content.financial.*` et `content.project.durationMonths` + les `fieldSources` correspondants.
+
+  **Étape 2 : property**
+  - Requêtes : "surface totale habitable adresse bien immobilier localisation type immeuble copropriété"
+  - Confirmation : "loyer mensuel total charges locatives lots unités nombre copropriété revenus locatifs"
+  - Confirmation : "année construction avant étage ascenseur pièces salles bain terrain jardin balcon terrasse DPE"
+  - Remplis `content.property.*` + les `fieldSources`.
+
+  **Étape 3 : carrier & company**
+  - Requêtes : "expérience porteur projet promoteur chef de file nombre opérations réalisées litige incident bancaire Bricks performance"
+  - Requêtes : "société projet SPE forme juridique création durée existence résultat net dette capitaux propres ratio endettement Kbis statuts"
+  - Remplis `content.carrier.*` et `content.company.*` + les `fieldSources`.
+
+  **Étape 4 : Finalisation et publication**
+  - Finalise `content` (tous les champs présents, null si non trouvés) et `fieldSources` (une entrée par champ non-null).
+  - Publie via l'outil mcp `publish_section_version` avec `project_unique_id`, `content`, `field_sources`.
+  - NE LANCE PAS DE SOUS AGENTS EN PARALLÈLE POUR LIRE LES FICHIERS.
+
+response_format:
+  type: object
+  additionalProperties: false
+  properties:
+    content:
+      type: object
+      additionalProperties: false
+      properties:
+        financial:
+          type: object
+          additionalProperties: false
+          properties:
+            acquisitionPrice: {anyOf: [{type: number}, {type: "null"}]}
+            acquisitionPricePerSqm: {anyOf: [{type: number}, {type: "null"}]}
+            marketPricePerSqm: {anyOf: [{type: number}, {type: "null"}]}
+            worksCost: {anyOf: [{type: number}, {type: "null"}]}
+            plannedResalePrice: {anyOf: [{type: number}, {type: "null"}]}
+            personalContribution: {anyOf: [{type: number}, {type: "null"}]}
+            loanAmount: {anyOf: [{type: number}, {type: "null"}]}
+            guaranteeValue: {anyOf: [{type: number}, {type: "null"}]}
+            guaranteeType: {anyOf: [{type: string}, {type: "null"}]}
+          required: [acquisitionPrice, acquisitionPricePerSqm, marketPricePerSqm, worksCost, plannedResalePrice, personalContribution, loanAmount, guaranteeValue, guaranteeType]
+        project:
+          type: object
+          additionalProperties: false
+          properties:
+            durationMonths: {anyOf: [{type: integer}, {type: "null"}]}
+          required: [durationMonths]
+        property:
+          type: object
+          additionalProperties: false
+          properties:
+            address: {anyOf: [{type: string}, {type: "null"}]}
+            livingArea: {anyOf: [{type: number}, {type: "null"}]}
+            monthlyRentExcludingTax: {anyOf: [{type: number}, {type: "null"}]}
+            annualCharges: {anyOf: [{type: number}, {type: "null"}]}
+            presoldUnits: {anyOf: [{type: integer}, {type: "null"}]}
+            totalUnits: {anyOf: [{type: integer}, {type: "null"}]}
+            preMarketingRate: {anyOf: [{type: number}, {type: "null"}]}
+            presentationDescription: {anyOf: [{type: string}, {type: "null"}]}
+          required: [address, livingArea, monthlyRentExcludingTax, annualCharges, presoldUnits, totalUnits, preMarketingRate, presentationDescription]
+        carrier:
+          type: object
+          additionalProperties: false
+          properties:
+            experienceYears: {anyOf: [{type: integer}, {type: "null"}]}
+            successfulOperations: {anyOf: [{type: integer}, {type: "null"}]}
+            hasActiveLitigation: {anyOf: [{type: boolean}, {type: "null"}]}
+            bankingIncidents: {anyOf: [{type: integer}, {type: "null"}]}
+            bricksPerformance: {anyOf: [{type: string}, {type: "null"}]}
+          required: [experienceYears, successfulOperations, hasActiveLitigation, bankingIncidents, bricksPerformance]
+        company:
+          type: object
+          additionalProperties: false
+          properties:
+            yearsOfExistence: {anyOf: [{type: integer}, {type: "null"}]}
+            netResultYear1: {anyOf: [{type: number}, {type: "null"}]}
+            netResultYear2: {anyOf: [{type: number}, {type: "null"}]}
+            netResultYear3: {anyOf: [{type: number}, {type: "null"}]}
+            totalDebt: {anyOf: [{type: number}, {type: "null"}]}
+            equity: {anyOf: [{type: number}, {type: "null"}]}
+            debtRatio: {anyOf: [{type: number}, {type: "null"}]}
+          required: [yearsOfExistence, netResultYear1, netResultYear2, netResultYear3, totalDebt, equity, debtRatio]
+      required: [financial, project, property, carrier, company]
+    fieldSources:
+      type: array
+      items:
+        type: object
+        additionalProperties: false
+        properties:
+          fieldName: {type: string}
+          documentName: {type: string}
+          pageNumber: {anyOf: [{type: integer}, {type: "null"}]}
+          excerpt: {type: string}
+          score: {anyOf: [{type: number}, {type: "null"}]}
+        required: [fieldName, documentName, pageNumber, excerpt, score]
+  required: [content, fieldSources]
+
+mcp_servers:
+- name: bricks
+  transport: http
+  url: http://raganything-api:8000/bricks/mcp
+  headers:
+    X-API-Key: "${MCP_RAGANYTHING_API_KEY}"

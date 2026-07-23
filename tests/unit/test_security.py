@@ -223,9 +223,7 @@ class TestVerifyApiKeyWs:
         body = json.loads(ws.sent_messages[1]["body"])
         assert body["detail"] == str(ErrorMessage.API_KEY_EMPTY)
         assert any(
-            ErrorMessage.API_KEY_EMPTY in record.message
-            for record in caplog.records
-            if record.name == "src.security"
+            ErrorMessage.API_KEY_EMPTY in record.message for record in caplog.records if record.name == "src.security"
         )
 
     async def test_verify_api_key_ws_sends_401_when_invalid(self, caplog):

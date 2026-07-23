@@ -4,7 +4,6 @@ Uses the shared ``noop_tracing`` fixture from conftest.py.
 """
 
 
-
 class TestNoopTracingProvider:
     def test_get_callbacks_returns_empty_list(self, noop_tracing):
         # Arrange

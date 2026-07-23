@@ -46,9 +46,7 @@ def _wrap_phoenix_error(operation: str, identifier: str, e: Exception) -> Except
     """
     if isinstance(e, (httpx.TimeoutException, httpx.ConnectError)):
         return PromptManagerUnavailableError(
-            ErrorMessage.PROMPT_MANAGER_UNAVAILABLE.format(
-                operation=operation, identifier=identifier, error=e
-            )
+            ErrorMessage.PROMPT_MANAGER_UNAVAILABLE.format(operation=operation, identifier=identifier, error=e)
         )
     if isinstance(e, httpx.HTTPStatusError):
         status_code = e.response.status_code
@@ -76,7 +74,8 @@ def _extract_messages(phoenix_prompt: Any) -> list[dict[str, str]]:
         raw_content = msg.get("content", "")
         if isinstance(raw_content, list):
             text = " ".join(
-                block.get("text", "") for block in raw_content
+                block.get("text", "")
+                for block in raw_content
                 if isinstance(block, dict) and block.get("type") == "text"
             )
         else:
@@ -165,7 +164,9 @@ class PhoenixPromptManagerProvider(PromptManager):
             if not prompt_obj:
                 raise PromptNotFoundError(ErrorMessage.PROMPT_NOT_FOUND.format(identifier=identifier))
 
-            tags = self._client.prompts.tags.list(prompt_version_id=prompt_obj.id) if prompt_obj and prompt_obj.id else []
+            tags = (
+                self._client.prompts.tags.list(prompt_version_id=prompt_obj.id) if prompt_obj and prompt_obj.id else []
+            )
             tag_names = [t["name"] for t in tags]
             logger.info(LogMessage.PROMPT_RETRIEVED, identifier, version_id, tag_names)
 
@@ -209,7 +210,9 @@ class PhoenixPromptManagerProvider(PromptManager):
                 tag=tag,
             )
 
-            tags = self._client.prompts.tags.list(prompt_version_id=prompt_obj.id) if prompt_obj and prompt_obj.id else []
+            tags = (
+                self._client.prompts.tags.list(prompt_version_id=prompt_obj.id) if prompt_obj and prompt_obj.id else []
+            )
             logger.info(LogMessage.PROMPT_RETRIEVED, identifier, version_id, [t["name"] for t in tags])
 
             messages = _extract_messages(prompt_obj)
@@ -277,10 +280,7 @@ class PhoenixPromptManagerProvider(PromptManager):
         if not self._client:
             raise PromptManagerUnavailableError(ErrorMessage.PROMPT_MANAGER_NOT_INITIALIZED)
         if description is not None:
-            logger.warning(
-                LogMessage.PHOENIX_DESC_UPDATE_UNSUPPORTED,
-                identifier
-            )
+            logger.warning(LogMessage.PHOENIX_DESC_UPDATE_UNSUPPORTED, identifier)
         try:
             current = await self.get_prompt(identifier)
             updated = self._client.prompts.create(

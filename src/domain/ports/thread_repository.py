@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 
-from src.domain.entities.message import Message
 from src.domain.entities.thread import Thread
 
 
@@ -23,9 +22,4 @@ class ThreadRepository(ABC):
     @abstractmethod
     async def delete(self, thread_id: str) -> None:
         """Supprime un thread."""
-        ...
-
-    @abstractmethod
-    async def add_message(self, thread_id: str, message: Message) -> Thread:
-        """Ajoute un message a un thread existant."""
         ...

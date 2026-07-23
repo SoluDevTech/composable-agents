@@ -4,13 +4,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 
 from src.application.requests.chat import CreateThreadRequest
+from src.application.responses.thread_history import ThreadHistory
 from src.application.use_cases.create_thread import CreateThreadUseCase
 from src.application.use_cases.delete_thread import DeleteThreadUseCase
 from src.application.use_cases.get_thread import GetThreadUseCase
+from src.application.use_cases.get_thread_history import GetThreadHistoryUseCase
 from src.application.use_cases.list_threads import ListThreadsUseCase
 from src.dependencies import (
     get_create_thread_use_case,
     get_delete_thread_use_case,
+    get_get_thread_history_use_case,
     get_get_thread_use_case,
     get_list_threads_use_case,
 )
@@ -69,3 +72,21 @@ async def list_messages(
     thread = await use_case.execute(thread_id)
     logger.info(LogMessage.THREAD_MESSAGES_LISTED, thread_id, len(thread.messages))
     return thread.messages
+
+
+@router.get("/{thread_id}/history")
+async def get_thread_history(
+    thread_id: str,
+    use_case: Annotated[GetThreadHistoryUseCase, Depends(get_get_thread_history_use_case)],
+) -> ThreadHistory:
+    """Return the full history of a thread grouped by turn.
+
+    Args:
+        thread_id: Conversation thread identifier.
+        use_case: GetThreadHistoryUseCase wired at startup.
+
+    Returns:
+        A :class:`ThreadHistory` containing the thread and its turns.
+    """
+    logger.info(LogMessage.THREAD_GETTING, thread_id)
+    return await use_case.execute(thread_id)

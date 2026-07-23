@@ -10,7 +10,6 @@ Each template may contain ``%s``/``%d`` style placeholders consumed by the
 stdlib logging lazy interpolation.
 """
 
-
 from enum import StrEnum
 
 
@@ -39,7 +38,9 @@ class LogMessage(StrEnum):
     TRACING_PHOENIX_INIT = "Initializing Phoenix tracing provider (endpoint=%s)"
     TRACING_DISABLED = "Tracing disabled, using NoopTracingProvider"
     PERSISTENCE_INITIALIZING = "Initializing persistence layer"
-    SQLALCHEMY_ENGINE_CREATED = "SQLAlchemy async engine created (pool: AsyncAdaptedQueuePool, size=20, max_overflow=20)"
+    SQLALCHEMY_ENGINE_CREATED = (
+        "SQLAlchemy async engine created (pool: AsyncAdaptedQueuePool, size=20, max_overflow=20)"
+    )
     POSTGRES_REPOS_INITIALIZED = "PostgreSQL repositories initialized"
     MINIO_STORE_INITIALIZED = "MinIO store initialized (bucket=%s)"
     PERSISTENCE_REGISTRY_SET = "Persistence layer initialized, agent_registry set to PersistentAgentRegistry"
@@ -139,7 +140,9 @@ class LogMessage(StrEnum):
     CHAT_HITL_COMPLETE = "[thread=%s][agent=%s] HITL elapsed=%.2fs, status=%s"
     CHAT_STREAM_STARTED = "[thread=%s][agent=%s] Stream started"
     CHAT_STREAM_ERROR_UC = "[thread=%s][agent=%s] Stream error after %d chunks"
-    CHAT_STREAM_COMPLETE_PERSISTED = "[thread=%s][agent=%s] Stream complete, %d chunks, elapsed=%.2fs, message=persisted"
+    CHAT_STREAM_COMPLETE_PERSISTED = (
+        "[thread=%s][agent=%s] Stream complete, %d chunks, elapsed=%.2fs, message=persisted"
+    )
 
     # --- DeepAgent runner lifecycle ---
     AGENT_INVOKING = "[thread=%s] Invoking agent"
@@ -169,6 +172,7 @@ class LogMessage(StrEnum):
     TOOLS_NODE_NO_BOUND = "'tools' node has no 'bound' attribute; cannot patch handle_tool_errors"
     TOOLNODE_PATCHED = "Patched ToolNode handle_tool_errors=True"
     TOOLNODE_PATCH_MISSING_ATTR = "ToolNode bound object missing _handle_tool_errors; patch not applied"
+    STRUCTURED_RESPONSE_MISSING = "Structured response missing despite response_format being configured"
     STRUCTURED_RESPONSE_VALIDATION_FAILED = "Failed to validate structured_response against schema, returning raw data"
     STRUCTURED_FIELD_STRIPPED = "Stripped extra field from structured_response: '%s'"
     STRUCTURED_NESTED_FIELD_STRIPPED = "Stripped extra nested field: '%s.%s'"

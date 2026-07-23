@@ -35,9 +35,7 @@ def _fake_model() -> _FakeToolCallingModel:
             [
                 AIMessage(
                     content="",
-                    tool_calls=[
-                        {"name": "echo", "args": {"text": "hello"}, "id": "call_1", "type": "tool_call"}
-                    ],
+                    tool_calls=[{"name": "echo", "args": {"text": "hello"}, "id": "call_1", "type": "tool_call"}],
                 ),
                 AIMessage(content="final answer"),
                 AIMessage(content="final answer"),

@@ -61,9 +61,7 @@ class TestMcpServerConfig:
 
     def test_frozen_immutability_blocks_assignment(self):
         # Arrange
-        config = McpServerConfig(
-            name="test", transport=McpTransportType.STDIO, command="echo"
-        )
+        config = McpServerConfig(name="test", transport=McpTransportType.STDIO, command="echo")
 
         # Act & Assert
         with pytest.raises(ValidationError):

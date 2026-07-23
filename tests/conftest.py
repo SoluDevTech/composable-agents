@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from src.infrastructure.database.models.base import Base
 from src.infrastructure.postgres_thread.adapter import PostgresThreadRepository
+from src.infrastructure.postgres_trace.adapter import PostgresTraceEventRepository
 from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 
@@ -65,6 +66,12 @@ async def thread_repo(db_engine) -> PostgresThreadRepository:
     internal repository implementation per the test-writer-python conventions.
     """
     return PostgresThreadRepository(engine=db_engine)
+
+
+@pytest_asyncio.fixture
+async def trace_repo(db_engine) -> PostgresTraceEventRepository:
+    """Provide a real PostgresTraceEventRepository backed by in-memory SQLite."""
+    return PostgresTraceEventRepository(engine=db_engine)
 
 
 @pytest.fixture

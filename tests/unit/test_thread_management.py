@@ -24,13 +24,7 @@ from src.domain.errors.agent import AgentNotFoundError
 from src.domain.errors.thread import ThreadNotFoundError
 from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
 
-VALID_YAML = (
-    "name: test-agent\n"
-    "model: test-model\n"
-    'system_prompt: "Test."\n'
-    "tools: []\n"
-    "debug: false\n"
-)
+VALID_YAML = 'name: test-agent\nmodel: test-model\nsystem_prompt: "Test."\ntools: []\ndebug: false\n'
 
 
 class TestCreateThreadUseCase:
@@ -92,14 +86,10 @@ class TestCreateThreadUseCase:
         # Assert
         assert thread.id is not None
 
-    async def test_raises_when_agent_not_found(
-        self, use_case, mock_agent_config_store_with_yaml
-    ):
+    async def test_raises_when_agent_not_found(self, use_case, mock_agent_config_store_with_yaml):
         """Should raise AgentNotFoundError when the agent is unknown."""
         # Arrange
-        mock_agent_config_store_with_yaml.get.side_effect = AgentNotFoundError(
-            "not found"
-        )
+        mock_agent_config_store_with_yaml.get.side_effect = AgentNotFoundError("not found")
 
         # Act & Assert
         with pytest.raises(AgentNotFoundError):
@@ -159,9 +149,7 @@ class TestDeleteThreadUseCase:
     def use_case(self, thread_repo):
         return DeleteThreadUseCase(thread_repo)
 
-    async def test_deletes_thread_so_get_raises(
-        self, use_case, thread_repo
-    ):
+    async def test_deletes_thread_so_get_raises(self, use_case, thread_repo):
         """Should delete the thread so it is no longer retrievable."""
         # Arrange
         created = await thread_repo.create("test-agent")

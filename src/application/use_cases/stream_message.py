@@ -1,91 +1,69 @@
-import json
+"""StreamMessageUseCase — stream all TraceEvents of a turn and persist each one.
+
+Ticket 3 rewrite: the use case depends on TraceEventRepository + the new runner
+API ``stream(thread_id, message, turn_id) -> AsyncIterator[TraceEvent]``. Each
+emitted event is persisted via ``trace_repo.add`` before being yielded to the
+HTTP/WebSocket layer.
+"""
+
 import logging
-import time
+import uuid
 from collections.abc import AsyncGenerator
 
-from src.domain.entities.message import Message, MessageRole
-from src.domain.entities.stream_event import StreamEvent, StreamEventType
+from src.domain.entities.trace_event import TraceEvent
 from src.domain.errors.messages import ErrorMessage
 from src.domain.errors.storage import StorageError
 from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.thread_repository import ThreadRepository
+from src.domain.ports.trace_event_repository import TraceEventRepository
 
 logger = logging.getLogger(__name__)
 
 
 class StreamMessageUseCase:
-    """Envoie un message a l'agent et streame la reponse avec le Message final."""
+    """Stream all TraceEvents of a turn and persist each one.
 
-    def __init__(self, registry: AgentRegistry, threads: ThreadRepository) -> None:
+    Each event emitted by the runner is persisted via ``trace_repo.add`` before
+    being yielded, so the trace is durably stored even if the client disconnects
+    mid-stream.
+    """
+
+    def __init__(self, registry: AgentRegistry, threads: ThreadRepository, trace_repo: TraceEventRepository) -> None:
         self._registry = registry
         self._threads = threads
+        self._trace_repo = trace_repo
 
-    @staticmethod
-    def _is_duplicate_human_message(messages: list, message: str) -> bool:
-        """Detect duplicate HUMAN message submissions (crash/retry scenario).
+    async def execute(self, thread_id: str, message: str) -> AsyncGenerator[TraceEvent, None]:
+        """Execute the use case.
 
-        When a stream crashes before the AI response is persisted, the last DB message
-        is HUMAN with status=None. On client retry, this check prevents storing a
-        duplicate HUMAN message in the DB.
+        Args:
+            thread_id: Conversation thread identifier.
+            message: Human message text.
 
-        NOTE: The graph invocation still proceeds (LangGraph will add the human message
-        to its internal checkpoint state). This is intentional — the graph needs to be
-        invoked to produce a response. The trade-off is that the LangGraph checkpoint
-        may accumulate duplicate human messages, but the DB projection remains clean.
+        Yields:
+            Each :class:`TraceEvent` emitted by the runner (HUMAN_MESSAGE,
+            intermediates, then AI_MESSAGE), in turn order.
+
+        Raises:
+            ThreadNotFoundError: If the thread does not exist.
+            AgentError: On runner failure.
+            StorageError: If persisting an event fails.
         """
-        if not messages:
-            return False
-        last = messages[-1]
-        return (
-            last.role == MessageRole.HUMAN
-            and last.content == message
-            and last.status is None
-        )
-
-    async def execute(self, thread_id: str, message: str) -> AsyncGenerator[StreamEvent, None]:
         thread = await self._threads.get(thread_id)
-        if not self._is_duplicate_human_message(thread.messages, message):
-            human_msg = Message(role=MessageRole.HUMAN, content=message)
-            await self._threads.add_message(thread_id, human_msg)
-        else:
-            logger.info(LogMessage.CHAT_SKIP_DUPLICATE_HUMAN, thread_id)
         runner = await self._registry.get_runner(thread.agent_name)
-        start = time.monotonic()
+        turn_id = str(uuid.uuid4())
         logger.info(LogMessage.CHAT_STREAM_STARTED, thread_id, thread.agent_name)
         chunk_count = 0
-        final_message = None
         try:
-            async for event in runner.stream_with_message(thread_id, message):
-                if event.type in (StreamEventType.THINKING, StreamEventType.CONTENT):
-                    chunk_count += 1
-                    yield event
-                elif event.type == StreamEventType.MESSAGE:
-                    final_message = Message.model_validate_json(event.data)
-                    if final_message and final_message.structured_response is not None:
-                        event = StreamEvent(
-                            type=StreamEventType.STRUCTURED,
-                            data=json.dumps(final_message.structured_response)
-                        )
-                    yield event
+            async for event in runner.stream(thread_id, message, turn_id):
+                try:
+                    await self._trace_repo.add(thread_id, event)
+                except Exception as exc:
+                    logger.exception(LogMessage.CHAT_STREAM_PERSIST_FAILED, thread_id, thread.agent_name)
+                    raise StorageError(ErrorMessage.STORAGE_FAILED_PERSIST_STREAM.format(error=exc)) from exc
+                chunk_count += 1
+                yield event
         except Exception:
-            logger.exception(
-                LogMessage.CHAT_STREAM_ERROR_UC, thread_id, thread.agent_name, chunk_count
-            )
+            logger.exception(LogMessage.CHAT_STREAM_ERROR_UC, thread_id, thread.agent_name, chunk_count)
             raise
-        elapsed = time.monotonic() - start
-        if final_message is not None:
-            try:
-                await self._threads.add_message(thread_id, final_message)
-                logger.info(
-                    LogMessage.CHAT_STREAM_COMPLETE_PERSISTED,
-                    thread_id,
-                    thread.agent_name,
-                    chunk_count,
-                    elapsed,
-                )
-            except Exception as exc:
-                logger.exception(
-                    LogMessage.CHAT_STREAM_PERSIST_FAILED, thread_id, thread.agent_name
-                )
-                raise StorageError(ErrorMessage.STORAGE_FAILED_PERSIST_STREAM.format(error=exc)) from exc

@@ -16,8 +16,7 @@ class ErrorMessage(StrEnum):
 
     # --- Configuration ---
     INVALID_AGENT_NAME = (
-        "Invalid agent name '{name}'. Must match pattern: alphanumeric, "
-        "dots, hyphens, underscores, 2-100 chars."
+        "Invalid agent name '{name}'. Must match pattern: alphanumeric, dots, hyphens, underscores, 2-100 chars."
     )
     FILE_TOO_LARGE = "File too large. Maximum size is {max_size} bytes."
     FILE_NOT_UTF8 = "File must be valid UTF-8 encoded YAML."
@@ -59,12 +58,15 @@ class ErrorMessage(StrEnum):
     THREAD_FAILED_DELETE = "Failed to delete thread {thread_id}: {error}"
     THREAD_FAILED_ADD_MESSAGE = "Failed to add message to thread {thread_id}: {error}"
 
+    # --- Trace events ---
+    TRACE_FAILED_ADD = "Failed to add trace event to thread {thread_id}: {error}"
+    TRACE_FAILED_LIST = "Failed to list trace events for thread {thread_id}: {error}"
+    TRACE_FAILED_ADD_BATCH = "Failed to add batch trace events to thread {thread_id}: {error}"
+
     # --- Storage / persistence ---
     STORAGE_REPO_NOT_INITIALIZED = "Thread repository not initialized. Check PostgreSQL connectivity."
     STORAGE_REGISTRY_NOT_INITIALIZED = "Agent registry not initialized. Check MinIO/PostgreSQL connectivity."
-    STORAGE_PERSISTENCE_NOT_INITIALIZED = (
-        "Persistence layer not initialized. Check MinIO/PostgreSQL connectivity."
-    )
+    STORAGE_PERSISTENCE_NOT_INITIALIZED = "Persistence layer not initialized. Check MinIO/PostgreSQL connectivity."
     STORAGE_FAILED_SAVE_AGENT_CONFIG = "Failed to save agent config metadata '{name}': {error}"
     STORAGE_FAILED_GET_AGENT_CONFIG = "Failed to get agent config metadata '{name}': {error}"
     STORAGE_FAILED_LIST_AGENT_CONFIG = "Failed to list agent config metadata: {error}"
@@ -85,9 +87,7 @@ class ErrorMessage(StrEnum):
     PROMPT_NOT_FOUND = "Prompt not found: {identifier}"
     PROMPT_ALREADY_EXISTS = "Prompt already exists: {identifier}"
     PROMPT_MANAGER_UNAVAILABLE = "Prompt manager unavailable during '{operation}' for '{identifier}': {error}"
-    PROMPT_MANAGER_SERVER_ERROR = (
-        "Prompt manager server error ({status_code}) during '{operation}' for '{identifier}'"
-    )
+    PROMPT_MANAGER_SERVER_ERROR = "Prompt manager server error ({status_code}) during '{operation}' for '{identifier}'"
 
     # --- Security ---
     API_KEY_UNAUTHORIZED = "The Api Key you provided is unauthorized"

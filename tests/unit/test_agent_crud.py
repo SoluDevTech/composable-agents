@@ -50,9 +50,7 @@ class TestCreateAgentConfigUseCase:
             config_repository=mock_agent_config_repository,
         )
 
-    async def test_returns_config_with_provided_name_when_created(
-        self, use_case, mock_agent_config_repository
-    ):
+    async def test_returns_config_with_provided_name_when_created(self, use_case, mock_agent_config_repository):
         """Should return parsed config with the provided name."""
         # Arrange
         mock_agent_config_repository.exists.return_value = False
@@ -63,9 +61,7 @@ class TestCreateAgentConfigUseCase:
         # Assert
         assert result.name == "test-agent"
 
-    async def test_returns_config_with_parsed_model_when_created(
-        self, use_case, mock_agent_config_repository
-    ):
+    async def test_returns_config_with_parsed_model_when_created(self, use_case, mock_agent_config_repository):
         """Should return parsed config with the YAML model."""
         # Arrange
         mock_agent_config_repository.exists.return_value = False
@@ -76,9 +72,7 @@ class TestCreateAgentConfigUseCase:
         # Assert
         assert result.model == "claude-sonnet-4-5-20250929"
 
-    async def test_returns_config_with_parsed_system_prompt_when_created(
-        self, use_case, mock_agent_config_repository
-    ):
+    async def test_returns_config_with_parsed_system_prompt_when_created(self, use_case, mock_agent_config_repository):
         """Should return parsed config with the YAML system_prompt."""
         # Arrange
         mock_agent_config_repository.exists.return_value = False
@@ -89,9 +83,7 @@ class TestCreateAgentConfigUseCase:
         # Assert
         assert result.system_prompt == "You are a test agent."
 
-    async def test_checks_existence_with_repository_when_created(
-        self, use_case, mock_agent_config_repository
-    ):
+    async def test_checks_existence_with_repository_when_created(self, use_case, mock_agent_config_repository):
         """Should check existence on the repository with the agent name."""
         # Arrange
         mock_agent_config_repository.exists.return_value = False
@@ -115,9 +107,7 @@ class TestCreateAgentConfigUseCase:
         # Assert
         mock_agent_config_store.put.assert_awaited_once()
 
-    async def test_saves_metadata_in_repository_when_created(
-        self, use_case, mock_agent_config_repository
-    ):
+    async def test_saves_metadata_in_repository_when_created(self, use_case, mock_agent_config_repository):
         """Should save metadata in the repository."""
         # Arrange
         mock_agent_config_repository.exists.return_value = False
@@ -128,9 +118,7 @@ class TestCreateAgentConfigUseCase:
         # Assert
         mock_agent_config_repository.save.assert_awaited_once()
 
-    async def test_raises_already_exists_when_agent_present(
-        self, use_case, mock_agent_config_repository
-    ):
+    async def test_raises_already_exists_when_agent_present(self, use_case, mock_agent_config_repository):
         """Should raise AgentConfigAlreadyExistsError when agent already exists."""
         # Arrange
         mock_agent_config_repository.exists.return_value = True
@@ -139,9 +127,7 @@ class TestCreateAgentConfigUseCase:
         with pytest.raises(AgentConfigAlreadyExistsError):
             await use_case.execute(name="test-agent", yaml_content=VALID_YAML)
 
-    async def test_raises_config_error_when_yaml_invalid(
-        self, use_case, mock_agent_config_repository
-    ):
+    async def test_raises_config_error_when_yaml_invalid(self, use_case, mock_agent_config_repository):
         """Should raise ConfigError when YAML is invalid (via real loader)."""
         # Arrange
         mock_agent_config_repository.exists.return_value = False
@@ -159,9 +145,7 @@ class TestUpdateAgentConfigUseCase:
         return AsyncMock(spec=AgentRegistry)
 
     @pytest.fixture
-    def use_case(
-        self, yaml_loader, mock_agent_config_store, mock_agent_config_repository, mock_registry
-    ):
+    def use_case(self, yaml_loader, mock_agent_config_store, mock_agent_config_repository, mock_registry):
         return UpdateAgentConfigUseCase(
             config_loader=yaml_loader,
             config_store=mock_agent_config_store,
@@ -232,9 +216,7 @@ class TestUpdateAgentConfigUseCase:
         # Assert
         mock_registry.invalidate.assert_awaited_once_with("test-agent")
 
-    async def test_raises_not_found_when_agent_absent(
-        self, use_case, mock_agent_config_repository
-    ):
+    async def test_raises_not_found_when_agent_absent(self, use_case, mock_agent_config_repository):
         """Should raise AgentNotFoundError when agent does not exist."""
         # Arrange
         mock_agent_config_repository.get.side_effect = AgentNotFoundError("not found")
@@ -250,8 +232,7 @@ class TestUpdateAgentConfigUseCase:
         # Arrange
         mock_agent_config_repository.get.return_value = existing_metadata
         mismatched_yaml = (
-            'name: different-name\nmodel: claude-sonnet-4-5-20250929\n'
-            'system_prompt: "You are a test agent."\n'
+            'name: different-name\nmodel: claude-sonnet-4-5-20250929\nsystem_prompt: "You are a test agent."\n'
         )
 
         # Act & Assert
@@ -324,9 +305,7 @@ class TestDeleteAgentConfigUseCase:
         # Assert
         mock_registry.invalidate.assert_awaited_once_with("test-agent")
 
-    async def test_raises_not_found_when_agent_absent(
-        self, use_case, mock_agent_config_repository
-    ):
+    async def test_raises_not_found_when_agent_absent(self, use_case, mock_agent_config_repository):
         """Should raise AgentNotFoundError when agent does not exist."""
         # Arrange
         mock_agent_config_repository.get.side_effect = AgentNotFoundError("not found")
@@ -346,9 +325,7 @@ class TestGetAgentConfigUseCase:
             config_store=mock_agent_config_store,
         )
 
-    async def test_returns_config_with_name_when_found(
-        self, use_case, mock_agent_config_store
-    ):
+    async def test_returns_config_with_name_when_found(self, use_case, mock_agent_config_store):
         """Should return parsed config with the agent name."""
         # Arrange
         mock_agent_config_store.get.return_value = VALID_YAML
@@ -359,9 +336,7 @@ class TestGetAgentConfigUseCase:
         # Assert
         assert result.name == "test-agent"
 
-    async def test_returns_config_with_model_when_found(
-        self, use_case, mock_agent_config_store
-    ):
+    async def test_returns_config_with_model_when_found(self, use_case, mock_agent_config_store):
         """Should return parsed config with the YAML model."""
         # Arrange
         mock_agent_config_store.get.return_value = VALID_YAML
@@ -372,9 +347,7 @@ class TestGetAgentConfigUseCase:
         # Assert
         assert result.model == "claude-sonnet-4-5-20250929"
 
-    async def test_returns_config_with_system_prompt_when_found(
-        self, use_case, mock_agent_config_store
-    ):
+    async def test_returns_config_with_system_prompt_when_found(self, use_case, mock_agent_config_store):
         """Should return parsed config with the YAML system_prompt."""
         # Arrange
         mock_agent_config_store.get.return_value = VALID_YAML
@@ -385,9 +358,7 @@ class TestGetAgentConfigUseCase:
         # Assert
         assert result.system_prompt == "You are a test agent."
 
-    async def test_fetches_yaml_from_store_with_name(
-        self, use_case, mock_agent_config_store
-    ):
+    async def test_fetches_yaml_from_store_with_name(self, use_case, mock_agent_config_store):
         """Should fetch the YAML from the store with the agent name."""
         # Arrange
         mock_agent_config_store.get.return_value = VALID_YAML
@@ -439,9 +410,7 @@ class TestListAgentConfigsUseCase:
         # Assert
         assert len(result) == 2
 
-    async def test_returns_first_metadata_name(
-        self, use_case, mock_agent_config_repository, two_metadatas
-    ):
+    async def test_returns_first_metadata_name(self, use_case, mock_agent_config_repository, two_metadatas):
         """Should preserve the order of the first metadata."""
         # Arrange
         mock_agent_config_repository.list_all.return_value = two_metadatas
@@ -452,9 +421,7 @@ class TestListAgentConfigsUseCase:
         # Assert
         assert result[0].name == "agent-a"
 
-    async def test_returns_second_metadata_name(
-        self, use_case, mock_agent_config_repository, two_metadatas
-    ):
+    async def test_returns_second_metadata_name(self, use_case, mock_agent_config_repository, two_metadatas):
         """Should preserve the order of the second metadata."""
         # Arrange
         mock_agent_config_repository.list_all.return_value = two_metadatas
@@ -465,9 +432,7 @@ class TestListAgentConfigsUseCase:
         # Assert
         assert result[1].name == "agent-b"
 
-    async def test_queries_repository_when_executed(
-        self, use_case, mock_agent_config_repository, two_metadatas
-    ):
+    async def test_queries_repository_when_executed(self, use_case, mock_agent_config_repository, two_metadatas):
         """Should call list_all on the repository."""
         # Arrange
         mock_agent_config_repository.list_all.return_value = two_metadatas

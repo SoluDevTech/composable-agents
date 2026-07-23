@@ -14,6 +14,7 @@ from src.application.use_cases.delete_thread import DeleteThreadUseCase
 from src.application.use_cases.get_agent_config import GetAgentConfigUseCase
 from src.application.use_cases.get_prompt import GetPromptContentUseCase, GetPromptUseCase
 from src.application.use_cases.get_thread import GetThreadUseCase
+from src.application.use_cases.get_thread_history import GetThreadHistoryUseCase
 from src.application.use_cases.list_agent_configs import ListAgentConfigsUseCase
 from src.application.use_cases.list_threads import ListThreadsUseCase
 from src.application.use_cases.load_agent_config import LoadAgentConfigUseCase
@@ -28,12 +29,14 @@ from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.prompt_manager import PromptManager
 from src.domain.ports.thread_repository import ThreadRepository
+from src.domain.ports.trace_event_repository import TraceEventRepository
 from src.domain.ports.tracing_provider import TracingProvider
 from src.infrastructure.mcp.adapter import LangchainMcpToolLoader
 from src.infrastructure.minio_store.adapter import MinioAgentConfigStore
 from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
 from src.infrastructure.postgres_repository.adapter import PostgresAgentConfigRepository
 from src.infrastructure.postgres_thread.adapter import PostgresThreadRepository
+from src.infrastructure.postgres_trace.adapter import PostgresTraceEventRepository
 from src.infrastructure.prompt_management.adapter import PhoenixPromptManagerProvider
 from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
@@ -110,6 +113,7 @@ def get_security() -> ComposableAgentsSecurity:
     """
     return security
 
+
 # ============= PERSISTENCE (initialized at startup) =============
 
 
@@ -122,6 +126,7 @@ class CompositionRoot:
     pg_repository: PostgresAgentConfigRepository | None = None
     agent_registry: AgentRegistry | None = None
     thread_repository: ThreadRepository | None = None
+    trace_event_repository: TraceEventRepository | None = None
 
 
 _root = CompositionRoot()
@@ -166,6 +171,7 @@ async def init_persistence() -> None:
 
     _root.pg_repository = PostgresAgentConfigRepository(engine=_root.async_engine)
     _root.thread_repository = PostgresThreadRepository(engine=_root.async_engine)
+    _root.trace_event_repository = PostgresTraceEventRepository(engine=_root.async_engine)
     logger.info(LogMessage.POSTGRES_REPOS_INITIALIZED)
 
     minio_client = Minio(
@@ -213,6 +219,7 @@ def reset() -> None:
     _root.pg_repository = None
     _root.agent_registry = None
     _root.thread_repository = None
+    _root.trace_event_repository = None
 
 
 logger.info(LogMessage.DEPENDENCIES_INITIALIZED)
@@ -228,6 +235,18 @@ def _require_thread_repository() -> ThreadRepository:
     return _root.thread_repository
 
 
+def _require_trace_event_repository() -> TraceEventRepository:
+    """Return trace event repository or raise StorageError if not initialized."""
+    if _root.trace_event_repository is None:
+        raise StorageError(ErrorMessage.STORAGE_REPO_NOT_INITIALIZED)
+    return _root.trace_event_repository
+
+
+def get_trace_event_repository() -> TraceEventRepository:
+    """Provide a TraceEventRepository instance (singleton wired at startup)."""
+    return _require_trace_event_repository()
+
+
 def _require_agent_registry() -> AgentRegistry:
     """Return agent registry or raise StorageError if not initialized."""
     if _root.agent_registry is None:
@@ -237,12 +256,21 @@ def _require_agent_registry() -> AgentRegistry:
 
 def get_send_message_use_case() -> SendMessageUseCase:
     """Provide a SendMessageUseCase instance."""
-    return SendMessageUseCase(_require_agent_registry(), _require_thread_repository())
+    return SendMessageUseCase(
+        _require_agent_registry(), _require_thread_repository(), _require_trace_event_repository()
+    )
 
 
 def get_stream_message_use_case() -> StreamMessageUseCase:
     """Provide a StreamMessageUseCase instance."""
-    return StreamMessageUseCase(_require_agent_registry(), _require_thread_repository())
+    return StreamMessageUseCase(
+        _require_agent_registry(), _require_thread_repository(), _require_trace_event_repository()
+    )
+
+
+def get_get_thread_history_use_case() -> GetThreadHistoryUseCase:
+    """Provide a GetThreadHistoryUseCase instance."""
+    return GetThreadHistoryUseCase(_require_thread_repository(), _require_trace_event_repository())
 
 
 def get_create_thread_use_case() -> CreateThreadUseCase:

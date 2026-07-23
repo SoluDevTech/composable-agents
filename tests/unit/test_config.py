@@ -31,14 +31,10 @@ class TestDatabaseUrlNormalization:
         settings = Settings(
             database_url="postgresql://neondb_owner:password@ep-xxx.neon.tech/neondb?sslmode=require&channel_binding=require"
         )
-        assert settings.database_url == (
-            "postgresql+asyncpg://neondb_owner:password@ep-xxx.neon.tech/neondb"
-        )
+        assert settings.database_url == ("postgresql+asyncpg://neondb_owner:password@ep-xxx.neon.tech/neondb")
 
     def test_sslmode_extracted_to_property(self):
-        settings = Settings(
-            database_url="postgresql://user:pass@host:5432/db?sslmode=require"
-        )
+        settings = Settings(database_url="postgresql://user:pass@host:5432/db?sslmode=require")
         assert settings.ssl_mode == "require"
 
     def test_no_sslmode_returns_none(self):
@@ -51,9 +47,7 @@ class TestDatabaseUrlNormalization:
             Settings()
 
     def test_other_query_params_preserved(self):
-        settings = Settings(
-            database_url="postgresql://user:pass@host:5432/db?sslmode=require&application_name=myapp"
-        )
+        settings = Settings(database_url="postgresql://user:pass@host:5432/db?sslmode=require&application_name=myapp")
         assert "application_name=myapp" in settings.database_url
         assert "sslmode" not in settings.database_url
 

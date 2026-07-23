@@ -85,9 +85,7 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
             except AgentNotFoundError:
                 raise
             except SQLAlchemyError as e:
-                raise StorageError(
-                    ErrorMessage.STORAGE_FAILED_GET_AGENT_CONFIG.format(name=name, error=e)
-                ) from e
+                raise StorageError(ErrorMessage.STORAGE_FAILED_GET_AGENT_CONFIG.format(name=name, error=e)) from e
 
     async def list_all(self) -> list[AgentConfigMetadata]:
         """List all agent configuration metadata.
@@ -104,9 +102,7 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
                 models = result.scalars().all()
                 return [_model_to_metadata(m) for m in models]
             except SQLAlchemyError as e:
-                raise StorageError(
-                    ErrorMessage.STORAGE_FAILED_LIST_AGENT_CONFIG.format(error=e)
-                ) from e
+                raise StorageError(ErrorMessage.STORAGE_FAILED_LIST_AGENT_CONFIG.format(error=e)) from e
 
     async def delete(self, name: str) -> None:
         """Delete metadata by agent name.
@@ -129,9 +125,7 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
             except AgentNotFoundError:
                 raise
             except SQLAlchemyError as e:
-                raise StorageError(
-                    ErrorMessage.STORAGE_FAILED_DELETE_AGENT_CONFIG.format(name=name, error=e)
-                ) from e
+                raise StorageError(ErrorMessage.STORAGE_FAILED_DELETE_AGENT_CONFIG.format(name=name, error=e)) from e
 
     async def exists(self, name: str) -> bool:
         """Check whether metadata exists for the given agent name.
@@ -150,6 +144,4 @@ class PostgresAgentConfigRepository(AgentConfigRepository):
                 model = await session.get(AgentConfigModel, name)
                 return model is not None
             except SQLAlchemyError as e:
-                raise StorageError(
-                    ErrorMessage.STORAGE_FAILED_EXISTS_AGENT_CONFIG.format(name=name, error=e)
-                ) from e
+                raise StorageError(ErrorMessage.STORAGE_FAILED_EXISTS_AGENT_CONFIG.format(name=name, error=e)) from e

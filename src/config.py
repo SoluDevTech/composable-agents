@@ -40,7 +40,9 @@ class Settings(BaseSettings):
     minio_bucket: str = "composable-agents"
     minio_secure: bool = False
 
-    database_url: str = Field(description="PostgreSQL connection string (postgresql://, postgres://, or postgresql+asyncpg://). Required.")
+    database_url: str = Field(
+        description="PostgreSQL connection string (postgresql://, postgres://, or postgresql+asyncpg://). Required."
+    )
     postgres_statement_cache_size: int | None = None
     _ssl_mode: str | None = PrivateAttr(default=None)
 
