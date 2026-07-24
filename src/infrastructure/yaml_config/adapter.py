@@ -19,8 +19,6 @@ class YamlAgentConfigLoader(AgentConfigLoader):
     # They are stripped before validation to maintain backward compatibility.
     _DEPRECATED_FIELDS = {"middleware"}
     _DEPRECATED_BACKEND_FIELDS = {"root_dir", "store_backend"}
-
-    _DEPRECATED_BACKEND_FIELDS = {"root_dir", "store_backend"}
     _DEPRECATED_BACKEND_TYPES = {"state"}
 
     @staticmethod

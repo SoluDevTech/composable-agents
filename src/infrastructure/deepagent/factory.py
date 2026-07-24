@@ -327,14 +327,14 @@ async def _prepare_agent_namespace(
                 try:
                     await store.adelete(ns, item.key)
                 except Exception:
-                    logger.warning("Failed to delete stale agent skill: %s", item.key)
+                    logger.exception("Failed to delete stale agent skill: %s", item.key)
         elif item.key.startswith(agent_memories_dir):
-            filename = item.key[len(agent_memories_dir) :]
+            filename = item.key[len(agent_memories_dir):]
             if filename not in selected_memory_files:
                 try:
                     await store.adelete(ns, item.key)
                 except Exception:
-                    logger.warning("Failed to delete stale agent memory: %s", item.key)
+                    logger.exception("Failed to delete stale agent memory: %s", item.key)
 
     # 2. Copy selected skills to agent namespace
     for skill_dir in skills:

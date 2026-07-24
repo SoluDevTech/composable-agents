@@ -312,15 +312,8 @@ class TestDeleteStoreFileRoute:
     async def test_delete_returns_404_when_file_not_found(
         self, client: AsyncClient, mock_delete_use_case: AsyncMock
     ) -> None:
-        # Arrange — use case signals absence by raising a not-found domain error.
-        # We model the contract as the use case raising StorageError-like NotFound;
-        # however the canonical pattern in this codebase is a dedicated domain error.
-        # Since the route maps 404 from a domain error, we raise one here.
-        from src.domain.errors.base import DomainError
-        from src.domain.errors.codes import ErrorCode
-
-        class StoreFileNotFoundError(DomainError):
-            status_code = ErrorCode.NOT_FOUND
+        # Arrange — use case raises the real domain error that the route maps to 404.
+        from src.domain.errors.store_file import StoreFileNotFoundError
 
         mock_delete_use_case.execute = AsyncMock(side_effect=StoreFileNotFoundError("not found"))
 
