@@ -4,8 +4,8 @@
 
 | File | Description |
 |------|-------------|
-| `single/haiku-files.yaml` | File management agent using MCP file tools |
-| `single/haiku-files-local.yaml` | File management agent with local filesystem access |
+| `single/haiku-files.yaml` | File management agent using MCP file tools (docker network endpoint) |
+| `single/haiku-files-local.yaml` | File management agent using MCP file tools (local raganything endpoint) |
 | `single/haiku-files-local-structured.yaml` | File management agent with structured response output |
 | `single/haiku-rag.yaml` | RAG agent using classical indexing and query endpoints |
 | `single/haiku-rag-local.yaml` | RAG agent with local MinIO configuration |

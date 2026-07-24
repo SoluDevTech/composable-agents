@@ -46,6 +46,11 @@ class LogMessage(StrEnum):
     PERSISTENCE_REGISTRY_SET = "Persistence layer initialized, agent_registry set to PersistentAgentRegistry"
     PERSISTENT_REGISTRY_CLOSED = "Persistent registry closed"
     SQLALCHEMY_ENGINE_DISPOSED = "SQLAlchemy engine disposed"
+    PERSISTENCE_STORE_FILE_INITIALIZED = "Store file repository initialized (AsyncPostgresStore)"
+    PERSISTENCE_STORE_FILE_INIT_FAILED = (
+        "Failed to initialize store file repository with Postgres, falling back to InMemoryStore"
+    )
+    PERSISTENCE_STORE_FILE_FALLBACK_INMEMORY = "Store file repository initialized (InMemoryStore fallback)"
 
     # --- Agent config management ---
     AGENT_CONFIG_LISTED = "Listed %d agent configs"

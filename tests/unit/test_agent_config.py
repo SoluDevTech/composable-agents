@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from src.domain.entities.agent_config import (
     AgentConfig,
+    BackendConfig,
     BackendType,
     SubAgentConfig,
 )
@@ -24,8 +25,8 @@ class TestAgentConfig:
         # Assert
         assert model == "claude-sonnet-4-5-20250929"
 
-    def test_minimal_config_sets_default_backend_to_state(self):
-        """Should default backend type to STATE."""
+    def test_minimal_config_sets_default_backend_to_store(self):
+        """Should default backend type to STORE."""
         # Arrange
         config = AgentConfig(name="test-agent")
 
@@ -33,18 +34,7 @@ class TestAgentConfig:
         backend_type = config.backend.type
 
         # Assert
-        assert backend_type == BackendType.STATE
-
-    def test_minimal_config_has_empty_middleware(self):
-        """Should default middleware to empty list."""
-        # Arrange
-        config = AgentConfig(name="test-agent")
-
-        # Act
-        middleware = config.middleware
-
-        # Assert
-        assert middleware == []
+        assert backend_type == BackendType.STORE
 
     def test_full_config_sets_model(self):
         """Should store the provided model."""
@@ -53,8 +43,7 @@ class TestAgentConfig:
             "name": "my-agent",
             "model": "openai:gpt-4o",
             "system_prompt": "You are helpful.",
-            "middleware": ["todo_list", "filesystem"],
-            "backend": {"type": "filesystem", "root_dir": "/tmp/workspace"},
+            "backend": {"type": "store"},
             "hitl": {"rules": {"write_file": True}},
             "subagents": [{"name": "sub", "description": "A subagent"}],
         }
@@ -64,37 +53,6 @@ class TestAgentConfig:
 
         # Assert
         assert config.model == "openai:gpt-4o"
-
-    def test_full_config_sets_middleware(self):
-        """Should store the provided middleware list."""
-        # Arrange
-        data = {
-            "name": "my-agent",
-            "model": "openai:gpt-4o",
-            "middleware": ["todo_list", "filesystem"],
-            "backend": {"type": "filesystem", "root_dir": "/tmp/workspace"},
-        }
-
-        # Act
-        config = AgentConfig(**data)
-
-        # Assert
-        assert len(config.middleware) == 2
-
-    def test_full_config_sets_backend_root_dir(self):
-        """Should store the provided backend root_dir."""
-        # Arrange
-        data = {
-            "name": "my-agent",
-            "model": "openai:gpt-4o",
-            "backend": {"type": "filesystem", "root_dir": "/tmp/workspace"},
-        }
-
-        # Act
-        config = AgentConfig(**data)
-
-        # Assert
-        assert config.backend.root_dir == "/tmp/workspace"
 
     def test_full_config_sets_subagents(self):
         """Should store the provided subagents list."""
@@ -117,13 +75,6 @@ class TestAgentConfig:
         # Act & Assert
         with pytest.raises(ValidationError):
             AgentConfig(name="")
-
-    def test_rejects_invalid_middleware(self):
-        """Should raise ValidationError when middleware is unknown."""
-        # Arrange
-        # Act & Assert
-        with pytest.raises(ValidationError):
-            AgentConfig(name="test", middleware=["invalid"])
 
     def test_rejects_invalid_backend_type(self):
         """Should raise ValidationError when backend type is unknown."""
@@ -187,6 +138,89 @@ class TestAgentConfig:
         # Act & Assert
         with pytest.raises(ValidationError):
             config.response_format = {"type": "object"}
+
+
+class TestBackendConfigChanges:
+    """Tests for the BackendType / BackendConfig refactor."""
+
+    def test_backend_type_only_store(self):
+        """BackendType enum should only have STORE value."""
+        # Assert
+        assert BackendType.STORE == "store"
+        # These should NOT exist anymore:
+        assert not hasattr(BackendType, "FILESYSTEM")
+        assert not hasattr(BackendType, "COMPOSITE")
+        assert not hasattr(BackendType, "STATE")
+
+    def test_backend_config_has_checkpoint_backend_default_memory(self):
+        """BackendConfig should default checkpoint_backend to 'memory'."""
+        # Arrange
+        config = BackendConfig()
+
+        # Act
+        checkpoint_backend = config.checkpoint_backend
+
+        # Assert
+        assert checkpoint_backend == "memory"
+
+    def test_backend_config_accepts_postgres_checkpoint_backend(self):
+        """BackendConfig should accept checkpoint_backend='postgres'."""
+        # Arrange
+        config = BackendConfig(checkpoint_backend="postgres")
+
+        # Act
+        checkpoint_backend = config.checkpoint_backend
+
+        # Assert
+        assert checkpoint_backend == "postgres"
+
+    def test_backend_config_rejects_invalid_checkpoint_backend(self):
+        """BackendConfig should reject invalid checkpoint_backend."""
+        # Arrange
+        # Act & Assert
+        with pytest.raises(ValidationError):
+            BackendConfig(checkpoint_backend="redis")
+
+    def test_backend_config_has_no_root_dir(self):
+        """BackendConfig should NOT have root_dir field."""
+        # Arrange
+        config = BackendConfig()
+
+        # Act & Assert
+        assert not hasattr(config, "root_dir")
+
+    def test_rejects_filesystem_backend_type(self):
+        """AgentConfig should reject backend type 'filesystem'."""
+        # Arrange
+        # Act & Assert
+        with pytest.raises(ValidationError):
+            AgentConfig(name="test", backend={"type": "filesystem"})
+
+    def test_rejects_composite_backend_type(self):
+        """AgentConfig should reject backend type 'composite'."""
+        # Arrange
+        # Act & Assert
+        with pytest.raises(ValidationError):
+            AgentConfig(name="test", backend={"type": "composite"})
+
+
+class TestMiddlewareRemoved:
+    """Tests asserting the middleware field has been removed from AgentConfig."""
+
+    def test_agent_config_has_no_middleware_field(self):
+        """AgentConfig should NOT have a middleware field."""
+        # Arrange
+        config = AgentConfig(name="test")
+
+        # Act & Assert
+        assert not hasattr(config, "middleware")
+
+    def test_agent_config_rejects_middleware_kwarg(self):
+        """AgentConfig should reject middleware= kwarg."""
+        # Arrange
+        # Act & Assert
+        with pytest.raises(ValidationError):
+            AgentConfig(name="test", middleware=["todo_list"])
 
 
 class TestSubAgentConfig:

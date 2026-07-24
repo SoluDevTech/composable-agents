@@ -138,7 +138,9 @@ class TestInvokeStructuredResponse:
     async def test_invoke_extracts_structured_response_dict(self):
         # Arrange
         msg = _make_msg("Weather report")
-        graph = _make_graph([msg], state_values={"messages": [msg], "structured_response": {"temperature": 22, "condition": "sunny"}})
+        graph = _make_graph(
+            [msg], state_values={"messages": [msg], "structured_response": {"temperature": 22, "condition": "sunny"}}
+        )
 
         # Act
         runner = DeepAgentRunner(graph)
@@ -182,7 +184,13 @@ class TestInvokeStructuredResponse:
         }
         model = schema_to_pydantic_model(schema)
         msg = _make_msg("Result")
-        graph = _make_graph([msg], state_values={"messages": [msg], "structured_response": {"name": "Alice", "age": 30, "terraceArea": 50, "parkingSpaces": 2}})
+        graph = _make_graph(
+            [msg],
+            state_values={
+                "messages": [msg],
+                "structured_response": {"name": "Alice", "age": 30, "terraceArea": 50, "parkingSpaces": 2},
+            },
+        )
 
         # Act
         runner = DeepAgentRunner(graph, response_format_model=model)
@@ -207,7 +215,9 @@ class TestInvokeStructuredResponse:
         }
         model = schema_to_pydantic_model(schema)
         msg = _make_msg("Result")
-        graph = _make_graph([msg], state_values={"messages": [msg], "structured_response": {"building": {"floors": 3, "rooftop": True}}})
+        graph = _make_graph(
+            [msg], state_values={"messages": [msg], "structured_response": {"building": {"floors": 3, "rooftop": True}}}
+        )
 
         # Act
         runner = DeepAgentRunner(graph, response_format_model=model)
@@ -219,7 +229,9 @@ class TestInvokeStructuredResponse:
     async def test_invoke_no_response_format_model_passes_raw(self):
         # Arrange
         msg = _make_msg("Result")
-        graph = _make_graph([msg], state_values={"messages": [msg], "structured_response": {"name": "test", "extra": True}})
+        graph = _make_graph(
+            [msg], state_values={"messages": [msg], "structured_response": {"name": "test", "extra": True}}
+        )
 
         # Act
         runner = DeepAgentRunner(graph, response_format_model=None)
@@ -392,9 +404,7 @@ class TestStream:
             yield (chunk, MagicMock())
 
         graph.astream = _astream
-        graph.get_state = MagicMock(
-            return_value=MagicMock(values={"messages": [_make_msg("chunk")]}, interrupts=())
-        )
+        graph.get_state = MagicMock(return_value=MagicMock(values={"messages": [_make_msg("chunk")]}, interrupts=()))
 
         # Act
         runner = DeepAgentRunner(graph)

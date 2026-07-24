@@ -8,11 +8,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from src.application.use_cases.get_thread import GetThreadUseCase
 from src.dependencies import get_get_thread_use_case, get_trace_event_repository
 from src.domain.entities.trace_event import TraceEvent
 from src.domain.logging.messages import LogMessage
 from src.domain.ports.trace_event_repository import TraceEventRepository
-from src.application.use_cases.get_thread import GetThreadUseCase
 
 logger = logging.getLogger(__name__)
 

@@ -18,6 +18,12 @@ from src.application.use_cases.get_thread_history import GetThreadHistoryUseCase
 from src.application.use_cases.list_agent_configs import ListAgentConfigsUseCase
 from src.application.use_cases.list_threads import ListThreadsUseCase
 from src.application.use_cases.load_agent_config import LoadAgentConfigUseCase
+from src.application.use_cases.manage_store_file import (
+    DeleteStoreFileUseCase,
+    GetStoreFileUseCase,
+    ListStoreFilesUseCase,
+    PutStoreFileUseCase,
+)
 from src.application.use_cases.send_message import SendMessageUseCase
 from src.application.use_cases.stream_message import StreamMessageUseCase
 from src.application.use_cases.update_agent_config import UpdateAgentConfigUseCase
@@ -28,6 +34,7 @@ from src.domain.errors.storage import StorageError
 from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_registry import AgentRegistry
 from src.domain.ports.prompt_manager import PromptManager
+from src.domain.ports.store_file_repository import StoreFileRepository
 from src.domain.ports.thread_repository import ThreadRepository
 from src.domain.ports.trace_event_repository import TraceEventRepository
 from src.domain.ports.tracing_provider import TracingProvider
@@ -38,6 +45,7 @@ from src.infrastructure.postgres_repository.adapter import PostgresAgentConfigRe
 from src.infrastructure.postgres_thread.adapter import PostgresThreadRepository
 from src.infrastructure.postgres_trace.adapter import PostgresTraceEventRepository
 from src.infrastructure.prompt_management.adapter import PhoenixPromptManagerProvider
+from src.infrastructure.store_file.adapter import LangGraphStoreFileRepository
 from src.infrastructure.tracing.noop_adapter import NoopTracingProvider
 from src.infrastructure.yaml_config.adapter import YamlAgentConfigLoader
 from src.security import ComposableAgentsSecurity
@@ -127,6 +135,7 @@ class CompositionRoot:
     agent_registry: AgentRegistry | None = None
     thread_repository: ThreadRepository | None = None
     trace_event_repository: TraceEventRepository | None = None
+    store_file_repository: StoreFileRepository | None = None
 
 
 _root = CompositionRoot()
@@ -195,6 +204,23 @@ async def init_persistence() -> None:
         invoke_timeout=settings.agent_invoke_timeout,
     )
 
+    # Store file repository — reuse the singleton LangGraph BaseStore from the
+    # deepagent factory (AsyncPostgresStore) so the file API shares the same
+    # connection pool as the agents. Falls back to the shared InMemoryStore
+    # singleton on init failure.
+    try:
+        from src.infrastructure.deepagent.factory import _create_postgres_store
+
+        store = await _create_postgres_store(settings)
+        _root.store_file_repository = LangGraphStoreFileRepository(store=store)
+        logger.info(LogMessage.PERSISTENCE_STORE_FILE_INITIALIZED)
+    except Exception:
+        logger.exception(LogMessage.PERSISTENCE_STORE_FILE_INIT_FAILED)
+        from src.infrastructure.deepagent.factory import _get_memory_store
+
+        _root.store_file_repository = LangGraphStoreFileRepository(store=_get_memory_store())
+        logger.info(LogMessage.PERSISTENCE_STORE_FILE_FALLBACK_INMEMORY)
+
     logger.info(LogMessage.PERSISTENCE_REGISTRY_SET)
 
 
@@ -220,6 +246,7 @@ def reset() -> None:
     _root.agent_registry = None
     _root.thread_repository = None
     _root.trace_event_repository = None
+    _root.store_file_repository = None
 
 
 logger.info(LogMessage.DEPENDENCIES_INITIALIZED)
@@ -369,3 +396,45 @@ def get_update_prompt_use_case() -> UpdatePromptUseCase:
 def get_get_prompt_content_use_case() -> GetPromptContentUseCase:
     """Provide a GetPromptContentUseCase instance."""
     return GetPromptContentUseCase(get_prompt_manager())
+
+
+# ============= STORE FILE PROVIDERS =============
+
+
+def _require_store_file_repository() -> StoreFileRepository:
+    """Return store file repository, creating an in-memory fallback if not initialized.
+
+    During tests, ``init_persistence`` is not called, so the repository would
+    be ``None``. To keep the API functional without a database, we lazily create
+    an :class:`InMemoryStore`-backed adapter on first access.
+    """
+    if _root.store_file_repository is None:
+        from src.infrastructure.deepagent.factory import _get_memory_store
+
+        _root.store_file_repository = LangGraphStoreFileRepository(store=_get_memory_store())
+    return _root.store_file_repository
+
+
+def get_store_file_repository() -> StoreFileRepository:
+    """Provide a :class:`StoreFileRepository` instance (singleton wired at startup)."""
+    return _require_store_file_repository()
+
+
+def get_list_store_files_use_case() -> ListStoreFilesUseCase:
+    """Provide a :class:`ListStoreFilesUseCase` instance."""
+    return ListStoreFilesUseCase(_require_store_file_repository())
+
+
+def get_get_store_file_use_case() -> GetStoreFileUseCase:
+    """Provide a :class:`GetStoreFileUseCase` instance."""
+    return GetStoreFileUseCase(_require_store_file_repository())
+
+
+def get_put_store_file_use_case() -> PutStoreFileUseCase:
+    """Provide a :class:`PutStoreFileUseCase` instance."""
+    return PutStoreFileUseCase(_require_store_file_repository())
+
+
+def get_delete_store_file_use_case() -> DeleteStoreFileUseCase:
+    """Provide a :class:`DeleteStoreFileUseCase` instance."""
+    return DeleteStoreFileUseCase(_require_store_file_repository())

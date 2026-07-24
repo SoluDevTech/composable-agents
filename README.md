@@ -156,8 +156,7 @@ Every agent is defined by a single YAML file validated against the `AgentConfig`
 | `system_prompt` | `string` | `null` | Inline system prompt. Mutually exclusive with `system_prompt_file`. |
 | `system_prompt_file` | `string` | `null` | Path to a text file containing the system prompt (resolved relative to the YAML file). Mutually exclusive with `system_prompt`. |
 | `tools` | `list[string]` | `[]` | Python tool references in `module.path:attribute` format. |
-| `middleware` | `list[MiddlewareType]` | `[]` | Middleware to attach. See [Middlewares](#middlewares). |
-| `backend` | `BackendConfig` | `{"type": "state"}` | Persistence backend. See [Backends](#backends). |
+| `backend` | `BackendConfig` | `{"type": "state", "store_backend": "memory", "checkpoint_backend": "memory"}` | Persistence backend. See [Backends](#backends). |
 | `hitl` | `HITLConfig` | `{"rules": {}}` | Human-in-the-loop interrupt rules. |
 | `memory` | `list[string]` | `[]` | Paths to memory files (e.g. `"./AGENTS.md"`). |
 | `skills` | `list[string]` | `[]` | Paths to skill directories (e.g. `"./skills/"`). |
@@ -338,30 +337,44 @@ The value must match the `API_KEY` configured on the [mcp-raganything](https://g
 
 ## Middlewares
 
-| Name | Enum Value | Description |
-|---|---|---|
-| Todo List | `todo_list` | Filesystem-based task tracking middleware. |
-| Filesystem | `filesystem` | Gives the agent read/write access to files on disk. |
-| Sub-Agent | `sub_agent` | Enables delegation to sub-agents defined in `subagents`. |
+The Todo List, Filesystem, and Sub-Agent middlewares are **always installed** by `create_deep_agent` defaults and cannot be toggled via the YAML configuration. Sub-agent delegation is enabled automatically when `subagents` is non-empty.
 
 ---
 
 ## Backends
 
+The `BackendConfig` schema controls where agent state and checkpoints are persisted.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `type` | `BackendType` (`state` \| `store`) | `state` | Backend kind. `state` = in-memory LangGraph state, `store` = LangGraph store-backed. |
+| `store_backend` | `Literal["memory", "postgres"]` | `memory"` | Where the LangGraph store lives. `memory` = in-process, `postgres` = PostgreSQL-backed (singleton reused across all agent builds). |
+| `checkpoint_backend` | `Literal["memory", "postgres"]` | `memory"` | Where the LangGraph checkpointer lives. `memory` = in-process, `postgres` = PostgreSQL-backed (singleton reused across all agent builds). |
+
+### Supported `type` values
+
 | Name | Enum Value | Description |
 |---|---|---|
 | State | `state` | Default in-memory state backend (no extra config). |
-| Filesystem | `filesystem` | Persists agent state to a directory. Accepts `root_dir`. |
-| Store | `store` | LangGraph store-based backend. |
-| Composite | `composite` | Reserved for advanced composite configurations. |
+| Store | `store` | LangGraph store-based backend. The store itself is backed by `store_backend`. |
 
-Example with a filesystem backend:
+### Postgres-backed store and checkpointer
+
+When `store_backend` or `checkpoint_backend` is set to `"postgres"`, the framework instantiates a single `PostgresStore` / `PostgresSaver` (from `langgraph-checkpoint-postgres`) and **reuses the same instance across every agent build**. This avoids opening a new connection pool per agent.
+
+> **Note:** The `langgraph-checkpoint-postgres` package is required and is included in the project dependencies.
+
+Example YAML enabling Postgres for both store and checkpointer:
 
 ```yaml
+name: persistent-agent
 backend:
-  type: filesystem
-  root_dir: "./workspace"
+  type: store
+  store_backend: postgres
+  checkpoint_backend: postgres
 ```
+
+The `StoreBackend` is wired with a per-run namespace via `StoreBackend(store=store, namespace=lambda r: ("filesystem",))` (the deprecated `StoreBackend(runtime)` pattern has been removed).
 
 ---
 
@@ -384,6 +397,10 @@ All endpoints are prefixed appropriately. The server runs on `http://localhost:8
 | `POST` | `/api/v1/threads/{thread_id}/hitl` | Submit a human-in-the-loop decision | `200` |
 | `GET` | `/api/v1/agents` | List all agent configs from `agents/` directory | `200` |
 | `GET` | `/api/v1/agents/{agent_name}` | Get a specific agent configuration | `200` |
+| `GET` | `/api/v1/store/files` | List file paths in the store (optional `prefix` query param) | `200` |
+| `GET` | `/api/v1/store/files/{path}` | Get a single file's content by path | `200` |
+| `PUT` | `/api/v1/store/files/{path}` | Create or replace a file in the store | `200` |
+| `DELETE` | `/api/v1/store/files/{path}` | Delete a file from the store | `204` |
 | `WS` | `/api/v1/ws/{thread_id}` | WebSocket endpoint for streaming chat | -- |
 | `POST` | `/prompts/create` | Create a new prompt | `201` |
 | `GET` | `/prompts/get/{identifier}` | Get a specific prompt by identifier, version, or tag | `200` |
@@ -430,8 +447,7 @@ Response (`200`):
     "model": "claude-sonnet-4-5-20250929",
     "system_prompt": "You are an expert code reviewer...",
     "tools": [],
-    "middleware": ["filesystem", "sub_agent"],
-    "backend": {"type": "state", "root_dir": null},
+    "backend": {"type": "state", "store_backend": "memory", "checkpoint_backend": "memory"},
     "hitl": {"rules": {"write_file": true, "execute": {"allowed_decisions": ["approve", "reject"]}}},
     "subagents": [...]
   },
@@ -440,8 +456,7 @@ Response (`200`):
     "model": "openai:anthropic/claude-haiku-4.5:nitro",
     "system_prompt": "You are a helpful assistant.",
     "tools": [],
-    "middleware": [],
-    "backend": {"type": "state", "root_dir": null},
+    "backend": {"type": "state", "store_backend": "memory", "checkpoint_backend": "memory"},
     "hitl": {"rules": {}},
     "subagents": []
   }
@@ -463,8 +478,7 @@ Response (`200`):
   "system_prompt": "You are a helpful assistant.",
   "system_prompt_file": null,
   "tools": [],
-  "middleware": [],
-  "backend": {"type": "state", "root_dir": null},
+  "backend": {"type": "state", "store_backend": "memory", "checkpoint_backend": "memory"},
   "hitl": {"rules": {}},
   "memory": [],
   "skills": [],
@@ -970,6 +984,146 @@ All prompt management operations are async and fully integrated with the FastAPI
 
 ---
 
+## Store File API
+
+composable-agents exposes a small REST surface for managing **files in the LangGraph store**. Files are stored as UTF-8 text blobs keyed by a path string (e.g. `/skills/my-skill/SKILL.md`). The store is shared across all agents and backed by the same `BaseStore` instance configured per agent (`store_backend: memory` or `postgres`).
+
+### Endpoints
+
+| Method | Path | Description | Success Status |
+|---|---|---|---|
+| `GET` | `/api/v1/store/files?prefix=<prefix>` | List file paths matching `prefix` (default `/` = all) | `200` |
+| `GET` | `/api/v1/store/files/{path}` | Retrieve a single file's content | `200` |
+| `PUT` | `/api/v1/store/files/{path}` | Create or replace a file (body: `{"content": "..."}`) | `200` |
+| `DELETE` | `/api/v1/store/files/{path}` | Delete a file (idempotent) | `204` |
+
+The `{path}` segment uses FastAPI's `:path` converter, so it can contain slashes (e.g. `skills/my-skill/SKILL.md`). Do not include a leading slash in the URL.
+
+### Listing files
+
+```bash
+curl 'http://localhost:8000/api/v1/store/files?prefix=/skills/'
+```
+
+Response (`200`) — a JSON array of path strings:
+
+```json
+["skills/code-review/SKILL.md", "skills/debugging/SKILL.md"]
+```
+
+### Getting a file
+
+```bash
+curl http://localhost:8000/api/v1/store/files/skills/code-review/SKILL.md
+```
+
+Response (`200`):
+
+```json
+{"path": "skills/code-review/SKILL.md", "content": "# Code Review Skill\n\n..."}
+```
+
+If the file does not exist, the API returns `404` with `{"detail": "File not found: skills/code-review/SKILL.md"}`.
+
+### Creating or replacing a file
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/store/files/skills/code-review/SKILL.md \
+  -H "Content-Type: application/json" \
+  -d '{"content": "# Code Review Skill\n\nReview code for correctness and security."}'
+```
+
+Response (`200`):
+
+```json
+{"path": "skills/code-review/SKILL.md", "content": "# Code Review Skill\n\nReview code for correctness and security."}
+```
+
+### Deleting a file
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/store/files/skills/code-review/SKILL.md
+```
+
+Response: `204 No Content`. The operation is idempotent — deleting a non-existent path does not raise.
+
+### Agent Namespace
+
+When an agent is created (or updated) with `skills` or `memory` configured, the selected files are **copied into a dedicated namespace** in the store, scoped to that agent:
+
+- **Skills:** `/agents/{agent_name}/skills/{skill_name}/SKILL.md`
+- **Memories:** `/agents/{agent_name}/memories/{filename}`
+
+This ensures each agent only loads the skills and memories explicitly selected in its configuration, not every file in the global `/skills/` and `/memories/` directories.
+
+When an agent is updated and a skill or memory is **removed** from the selection, the corresponding copy in the agent namespace is **deleted** automatically.
+
+To discover which agents reference a given skill, use the usage-tracking endpoint:
+
+```bash
+curl http://localhost:8000/api/v1/store/skills/my-skill/usage
+```
+
+Response (`200`) — the list of agent names that have `my-skill` in their namespace:
+
+```json
+["code-reviewer", "research-assistant"]
+```
+
+---
+
+## Skills Management
+
+Skills are `SKILL.md` files stored in the LangGraph store under the `/skills/` prefix. They describe reusable capabilities that an agent can load via its `skills` config field. Skills can now be created, edited, and deleted **via the Store File API** or the **frontend UI** (dedicated "Skills" page in the sidebar).
+
+### Creating a skill via curl
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/store/files/skills/my-skill/SKILL.md \
+  -H "Content-Type: application/json" \
+  -d '{"content": "# my-skill\n\n## Description\nA skill for ..."}'
+```
+
+### Referencing a skill in an agent
+
+In the agent YAML, point the `skills` field at the skill path (without the leading slash):
+
+```yaml
+name: my-agent
+skills:
+  - "skills/my-skill/"
+```
+
+In the frontend agent form, the Skills field is a **multi-select dropdown** (`PillMultiSelect`) that lists all available skills discovered in the store (paths matching `/skills/`), replacing the previous free-text input.
+
+---
+
+## Memories Management
+
+Memories are Markdown files (e.g. `AGENTS.md`) stored in the LangGraph store, typically under the `/memories/` prefix. They provide persistent context that an agent loads via its `memory` config field. Memories can now be created, edited, and deleted **via the Store File API** or the **frontend UI** (dedicated "Memories" page in the sidebar).
+
+### Creating a memory via curl
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/store/files/memories/AGENTS.md \
+  -H "Content-Type: application/json" \
+  -d '{"content": "# Project Guidelines\n\n- Always write tests.\n- Follow the hexagonal architecture."}'
+```
+
+### Referencing a memory in an agent
+
+In the agent YAML, point the `memory` field at the memory path:
+
+```yaml
+name: my-agent
+memory:
+  - "memories/AGENTS.md"
+```
+
+In the frontend agent form, the Memory field is a **multi-select dropdown** (`PillMultiSelect`) that lists all available memories from the store, replacing the previous free-text input.
+
+---
+
 ## Architecture
 
 composable-agents follows a strict **hexagonal architecture** (ports and adapters). The domain layer has zero dependencies on frameworks or infrastructure.
@@ -1038,11 +1192,13 @@ composable-agents/
         chat.py                        # POST /api/v1/chat/{id} and /stream
         trace.py                       # GET /api/v1/threads/{id}/history and /trace
         agents.py                      # GET /api/v1/agents
+        store.py                       # Store File API — /api/v1/store/files
         websocket.py                   # WS /api/v1/ws/{id}
       use_cases/
         send_message.py                # Invoke agent synchronously
         stream_message.py              # Stream agent response
         get_thread_history.py          # Build ThreadHistory from trace_events (group by turn_id)
+        manage_store_file.py           # ListStoreFiles / GetStoreFile / PutStoreFile / DeleteStoreFile use cases
         create_agent_config.py         # Create agent config (MinIO + Postgres)
         update_agent_config.py         # Update agent config
         delete_agent_config.py         # Delete agent config
@@ -1067,6 +1223,7 @@ composable-agents/
         agent_registry.py              # Abstract: get_runner(name), list_agents(), close()
         agent_runner.py                # Abstract: invoke, stream, HITL operations
         mcp_tool_loader.py             # Abstract: load MCP tools
+        store_file_repository.py        # Abstract: file CRUD on the LangGraph store (StoreFileRepository port)
         thread_repository.py           # Abstract: CRUD for threads
         trace_event_repository.py      # Abstract: persist/append/list TraceEvents
         tracing_provider.py            # Abstract: tracing lifecycle
@@ -1081,7 +1238,7 @@ composable-agents/
           trace_event.py               # TraceEventModel (ORM)
       deepagent/
         adapter.py                     # DeepAgentRunner (LangGraph adapter) — emits TraceEvent
-        factory.py                     # create_agent_from_config (resolves tools, middleware, backend)
+        factory.py                     # create_agent_from_config (resolves tools, backend)
         registry.py                    # DeepAgentRegistry (lazy loading + caching from agents/ dir)
         example_tools.py               # Example tools: current_time, word_count
       mcp/
@@ -1090,6 +1247,8 @@ composable-agents/
         adapter.py                     # MinioAgentConfigStore (YAML blob storage)
       persistent_registry/
         adapter.py                     # PersistentAgentRegistry (MinIO + Postgres backed)
+      store_file/
+        adapter.py                     # LangGraphStoreFileRepository (LangGraph BaseStore adapter)
       postgres_repository/
         adapter.py                     # PostgresAgentConfigRepository
       postgres_thread/
@@ -1184,7 +1343,7 @@ mcp_servers:
 
 ### Research Assistant with Tools
 
-`agents/research-assistant.yaml` -- an agent with custom tools and filesystem persistence.
+`agents/research-assistant.yaml` -- an agent with custom tools.
 
 ```yaml
 name: research-assistant
@@ -1195,17 +1354,14 @@ system_prompt: |
 tools:
   - "src.infrastructure.deepagent.example_tools:current_time"
   - "src.infrastructure.deepagent.example_tools:word_count"
-middleware:
-  - filesystem
 backend:
-  type: filesystem
-  root_dir: "./workspace"
+  type: state
 debug: false
 ```
 
 ### Code Reviewer with HITL and Subagents
 
-`agents/code-reviewer.yaml` -- a multi-agent system with human-in-the-loop approval.
+`agents/code-reviewer.yaml` -- a multi-agent system with human-in-the-loop approval. The Sub-Agent middleware is installed automatically because `subagents` is non-empty.
 
 ```yaml
 name: code-reviewer
@@ -1213,9 +1369,6 @@ model: "claude-sonnet-4-5-20250929"
 system_prompt: |
   You are an expert code reviewer. Analyze code for correctness,
   performance, security, and maintainability.
-middleware:
-  - filesystem
-  - sub_agent
 backend:
   type: state
 hitl:
@@ -1504,7 +1657,7 @@ Railway project
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details on:
 
 - Project architecture and dependency rules
-- How to add custom tools, middlewares, and backends
+- How to add custom tools and backends
 - How the YAML schema works
 - Running tests and linting
 - Code style conventions
