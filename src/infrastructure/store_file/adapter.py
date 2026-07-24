@@ -33,7 +33,7 @@ class LangGraphStoreFileRepository(StoreFileRepository):
         Returns:
             A list of file path strings matching the prefix.
         """
-        items = await self._store.asearch(self._namespace, limit=100)
+        items = await self._store.asearch(self._namespace, limit=1000)
         return [item.key for item in items if item.key.startswith(prefix)]
 
     async def get_file(self, path: str) -> str | None:

@@ -11,7 +11,7 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.application.use_cases.manage_store_file import (
     DeleteStoreFileUseCase,
@@ -47,7 +47,7 @@ class StoreFileResponse(BaseModel):
 class StoreFilePutRequest(BaseModel):
     """Request body for creating or replacing a store file."""
 
-    content: str
+    content: str = Field(..., max_length=10_000_000)
 
 
 @router.get("/files", response_model=list[str], status_code=status.HTTP_200_OK)

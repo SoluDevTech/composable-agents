@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import logging
 from typing import Any
@@ -56,6 +57,9 @@ def _get_memory_store() -> InMemoryStore:
     return _memory_store
 
 
+_store_lock = asyncio.Lock()
+
+
 async def _get_shared_store():
     """Get the global shared store instance.
 
@@ -63,13 +67,19 @@ async def _get_shared_store():
     use that. Otherwise fall back to the shared ``InMemoryStore`` singleton.
     This ensures the Store File API and all agents share the same store,
     regardless of per-agent ``store_backend`` config.
+
+    An ``asyncio.Lock`` protects the lazy initialization to prevent
+    concurrent agent creations from opening multiple connection pools.
     """
     if _pg_store is not None:
         return _pg_store
-    try:
-        return await _create_postgres_store()
-    except Exception:
-        return _get_memory_store()
+    async with _store_lock:
+        if _pg_store is not None:
+            return _pg_store
+        try:
+            return await _create_postgres_store()
+        except Exception:
+            return _get_memory_store()
 
 
 async def _create_postgres_store(settings: Settings | None = None) -> AsyncPostgresStore:
@@ -305,7 +315,7 @@ async def _prepare_agent_namespace(
     agent_memories_dir = f"/agents/{agent_name}/memories/"
 
     # 1. Cleanup: delete files in agent namespace that are no longer selected
-    existing_items = await store.asearch(ns, limit=100)
+    existing_items = await store.asearch(ns, limit=1000)
     selected_skill_names = {s.rstrip("/").split("/")[-1] for s in skills}
     selected_memory_files = {m.split("/")[-1] for m in memory}
 
@@ -314,11 +324,17 @@ async def _prepare_agent_namespace(
             remainder = item.key[len(agent_skills_dir) :]
             skill_name = remainder.split("/")[0] if "/" in remainder else remainder
             if skill_name not in selected_skill_names:
-                await store.adelete(ns, item.key)
+                try:
+                    await store.adelete(ns, item.key)
+                except Exception:
+                    logger.warning("Failed to delete stale agent skill: %s", item.key)
         elif item.key.startswith(agent_memories_dir):
             filename = item.key[len(agent_memories_dir) :]
             if filename not in selected_memory_files:
-                await store.adelete(ns, item.key)
+                try:
+                    await store.adelete(ns, item.key)
+                except Exception:
+                    logger.warning("Failed to delete stale agent memory: %s", item.key)
 
     # 2. Copy selected skills to agent namespace
     for skill_dir in skills:
