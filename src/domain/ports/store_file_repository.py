@@ -1,6 +1,15 @@
 """Outbound port: file repository backed by a key-value store."""
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class StoreFilePreview:
+    """A file path with a truncated preview of its content."""
+
+    path: str
+    preview: str
 
 
 class StoreFileRepository(ABC):
@@ -19,6 +28,18 @@ class StoreFileRepository(ABC):
 
         Returns:
             A list of file path strings matching the prefix.
+        """
+
+    @abstractmethod
+    async def list_files_with_preview(self, prefix: str, preview_chars: int) -> list[StoreFilePreview]:
+        """List files matching prefix, each with the first ``preview_chars`` of content.
+
+        Args:
+            prefix: Path prefix to filter on.
+            preview_chars: Maximum number of characters to include in each preview.
+
+        Returns:
+            A list of ``StoreFilePreview`` objects.
         """
 
     @abstractmethod

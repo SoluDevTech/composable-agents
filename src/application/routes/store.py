@@ -16,12 +16,14 @@ from pydantic import BaseModel, Field
 from src.application.use_cases.manage_store_file import (
     DeleteStoreFileUseCase,
     GetStoreFileUseCase,
+    ListStoreFilePreviewsUseCase,
     ListStoreFilesUseCase,
     PutStoreFileUseCase,
 )
 from src.dependencies import (
     get_delete_store_file_use_case,
     get_get_store_file_use_case,
+    get_list_store_file_previews_use_case,
     get_list_store_files_use_case,
     get_put_store_file_use_case,
 )
@@ -33,8 +35,11 @@ router = APIRouter(prefix="/api/v1/store", tags=["store"])
 
 
 def _normalize_path(path: str) -> str:
-    """Ensure the path starts with a forward slash for store key consistency."""
-    return path if path.startswith("/") else f"/{path}"
+    """Ensure the path starts with a forward slash and reject path traversal."""
+    normalized = path if path.startswith("/") else f"/{path}"
+    if ".." in normalized:
+        raise StoreFileNotFoundError(f"Invalid path: {path}")
+    return normalized
 
 
 class StoreFileResponse(BaseModel):
@@ -42,6 +47,13 @@ class StoreFileResponse(BaseModel):
 
     path: str
     content: str
+
+
+class StoreFilePreviewResponse(BaseModel):
+    """Response DTO for a store file with a truncated preview."""
+
+    path: str
+    preview: str
 
 
 class StoreFilePutRequest(BaseModel):
@@ -65,6 +77,22 @@ async def list_store_files(
         A list of file path strings.
     """
     return await use_case.execute(prefix=prefix)
+
+
+@router.get("/files/previews", response_model=list[StoreFilePreviewResponse], status_code=status.HTTP_200_OK)
+async def list_store_file_previews(
+    use_case: Annotated[ListStoreFilePreviewsUseCase, Depends(get_list_store_file_previews_use_case)],
+    prefix: str = Query(default="/", description="Path prefix to filter files by."),
+    chars: int = Query(default=300, ge=1, le=10000, description="Max characters per preview."),
+) -> list[StoreFilePreviewResponse]:
+    """List files with a truncated content preview.
+
+    Returns one ``StoreFilePreviewResponse`` per matching file, containing the
+    first ``chars`` characters of the file content. This avoids N+1 fetches
+    when a client needs to display previews (e.g. memory cards or skill names).
+    """
+    previews = await use_case.execute(prefix=prefix, preview_chars=chars)
+    return [StoreFilePreviewResponse(path=p.path, preview=p.preview) for p in previews]
 
 
 @router.get("/files/{path:path}", response_model=StoreFileResponse, status_code=status.HTTP_200_OK)

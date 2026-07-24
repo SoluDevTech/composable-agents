@@ -21,6 +21,7 @@ from src.application.use_cases.load_agent_config import LoadAgentConfigUseCase
 from src.application.use_cases.manage_store_file import (
     DeleteStoreFileUseCase,
     GetStoreFileUseCase,
+    ListStoreFilePreviewsUseCase,
     ListStoreFilesUseCase,
     PutStoreFileUseCase,
 )
@@ -423,6 +424,11 @@ def get_store_file_repository() -> StoreFileRepository:
 def get_list_store_files_use_case() -> ListStoreFilesUseCase:
     """Provide a :class:`ListStoreFilesUseCase` instance."""
     return ListStoreFilesUseCase(_require_store_file_repository())
+
+
+def get_list_store_file_previews_use_case() -> ListStoreFilePreviewsUseCase:
+    """Provide a :class:`ListStoreFilePreviewsUseCase` instance."""
+    return ListStoreFilePreviewsUseCase(_require_store_file_repository())
 
 
 def get_get_store_file_use_case() -> GetStoreFileUseCase:

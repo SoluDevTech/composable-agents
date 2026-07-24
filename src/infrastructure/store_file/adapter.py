@@ -2,7 +2,7 @@
 
 from langgraph.store.base import BaseStore
 
-from src.domain.ports.store_file_repository import StoreFileRepository
+from src.domain.ports.store_file_repository import StoreFilePreview, StoreFileRepository
 
 _DEFAULT_NAMESPACE: tuple[str, ...] = ("filesystem",)
 
@@ -35,6 +35,28 @@ class LangGraphStoreFileRepository(StoreFileRepository):
         """
         items = await self._store.asearch(self._namespace, limit=1000)
         return [item.key for item in items if item.key.startswith(prefix)]
+
+    async def list_files_with_preview(self, prefix: str, preview_chars: int) -> list[StoreFilePreview]:
+        """List files matching prefix, each with a truncated content preview.
+
+        Uses the values already returned by ``asearch`` — no extra DB reads.
+
+        Args:
+            prefix: Path prefix to filter on.
+            preview_chars: Maximum characters to include in each preview.
+
+        Returns:
+            A list of ``StoreFilePreview`` objects.
+        """
+        items = await self._store.asearch(self._namespace, limit=1000)
+        return [
+            StoreFilePreview(
+                path=item.key,
+                preview=str(item.value.get("content", ""))[:preview_chars],
+            )
+            for item in items
+            if item.key.startswith(prefix)
+        ]
 
     async def get_file(self, path: str) -> str | None:
         """Get file content by path.
