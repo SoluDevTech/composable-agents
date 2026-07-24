@@ -15,6 +15,25 @@ logger = logging.getLogger(__name__)
 class YamlAgentConfigLoader(AgentConfigLoader):
     """Charge et valide une configuration d'agent depuis un fichier YAML."""
 
+    # Fields removed from AgentConfig that may still exist in stored YAMLs.
+    # They are stripped before validation to maintain backward compatibility.
+    _DEPRECATED_FIELDS = {"middleware"}
+    _DEPRECATED_BACKEND_FIELDS = {"root_dir", "store_backend"}
+    _DEPRECATED_BACKEND_TYPES = {"state"}
+
+    @staticmethod
+    def _strip_deprecated(raw: dict) -> None:
+        """Remove deprecated fields from raw YAML dict before validation."""
+        for field in YamlAgentConfigLoader._DEPRECATED_FIELDS:
+            raw.pop(field, None)
+        backend = raw.get("backend")
+        if isinstance(backend, dict):
+            for field in YamlAgentConfigLoader._DEPRECATED_BACKEND_FIELDS:
+                backend.pop(field, None)
+            # Migrate deprecated backend types to "store" (the only supported type).
+            if backend.get("type") in YamlAgentConfigLoader._DEPRECATED_BACKEND_TYPES:
+                backend["type"] = "store"
+
     @staticmethod
     def _parse_yaml(content: str, source: str) -> dict:
         try:
@@ -48,6 +67,7 @@ class YamlAgentConfigLoader(AgentConfigLoader):
             raise ConfigNotFoundError(ErrorMessage.YAML_CONFIG_NOT_FOUND.format(path=path))
 
         raw = self._parse_yaml(path.read_text(encoding="utf-8"), str(path))
+        self._strip_deprecated(raw)
 
         if raw.get("system_prompt_file"):
             prompt_path = path.parent / raw["system_prompt_file"]
@@ -65,6 +85,7 @@ class YamlAgentConfigLoader(AgentConfigLoader):
             raise ConfigError(ErrorMessage.YAML_EMPTY.format(source=source))
 
         raw = self._parse_yaml(yaml_content, source)
+        self._strip_deprecated(raw)
 
         if raw.get("system_prompt_file"):
             logger.error(LogMessage.YAML_SYSTEM_PROMPT_FILE_DISALLOWED, source)

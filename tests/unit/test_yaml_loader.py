@@ -97,8 +97,7 @@ class TestYamlAgentConfigLoaderLoad:
             "name: full-agent\n"
             'model: "openai:gpt-4o"\n'
             'system_prompt: "You are helpful."\n'
-            "middleware:\n  - todo_list\n  - filesystem\n"
-            'backend:\n  type: filesystem\n  root_dir: "./workspace"\n'
+            "backend:\n  type: store\n  checkpoint_backend: memory\n"
             "hitl:\n  rules:\n    write_file: true\n"
             'memory:\n  - "./AGENTS.md"\n'
             'skills:\n  - "./skills/"\n'
@@ -114,31 +113,58 @@ class TestYamlAgentConfigLoaderLoad:
         # Assert
         assert config.debug is True
 
-    def test_loads_full_config_returns_middleware(self, yaml_loader, tmp_path):
-        """Should parse the middleware list from a full YAML config."""
+    def test_strips_deprecated_middleware_field(self, yaml_loader, tmp_path):
+        """Should silently strip the deprecated 'middleware' field from YAML."""
         # Arrange
-        yaml_content = "name: full-agent\nmiddleware:\n  - todo_list\n  - filesystem\ndebug: true\n"
+        yaml_content = "name: full-agent\nmiddleware:\n  - todo_list\ndebug: true\n"
         yaml_file = tmp_path / "agent.yaml"
         yaml_file.write_text(yaml_content)
 
         # Act
         config = yaml_loader.load(yaml_file)
 
-        # Assert
-        assert len(config.middleware) == 2
+        # Assert — middleware is silently dropped, agent loads successfully
+        assert config.name == "full-agent"
+        assert config.debug is True
+        assert not hasattr(config, "middleware")
 
-    def test_loads_full_config_returns_backend_root_dir(self, yaml_loader, tmp_path):
-        """Should parse backend root_dir from a full YAML config."""
+    def test_strips_deprecated_root_dir_field(self, yaml_loader, tmp_path):
+        """Should silently strip the deprecated 'root_dir' from backend in YAML."""
+        # Arrange
+        yaml_content = 'name: full-agent\nbackend:\n  type: state\n  root_dir: "/tmp"\n'
+        yaml_file = tmp_path / "agent.yaml"
+        yaml_file.write_text(yaml_content)
+
+        # Act
+        config = yaml_loader.load(yaml_file)
+
+        # Assert — root_dir is silently dropped, agent loads successfully
+        assert config.name == "full-agent"
+        assert config.backend.type.value == "store"
+
+    def test_migrates_state_backend_type_to_store(self, yaml_loader, tmp_path):
+        """Should migrate deprecated 'state' backend type to 'store'."""
+        # Arrange
+        yaml_content = "name: full-agent\nbackend:\n  type: state\n"
+        yaml_file = tmp_path / "agent.yaml"
+        yaml_file.write_text(yaml_content)
+
+        # Act
+        config = yaml_loader.load(yaml_file)
+
+        # Assert — state is migrated to store
+        assert config.backend.type.value == "store"
+
+    def test_rejects_filesystem_backend_type(self, yaml_loader, tmp_path):
+        """Should raise when the YAML uses the removed 'filesystem' backend type."""
         # Arrange
         yaml_content = 'name: full-agent\nbackend:\n  type: filesystem\n  root_dir: "./workspace"\n'
         yaml_file = tmp_path / "agent.yaml"
         yaml_file.write_text(yaml_content)
 
-        # Act
-        config = yaml_loader.load(yaml_file)
-
-        # Assert
-        assert config.backend.root_dir == "./workspace"
+        # Act & Assert
+        with pytest.raises((ConfigValidationError, ConfigError)):
+            yaml_loader.load(yaml_file)
 
     def test_loads_full_config_returns_subagents(self, yaml_loader, tmp_path):
         """Should parse the subagents list from a full YAML config."""

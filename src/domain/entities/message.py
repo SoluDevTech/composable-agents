@@ -82,6 +82,4 @@ class Message(BaseModel, frozen=True):
                 turn_id=event.turn_id,
             )
 
-        raise MessageBuildError(
-            f"Cannot build Message from trace event type {event.type!r}"
-        )
+        raise MessageBuildError(f"Cannot build Message from trace event type {event.type!r}")

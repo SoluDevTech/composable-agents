@@ -13,6 +13,7 @@ from src.application.routes.agents import router as agents_router
 from src.application.routes.chat import router as chat_router
 from src.application.routes.health import router as health_router
 from src.application.routes.prompt import router as prompt_router
+from src.application.routes.store import router as store_router
 from src.application.routes.threads import router as threads_router
 from src.application.routes.trace import router as trace_router
 from src.application.routes.websocket import router as websocket_router
@@ -36,6 +37,7 @@ from src.domain.errors.prompt import (
 )
 from src.domain.errors.security import InvalidApiKeyError
 from src.domain.errors.storage import StorageError
+from src.domain.errors.store_file import StoreFileNotFoundError
 from src.domain.errors.thread import ThreadNotFoundError
 from src.domain.logging.messages import LogMessage
 from src.infrastructure.logging import RequestIdMiddleware, configure_logging
@@ -117,6 +119,7 @@ protected.include_router(chat_router)
 protected.include_router(trace_router)
 protected.include_router(agents_router)
 protected.include_router(prompt_router)
+protected.include_router(store_router)
 app.include_router(protected)
 
 
@@ -155,6 +158,11 @@ async def config_not_found_handler(_request: Request, exc: ConfigNotFoundError) 
 
 async def thread_not_found_handler(_request: Request, exc: ThreadNotFoundError) -> JSONResponse:
     logger.warning(LogMessage.LOG_THREAD_NOT_FOUND, exc.detail)
+    return _error_response(exc)
+
+
+async def store_file_not_found_handler(_request: Request, exc: StoreFileNotFoundError) -> JSONResponse:
+    logger.warning("Store file not found: %s", exc.detail)
     return _error_response(exc)
 
 
@@ -215,6 +223,7 @@ app.add_exception_handler(ConfigNotFoundError, config_not_found_handler)
 app.add_exception_handler(ConfigValidationError, config_validation_handler)
 app.add_exception_handler(ConfigError, config_error_handler)
 app.add_exception_handler(ThreadNotFoundError, thread_not_found_handler)
+app.add_exception_handler(StoreFileNotFoundError, store_file_not_found_handler)
 app.add_exception_handler(AgentNotFoundError, agent_not_found_handler)
 app.add_exception_handler(AgentConfigAlreadyExistsError, agent_config_already_exists_handler)
 app.add_exception_handler(AgentError, agent_error_handler)

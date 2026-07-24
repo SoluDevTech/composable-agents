@@ -139,20 +139,38 @@ class TestGetThreadHistoryUseCase:
         # Turn A (earlier) — turn_id "zzzz" sorts AFTER "aaaa" alphabetically
         await trace_repo.add(
             thread.id,
-            _event(thread.id, "zzzz-first-chronologically", TraceEventType.HUMAN_MESSAGE, "early q", seq=0, timestamp=early),
+            _event(
+                thread.id, "zzzz-first-chronologically", TraceEventType.HUMAN_MESSAGE, "early q", seq=0, timestamp=early
+            ),
         )
         await trace_repo.add(
             thread.id,
-            _event(thread.id, "zzzz-first-chronologically", TraceEventType.AI_MESSAGE, final.model_dump_json(), seq=1, timestamp=early),
+            _event(
+                thread.id,
+                "zzzz-first-chronologically",
+                TraceEventType.AI_MESSAGE,
+                final.model_dump_json(),
+                seq=1,
+                timestamp=early,
+            ),
         )
         # Turn B (later) — turn_id "aaaa" sorts BEFORE "zzzz" alphabetically
         await trace_repo.add(
             thread.id,
-            _event(thread.id, "aaaa-second-chronologically", TraceEventType.HUMAN_MESSAGE, "late q", seq=0, timestamp=late),
+            _event(
+                thread.id, "aaaa-second-chronologically", TraceEventType.HUMAN_MESSAGE, "late q", seq=0, timestamp=late
+            ),
         )
         await trace_repo.add(
             thread.id,
-            _event(thread.id, "aaaa-second-chronologically", TraceEventType.AI_MESSAGE, final.model_dump_json(), seq=1, timestamp=late),
+            _event(
+                thread.id,
+                "aaaa-second-chronologically",
+                TraceEventType.AI_MESSAGE,
+                final.model_dump_json(),
+                seq=1,
+                timestamp=late,
+            ),
         )
 
         history = await use_case.execute(thread.id)

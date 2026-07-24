@@ -24,22 +24,16 @@ class TestExtractSource:
 
     def test_returns_none_when_task_not_in_namespace(self) -> None:
         """Should return None when 'task' token is not found."""
-        result = DeepAgentRunner._extract_source(
-            {"langgraph_checkpoint_ns": "Agent|some-other-path"}
-        )
+        result = DeepAgentRunner._extract_source({"langgraph_checkpoint_ns": "Agent|some-other-path"})
         assert result is None
 
     def test_returns_none_when_task_is_last_token(self) -> None:
         """Should return None when 'task' is the last token (no name follows)."""
-        result = DeepAgentRunner._extract_source(
-            {"langgraph_checkpoint_ns": "Agent|task"}
-        )
+        result = DeepAgentRunner._extract_source({"langgraph_checkpoint_ns": "Agent|task"})
         assert result is None
 
     def test_extracts_name_with_multiple_separators(self) -> None:
         """Should extract the token immediately after 'task'."""
-        metadata = {
-            "langgraph_checkpoint_ns": "Agent|task|my-agent|some|extra|tokens"
-        }
+        metadata = {"langgraph_checkpoint_ns": "Agent|task|my-agent|some|extra|tokens"}
         result = DeepAgentRunner._extract_source(metadata)
         assert result == "my-agent"
