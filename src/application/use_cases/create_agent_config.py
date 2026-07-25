@@ -47,7 +47,7 @@ class CreateAgentConfigUseCase:
         if config.name != name:
             raise ConfigError(ErrorMessage.AGENT_NAME_MISMATCH.format(yaml_name=config.name, name=name))
 
-        await validate_subagent_refs(config, self._config_repository.exists)
+        await validate_subagent_refs(config, self._config_repository)
 
         if await self._config_repository.exists(name):
             raise AgentConfigAlreadyExistsError(ErrorMessage.AGENT_CONFIG_ALREADY_EXISTS.format(name=name))

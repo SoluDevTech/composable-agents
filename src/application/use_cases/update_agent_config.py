@@ -50,7 +50,7 @@ class UpdateAgentConfigUseCase:
         if config.name != name:
             raise ConfigError(ErrorMessage.AGENT_NAME_MISMATCH_URL.format(yaml_name=config.name, name=name))
 
-        await validate_subagent_refs(config, self._config_repository.exists)
+        await validate_subagent_refs(config, self._config_repository)
 
         await self._config_store.put(name, yaml_content)
 
