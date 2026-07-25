@@ -26,6 +26,7 @@ class HITLConfig(BaseModel):
 class SubAgentConfig(BaseModel):
     name: str = Field(..., min_length=1)
     description: str = Field(..., min_length=1)
+    agent_ref: str | None = None
     instructions: str | None = None
     model: str | None = None
     tools: list[str] = Field(default_factory=list)
@@ -40,6 +41,7 @@ class AgentConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str = Field(..., min_length=1, max_length=100)
+    description: str | None = None
     model: str = Field(default="claude-sonnet-4-5-20250929")
     system_prompt: str | None = None
     system_prompt_file: str | None = None

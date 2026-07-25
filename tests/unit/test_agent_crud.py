@@ -136,6 +136,103 @@ class TestCreateAgentConfigUseCase:
         with pytest.raises(ConfigError):
             await use_case.execute(name="bad-agent", yaml_content=INVALID_YAML)
 
+    # ------------------------------------------------------------------
+    # New: description persistence + agent_ref validation on create.
+    # ------------------------------------------------------------------
+
+    async def test_saves_description_in_metadata_when_present(
+        self, use_case, mock_agent_config_repository, mock_agent_config_store
+    ):
+        """Should save the parsed description into the AgentConfigMetadata."""
+        # Arrange
+        mock_agent_config_repository.exists.return_value = False
+        yaml_with_description = (
+            "name: test-agent\n"
+            "model: claude-sonnet-4-5-20250929\n"
+            'system_prompt: "You are a test agent."\n'
+            'description: "My agent"\n'
+        )
+
+        # Act
+        await use_case.execute(name="test-agent", yaml_content=yaml_with_description)
+
+        # Assert
+        mock_agent_config_repository.save.assert_awaited_once()
+        saved_metadata = mock_agent_config_repository.save.await_args.args[0]
+        assert saved_metadata.description == "My agent"
+
+    async def test_rejects_subagent_agent_ref_pointing_to_nonexistent_agent(
+        self, use_case, mock_agent_config_repository, mock_agent_config_store
+    ):
+        """Should raise ConfigError when a subagent agent_ref does not exist."""
+        # Arrange
+        mock_agent_config_repository.exists.return_value = False
+
+        async def exists_side_effect(name: str) -> bool:
+            return False if name == "ghost" else False
+
+        mock_agent_config_repository.exists.side_effect = exists_side_effect
+        yaml_with_ref = (
+            "name: parent-agent\n"
+            "model: claude-sonnet-4-5-20250929\n"
+            "subagents:\n"
+            "  - name: sub\n"
+            "    description: d\n"
+            "    agent_ref: ghost\n"
+        )
+
+        # Act & Assert
+        with pytest.raises(ConfigError):
+            await use_case.execute(name="parent-agent", yaml_content=yaml_with_ref)
+        mock_agent_config_store.put.assert_not_awaited()
+
+    async def test_rejects_subagent_agent_ref_equal_to_agent_name(
+        self, use_case, mock_agent_config_repository, mock_agent_config_store
+    ):
+        """Should raise ConfigError when a subagent agent_ref equals the agent's own name."""
+        # Arrange
+        mock_agent_config_repository.exists.return_value = False
+        yaml_self_ref = (
+            "name: self-agent\n"
+            "model: claude-sonnet-4-5-20250929\n"
+            "subagents:\n"
+            "  - name: sub\n"
+            "    description: d\n"
+            "    agent_ref: self-agent\n"
+        )
+
+        # Act & Assert
+        with pytest.raises(ConfigError):
+            await use_case.execute(name="self-agent", yaml_content=yaml_self_ref)
+
+    async def test_accepts_subagent_agent_ref_pointing_to_existing_agent(
+        self, use_case, mock_agent_config_repository, mock_agent_config_store
+    ):
+        """Should succeed when subagent agent_ref points to an existing agent."""
+        # Arrange
+        existing_names = {"researcher"}
+
+        async def exists_side_effect(name: str) -> bool:
+            return name in existing_names
+
+        mock_agent_config_repository.exists.side_effect = exists_side_effect
+        yaml_with_ref = (
+            "name: parent-agent\n"
+            "model: claude-sonnet-4-5-20250929\n"
+            "subagents:\n"
+            "  - name: sub\n"
+            "    description: d\n"
+            "    agent_ref: researcher\n"
+        )
+
+        # Act
+        await use_case.execute(name="parent-agent", yaml_content=yaml_with_ref)
+
+        # Assert — the use case must have validated the referenced agent exists.
+        mock_agent_config_store.put.assert_awaited_once()
+        exists_calls = [call.args[0] for call in mock_agent_config_repository.exists.await_args_list]
+        assert "researcher" in exists_calls
+
 
 class TestUpdateAgentConfigUseCase:
     """Tests for UpdateAgentConfigUseCase."""
@@ -239,6 +336,85 @@ class TestUpdateAgentConfigUseCase:
         with pytest.raises(ConfigError):
             await use_case.execute(name="test-agent", yaml_content=mismatched_yaml)
 
+    # ------------------------------------------------------------------
+    # New: description update + dependent agents invalidation on update.
+    # ------------------------------------------------------------------
+
+    async def test_updates_description_in_metadata(
+        self, use_case, mock_agent_config_repository, existing_metadata
+    ):
+        """Should update the metadata description when the YAML provides one."""
+        # Arrange
+        mock_agent_config_repository.get.return_value = existing_metadata
+        yaml_with_description = (
+            "name: test-agent\n"
+            "model: claude-sonnet-4-5-20250929\n"
+            'system_prompt: "You are a test agent."\n'
+            'description: "Updated description"\n'
+        )
+
+        # Act
+        await use_case.execute(name="test-agent", yaml_content=yaml_with_description)
+
+        # Assert
+        mock_agent_config_repository.save.assert_awaited_once()
+        saved_metadata = mock_agent_config_repository.save.await_args.args[0]
+        assert saved_metadata.description == "Updated description"
+
+    async def test_invalidates_dependent_agents_referencing_updated_agent(
+        self, use_case, mock_agent_config_repository, mock_agent_config_store, mock_registry, yaml_loader
+    ):
+        """Should invalidate the updated agent AND dependents that reference it via agent_ref."""
+        # Arrange
+        # Agent "X" is being updated; agents "A" references X via subagent agent_ref; "B" does not.
+        agent_a_yaml = (
+            "name: A\n"
+            "model: claude-sonnet-4-5-20250929\n"
+            "subagents:\n"
+            "  - name: sub\n"
+            "    description: d\n"
+            "    agent_ref: X\n"
+        )
+        agent_b_yaml = (
+            "name: B\n"
+            "model: claude-sonnet-4-5-20250929\n"
+        )
+        agent_x_yaml = (
+            "name: X\n"
+            "model: claude-sonnet-4-5-20250929\n"
+            'system_prompt: "You are X."\n'
+        )
+
+        mock_agent_config_repository.get.return_value = AgentConfigMetadata(
+            name="X",
+            model="claude-sonnet-4-5-20250929",
+            minio_path="agent-configs/X.yaml",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+
+        async def list_all_side_effect():
+            return ["A", "B"]
+
+        async def store_get_side_effect(name: str) -> str:
+            return {
+                "A": agent_a_yaml,
+                "B": agent_b_yaml,
+                "X": agent_x_yaml,
+            }[name]
+
+        mock_agent_config_store.list_all.side_effect = list_all_side_effect
+        mock_agent_config_store.get.side_effect = store_get_side_effect
+
+        # Act
+        await use_case.execute(name="X", yaml_content=agent_x_yaml)
+
+        # Assert
+        invalidated = [call.args[0] for call in mock_registry.invalidate.await_args_list]
+        assert "X" in invalidated
+        assert "A" in invalidated
+        assert "B" not in invalidated
+
 
 class TestDeleteAgentConfigUseCase:
     """Tests for DeleteAgentConfigUseCase."""
@@ -313,6 +489,58 @@ class TestDeleteAgentConfigUseCase:
         # Act & Assert
         with pytest.raises(AgentNotFoundError):
             await use_case.execute(name="nonexistent")
+
+    # ------------------------------------------------------------------
+    # New: dependent agents invalidation on delete.
+    # ------------------------------------------------------------------
+
+    async def test_invalidates_dependent_agents_referencing_deleted_agent(
+        self, use_case, mock_agent_config_repository, mock_agent_config_store, mock_registry, yaml_loader
+    ):
+        """Should invalidate the deleted agent AND dependents that reference it via agent_ref."""
+        # Arrange
+        # Agent "X" is being deleted; agent "A" references X via subagent agent_ref; "B" does not.
+        agent_a_yaml = (
+            "name: A\n"
+            "model: claude-sonnet-4-5-20250929\n"
+            "subagents:\n"
+            "  - name: sub\n"
+            "    description: d\n"
+            "    agent_ref: X\n"
+        )
+        agent_b_yaml = (
+            "name: B\n"
+            "model: claude-sonnet-4-5-20250929\n"
+        )
+
+        mock_agent_config_repository.get.return_value = AgentConfigMetadata(
+            name="X",
+            model="claude-sonnet-4-5-20250929",
+            minio_path="agent-configs/X.yaml",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+
+        async def list_all_side_effect():
+            return ["A", "B"]
+
+        async def store_get_side_effect(name: str) -> str:
+            return {
+                "A": agent_a_yaml,
+                "B": agent_b_yaml,
+            }[name]
+
+        mock_agent_config_store.list_all.side_effect = list_all_side_effect
+        mock_agent_config_store.get.side_effect = store_get_side_effect
+
+        # Act
+        await use_case.execute(name="X")
+
+        # Assert
+        invalidated = [call.args[0] for call in mock_registry.invalidate.await_args_list]
+        assert "X" in invalidated
+        assert "A" in invalidated
+        assert "B" not in invalidated
 
 
 class TestGetAgentConfigUseCase:

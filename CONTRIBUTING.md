@@ -94,11 +94,13 @@ Key points:
 - `AgentConfig` is a **frozen** Pydantic `BaseModel` (immutable after creation).
 - Validation includes:
   - `name` must be 1-100 characters.
+  - `description` is an optional `str | None` (max 500 characters), persisted in the `agent_configs` table (migration `010_add_description_to_agent_configs`) and exposed via `AgentConfigMetadata`.
   - `system_prompt` and `system_prompt_file` are mutually exclusive (enforced by `@model_validator`).
   - `backend.type` must match the `BackendType` enum (`state` or `store`).
   - `backend.store_backend` and `backend.checkpoint_backend` must be `"memory"` or `"postgres"`.
   - `hitl.rules` values are either `bool` or `InterruptRule` objects.
   - `subagents` entries require `name` and `description`.
+  - `subagents[*].agent_ref` is an optional `str | None` referencing another existing agent by name. At runner-build time the backend resolves the referenced agent's `model`, `system_prompt`, `mcp_servers`, `tools`, and `response_format`; explicit values on the `SubAgentConfig` override the inherited ones. **One level only** — the referenced agent's own `subagents` are not resolved. Validation rejects self-references (`agent_ref == agent name`) and non-existent references with a `ConfigError` at create/update time. When an agent is updated or deleted, any agents referencing it via `agent_ref` are also invalidated in the registry.
 
 To modify the schema, edit `src/domain/entities/agent_config.py` and regenerate the JSON schema:
 

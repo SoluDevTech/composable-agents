@@ -1,6 +1,7 @@
 import logging
 from datetime import UTC, datetime
 
+from src.application.use_cases._subagent_ref_utils import invalidate_dependent_agents, validate_subagent_refs
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.errors.config import ConfigError
 from src.domain.errors.messages import ErrorMessage
@@ -49,15 +50,22 @@ class UpdateAgentConfigUseCase:
         if config.name != name:
             raise ConfigError(ErrorMessage.AGENT_NAME_MISMATCH_URL.format(yaml_name=config.name, name=name))
 
+        await validate_subagent_refs(config, self._config_repository)
+
         await self._config_store.put(name, yaml_content)
 
         now = datetime.now(UTC)
         updated_metadata = metadata.model_copy(
-            update={"model": config.model, "updated_at": now},
+            update={
+                "model": config.model,
+                "description": config.description,
+                "updated_at": now,
+            },
         )
         await self._config_repository.save(updated_metadata)
 
         await self._agent_registry.invalidate(name)
+        await invalidate_dependent_agents(self._config_store, self._agent_registry, name)
 
         logger.info(LogMessage.AGENT_CONFIG_UPDATED_UC, name)
         return config

@@ -1,6 +1,7 @@
 import asyncio
 import logging
 
+from src.domain.entities.agent_config import AgentConfig
 from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_config_loader import AgentConfigLoader
 from src.domain.ports.agent_config_repository import AgentConfigRepository
@@ -64,8 +65,13 @@ class PersistentAgentRegistry(AgentRegistry):
             logger.info(LogMessage.AGENT_BUILDING, agent_name)
             yaml_content = await self._config_store.get(agent_name)
             config = self._config_loader.load_from_string(yaml_content)
+
+            async def config_resolver(name: str) -> AgentConfig:
+                referenced_yaml = await self._config_store.get(name)
+                return self._config_loader.load_from_string(referenced_yaml)
+
             graph, response_format_model = await create_agent_from_config(
-                config, self._mcp_tool_loader, self._prompt_manager
+                config, self._mcp_tool_loader, self._prompt_manager, config_resolver=config_resolver
             )
             runner = DeepAgentRunner(
                 graph,
