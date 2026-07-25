@@ -1,7 +1,7 @@
 """Add description column to agent_configs.
 
 Revision ID: 010
-Revises: 009
+Revises: 007
 Create Date: 2026-07-25
 
 Adds an optional ``description`` column (``VARCHAR(500) NULL``) to the
@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "010"
-down_revision: str | None = "009"
+down_revision: str | None = "007"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

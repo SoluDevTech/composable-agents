@@ -330,9 +330,7 @@ For OpenAI-compatible endpoints (OpenRouter, LiteLLM, vLLM, etc.), set the `OPEN
 
 Agents can connect to [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers for tool access. MCP servers are defined in the agent's YAML config:
 
-> **Registry migration:** The MCP server **registry** (CRUD API, OpenAPI→MCP generation, Swagger 2.0 conversion, Fernet encryption, mounter, startup rehydration) used to live in this brick. It has been **moved to [mcp-raganything](https://github.com/soludev/mcp-raganything)**, which now owns the `/api/v1/mcp/servers` REST surface. composable-agents no longer ships the registry routes, use cases, repository, OpenAPI factory, Swagger 2.0 converter, Fernet cipher, or mounter.
->
-> **Schema ownership stays here:** composable-agents remains the owner of the `mcp_servers` PostgreSQL table schema. The table is created and evolved by this brick's Alembic migrations (`008_create_mcp_servers_table`, `009_alter_mcp_servers_add_openapi`). mcp-raganything is a **consumer** of the shared table and assumes the schema has already been applied — its `McpRegistryStore` no longer self-creates the table. On a fresh database, composable-agents' migrations must run before the mcp-raganything registry is used.
+> **Registry migration:** The MCP server **registry** (CRUD API, OpenAPI→MCP generation, Swagger 2.0 conversion, Fernet encryption, mounter, startup rehydration) **and the `mcp_servers` table schema** used to live in this brick. Both have been **moved to [mcp-raganything](https://github.com/soludev/mcp-raganything)**, which now owns the `/api/v1/mcp/servers` REST surface and the table's Alembic migrations (`001_create_mcp_servers_table`, tracked in the `raganything_alembic_version` table). composable-agents no longer ships the registry routes, use cases, repository, OpenAPI factory, Swagger 2.0 converter, Fernet cipher, mounter, or any `mcp_servers` migration.
 >
 > What remains in this brick is:
 >
@@ -1467,12 +1465,7 @@ Relevant migrations for the trace events refactor:
 | `007_drop_messages_table` | Drops the legacy `messages` table. |
 | `010_add_description_to_agent_configs` | Adds a `description VARCHAR(500)` column to the `agent_configs` table. |
 
-Migrations owning the shared `mcp_servers` table (consumed by mcp-raganything):
-
-| Migration | Description |
-|---|---|
-| `008_create_mcp_servers_table` | Creates the `mcp_servers` table (name, transport, url, Fernet-encrypted `headers`/`env`/`auth_token`, tool_count, timestamps). |
-| `009_alter_mcp_servers_add_openapi` | Adds `source_type` (`"external"` \| `"openapi"`) and `openapi_url` columns so an MCP server can be generated from an OpenAPI spec. |
+> The `mcp_servers` table is **not** managed here. It is owned by mcp-raganything's Alembic migration `001_create_mcp_servers_table` (tracked in the `raganything_alembic_version` table).
 
 To create a new migration manually:
 
