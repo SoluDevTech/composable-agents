@@ -152,6 +152,7 @@ Every agent is defined by a single YAML file validated against the `AgentConfig`
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `name` | `string` (required) | -- | Unique agent name (1-100 characters). |
+| `description` | `string` | `null` | Optional human-readable description of the agent (max 500 characters). Stored in the `agent_configs` table and exposed via `AgentConfigMetadata`. |
 | `model` | `string` | `"claude-sonnet-4-5-20250929"` | LLM model identifier. See [Supported Models](#supported-models). |
 | `system_prompt` | `string` | `null` | Inline system prompt. Mutually exclusive with `system_prompt_file`. |
 | `system_prompt_file` | `string` | `null` | Path to a text file containing the system prompt (resolved relative to the YAML file). Mutually exclusive with `system_prompt`. |
@@ -176,6 +177,36 @@ Every agent is defined by a single YAML file validated against the `AgentConfig`
 | `tools` | `list[string]` | `[]` | Tool references specific to this sub-agent. |
 | `skills` | `list[string]` | `[]` | Skill paths for this sub-agent. |
 | `mcp_servers` | `list[McpServerConfig]` | `[]` | MCP servers for this sub-agent. |
+| `agent_ref` | `string` | `null` | Name of an existing agent to reference. When set, the backend resolves the referenced agent's `model`, `system_prompt`, `mcp_servers`, `tools`, and `response_format` at runner-build time. Explicit values on the `SubAgentConfig` override the referenced agent's values. See [Agent references (`agent_ref`)](#agent-references-agent_ref). |
+
+### Agent references (`agent_ref`)
+
+A `SubAgentConfig` can reference another existing agent by name via the `agent_ref` field. This lets you compose agents without duplicating their configuration.
+
+**Resolution rules:**
+
+- At runner-build time, the backend looks up the referenced agent's `AgentConfig` and copies its `model`, `system_prompt`, `mcp_servers`, `tools`, and `response_format` into the sub-agent.
+- Any field set explicitly on the `SubAgentConfig` (e.g. `model`, `instructions`) **overrides** the value inherited from the referenced agent.
+- **One level only** — the referenced agent's own `subagents` are ignored. References are not resolved recursively.
+
+**Validation (enforced at create/update time):**
+
+- **Self-reference** (`agent_ref` equal to the parent agent's `name`) is rejected with a `ConfigError`.
+- **Non-existent reference** (`agent_ref` pointing to an agent that does not exist) is rejected with a `ConfigError`.
+
+**Cache invalidation:**
+
+When an agent is updated or deleted, the registry also invalidates any agents that reference it via `agent_ref` in their `subagents`. This ensures stale runners are rebuilt on next use.
+
+Example:
+
+```yaml
+name: orchestrator
+subagents:
+  - name: researcher
+    agent_ref: research-assistant   # inherits model, system_prompt, mcp_servers, tools, response_format
+    instructions: "Focus on recent papers."  # overrides system_prompt
+```
 
 ### McpServerConfig
 
@@ -298,6 +329,14 @@ For OpenAI-compatible endpoints (OpenRouter, LiteLLM, vLLM, etc.), set the `OPEN
 ## MCP Servers
 
 Agents can connect to [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) servers for tool access. MCP servers are defined in the agent's YAML config:
+
+> **Registry migration:** The MCP server **registry** (CRUD API, OpenAPI→MCP generation, Swagger 2.0 conversion, Fernet encryption, mounter, startup rehydration) used to live in this brick. It has been **moved to [mcp-raganything](https://github.com/soludev/mcp-raganything)**, which now owns the `mcp_servers` PostgreSQL table and the `/api/v1/mcp/servers` REST surface. composable-agents no longer ships the registry routes, use cases, repository, OpenAPI factory, Swagger 2.0 converter, Fernet cipher, or mounter. What remains in this brick is:
+>
+> - `McpServerConfig` — the entity used by agent YAML to declare an MCP server connection.
+> - `McpToolLoader` (port) / `LangchainMcpToolLoader` (adapter) — loads tools from an MCP server **by URL** at agent build time. The URLs come from the agent YAML directly, or from entries registered in mcp-raganything's registry (which composable-agents reads via its UI/backend when needed).
+> - `McpConnectionError` / `McpToolLoadError` — domain errors raised when an MCP server cannot be reached or its tools fail to load.
+>
+> `SECRET_ENCRYPTION_KEY` is now **optional** in composable-agents (it is no longer used here); it must still be set on the mcp-raganything service that owns the registry.
 
 ```yaml
 name: mcp-agent
@@ -1210,7 +1249,7 @@ composable-agents/
     domain/
       entities/
         agent_config.py                # AgentConfig, BackendConfig, HITLConfig, SubAgentConfig
-        agent_config_metadata.py       # AgentConfigMetadata
+        agent_config_metadata.py       # AgentConfigMetadata (incl. description)
         mcp_server_config.py           # McpServerConfig, McpTransportType
         message.py                     # Message (role, content, timestamp, tool_calls) — projection model
         thread.py                       # Thread (id, agent_name, timestamps) — no more MessageModel
@@ -1422,6 +1461,7 @@ Relevant migrations for the trace events refactor:
 | `005_create_trace_events_table` | Creates the `trace_events` table with the 3 indexes above. |
 | `006_migrate_messages_to_trace_events` | Backfills `trace_events` from existing `messages` rows (`role = "human"` → `HUMAN_MESSAGE`, `role = "ai"` → `AI_MESSAGE`). |
 | `007_drop_messages_table` | Drops the legacy `messages` table. |
+| `010_add_description_to_agent_configs` | Adds a `description VARCHAR(500)` column to the `agent_configs` table. |
 
 To create a new migration manually:
 

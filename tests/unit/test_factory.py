@@ -4,12 +4,14 @@ Patches ``create_deep_agent`` (external LLM factory) to avoid real LLM calls.
 Tests exercise the public ``create_agent_from_config`` API only.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
 
 from src.domain.entities.agent_config import AgentConfig
+from src.domain.entities.mcp_server_config import McpServerConfig, McpTransportType
+from src.domain.errors.config import ConfigError
 from src.infrastructure.deepagent.factory import create_agent_from_config
 
 WEATHER_SCHEMA = {
@@ -587,3 +589,144 @@ class TestPrepareAgentNamespace:
         # Assert
         kwargs = mock_create.call_args.kwargs
         assert "memory" not in kwargs
+
+
+class TestSubagentAgentRef:
+    """Tests for subagent reference resolution via config_resolver (one level only)."""
+
+    def _http_mcp(self, name: str) -> McpServerConfig:
+        return McpServerConfig(name=name, transport=McpTransportType.HTTP, url=f"https://{name}.example")
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_subagent_with_agent_ref_resolves_referenced_config(self, mock_create):
+        """Should resolve the referenced agent's model and system_prompt into the subagent spec."""
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(
+            name="parent",
+            subagents=[
+                {"name": "ref-alias", "description": "d", "agent_ref": "researcher"},
+            ],
+        )
+        referenced = AgentConfig(
+            name="researcher",
+            model="m-ref",
+            system_prompt="ref prompt",
+        )
+        resolver = AsyncMock(return_value=referenced)
+
+        # Act
+        await create_agent_from_config(config, config_resolver=resolver)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        subagents = kwargs["subagents"]
+        assert subagents[0]["model"] == "m-ref"
+        # No instructions, no Phoenix → falls back to ref.system_prompt
+        assert subagents[0]["system_prompt"] == "ref prompt"
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_subagent_agent_ref_explicit_override_wins(self, mock_create):
+        """Explicit values on the SubAgentConfig should override the referenced agent's."""
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(
+            name="parent",
+            subagents=[
+                {
+                    "name": "ref-alias",
+                    "description": "d",
+                    "agent_ref": "researcher",
+                    "model": "my-model",
+                    "instructions": "explicit instructions",
+                },
+            ],
+        )
+        referenced = AgentConfig(
+            name="researcher",
+            model="m-ref",
+            system_prompt="ref prompt",
+        )
+        resolver = AsyncMock(return_value=referenced)
+
+        # Act
+        await create_agent_from_config(config, config_resolver=resolver)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        subagents = kwargs["subagents"]
+        assert subagents[0]["model"] == "my-model"
+        # instructions set → wins over ref.system_prompt
+        assert subagents[0]["system_prompt"] == "explicit instructions"
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_subagent_agent_ref_without_resolver_raises_config_error(self, mock_create):
+        """Should raise ConfigError when agent_ref is set but no config_resolver provided."""
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(
+            name="parent",
+            subagents=[
+                {"name": "ref-alias", "description": "d", "agent_ref": "researcher"},
+            ],
+        )
+
+        # Act & Assert
+        with pytest.raises(ConfigError):
+            await create_agent_from_config(config, config_resolver=None)
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_subagent_agent_ref_falls_back_to_referenced_response_format(self, mock_create):
+        """When sa.response_format is None, the referenced agent's response_format is used."""
+        # Arrange
+        schema = {"type": "object", "properties": {"x": {"type": "number"}}, "required": ["x"]}
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(
+            name="parent",
+            subagents=[
+                {"name": "ref-alias", "description": "d", "agent_ref": "researcher"},
+            ],
+        )
+        referenced = AgentConfig(
+            name="researcher",
+            model="m-ref",
+            response_format=schema,
+        )
+        resolver = AsyncMock(return_value=referenced)
+
+        # Act
+        await create_agent_from_config(config, config_resolver=resolver)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        subagents = kwargs["subagents"]
+        assert subagents[0]["response_format"] == schema
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_subagent_agent_ref_ignores_referenced_subagents(self, mock_create):
+        """Referenced agent's own subagents must be ignored (one level only)."""
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(
+            name="parent",
+            subagents=[
+                {"name": "ref-alias", "description": "d", "agent_ref": "researcher"},
+            ],
+        )
+        referenced = AgentConfig(
+            name="researcher",
+            model="m-ref",
+            system_prompt="ref prompt",
+            subagents=[{"name": "nested", "description": "should be ignored"}],
+        )
+        resolver = AsyncMock(return_value=referenced)
+
+        # Act
+        await create_agent_from_config(config, config_resolver=resolver)
+
+        # Assert — create_deep_agent was called successfully and the resolved
+        # subagent spec must not propagate the referenced agent's subagents.
+        assert mock_create.called
+        kwargs = mock_create.call_args.kwargs
+        subagents = kwargs["subagents"]
+        assert "subagents" not in subagents[0] or not subagents[0]["subagents"]

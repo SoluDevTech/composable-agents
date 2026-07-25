@@ -139,6 +139,49 @@ class TestAgentConfig:
         with pytest.raises(ValidationError):
             config.response_format = {"type": "object"}
 
+    # ------------------------------------------------------------------
+    # New: optional `description` field on AgentConfig.
+    # ------------------------------------------------------------------
+
+    def test_accepts_optional_description(self):
+        """Should accept an optional description and store it."""
+        # Arrange
+        config = AgentConfig(name="x", description="An agent")
+
+        # Act
+        description = config.description
+
+        # Assert
+        assert description == "An agent"
+
+    def test_description_defaults_to_none(self):
+        """Should default description to None when not provided."""
+        # Arrange
+        config = AgentConfig(name="x")
+
+        # Act
+        description = config.description
+
+        # Assert
+        assert description is None
+
+    def test_full_config_with_description(self):
+        """Should parse a full config including the description field."""
+        # Arrange
+        data = {
+            "name": "my-agent",
+            "model": "openai:gpt-4o",
+            "system_prompt": "You are helpful.",
+            "description": "A research assistant.",
+            "subagents": [{"name": "sub", "description": "A subagent"}],
+        }
+
+        # Act
+        config = AgentConfig(**data)
+
+        # Assert
+        assert config.description == "A research assistant."
+
 
 class TestBackendConfigChanges:
     """Tests for the BackendType / BackendConfig refactor."""
@@ -249,3 +292,36 @@ class TestSubAgentConfig:
 
         # Assert
         assert sa.response_format is None
+
+    # ------------------------------------------------------------------
+    # New: optional `agent_ref` field on SubAgentConfig.
+    # ------------------------------------------------------------------
+
+    def test_subagent_accepts_agent_ref(self):
+        """Should accept an optional agent_ref naming another agent."""
+        # Arrange
+        sa = SubAgentConfig(name="sub", description="d", agent_ref="other")
+
+        # Act
+        agent_ref = sa.agent_ref
+
+        # Assert
+        assert agent_ref == "other"
+
+    def test_subagent_agent_ref_defaults_to_none(self):
+        """Should default agent_ref to None when not provided."""
+        # Arrange
+        sa = SubAgentConfig(name="sub", description="d")
+
+        # Act
+        agent_ref = sa.agent_ref
+
+        # Assert
+        assert agent_ref is None
+
+    def test_subagent_with_agent_ref_still_requires_description(self):
+        """Should raise ValidationError when description missing even with agent_ref."""
+        # Arrange
+        # Act & Assert
+        with pytest.raises(ValidationError):
+            SubAgentConfig(name="sub", agent_ref="other")

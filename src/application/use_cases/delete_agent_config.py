@@ -1,5 +1,6 @@
 import logging
 
+from src.application.use_cases._subagent_ref_utils import invalidate_dependent_agents
 from src.domain.logging.messages import LogMessage
 from src.domain.ports.agent_config_repository import AgentConfigRepository
 from src.domain.ports.agent_config_store import AgentConfigStore
@@ -35,5 +36,6 @@ class DeleteAgentConfigUseCase:
         await self._config_store.delete(name)
         await self._config_repository.delete(name)
         await self._agent_registry.invalidate(name)
+        await invalidate_dependent_agents(self._config_store, self._agent_registry, name)
 
         logger.info(LogMessage.AGENT_CONFIG_DELETED_UC, name)

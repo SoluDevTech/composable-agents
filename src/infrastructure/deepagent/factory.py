@@ -1,6 +1,7 @@
 import asyncio
 import importlib
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from deepagents import create_deep_agent
@@ -13,6 +14,7 @@ from pydantic import BaseModel
 
 from src.config import Settings
 from src.domain.entities.agent_config import AgentConfig, SubAgentConfig
+from src.domain.errors.config import ConfigError
 from src.domain.logging.messages import LogMessage
 from src.domain.ports.mcp_tool_loader import McpToolLoader
 from src.domain.ports.prompt_manager import PromptManager
@@ -222,12 +224,16 @@ async def _resolve_subagents(
     config: AgentConfig,
     mcp_tool_loader: McpToolLoader | None = None,
     prompt_manager: PromptManager | None = None,
+    config_resolver: Callable[[str], Awaitable[AgentConfig]] | None = None,
 ) -> list | None:
     """Convertit les configs de sous-agents.
 
     Args:
         config: Configuration de l'agent principal.
         mcp_tool_loader: Loader MCP optionnel pour les sous-agents.
+        prompt_manager: Gestionnaire de prompts optionnel.
+        config_resolver: Résolveur optionnel permettant de charger la
+            ``AgentConfig`` référencée par ``SubAgentConfig.agent_ref``.
 
     Returns:
         Liste de dicts de sous-agents ou None.
@@ -236,6 +242,11 @@ async def _resolve_subagents(
         return None
     subagents = []
     for sa in config.subagents:
+        if sa.agent_ref is not None:
+            spec = await _resolve_referenced_subagent(sa, mcp_tool_loader, prompt_manager, config_resolver)
+            subagents.append(spec)
+            continue
+
         local_tools = _resolve_tools_list(sa.tools) if sa.tools else None
         mcp_tools: list = []
         if sa.mcp_servers and mcp_tool_loader:
@@ -255,6 +266,61 @@ async def _resolve_subagents(
             }
         )
     return subagents
+
+
+async def _resolve_referenced_subagent(
+    sa: SubAgentConfig,
+    mcp_tool_loader: McpToolLoader | None,
+    prompt_manager: PromptManager | None,
+    config_resolver: Callable[[str], Awaitable[AgentConfig]] | None,
+) -> dict:
+    """Build a subagent spec from a SubAgentConfig that references another agent.
+
+    Args:
+        sa: The subagent configuration carrying ``agent_ref``.
+        mcp_tool_loader: Optional MCP tool loader.
+        prompt_manager: Optional prompt manager.
+        config_resolver: Async callable returning the referenced AgentConfig.
+
+    Returns:
+        Dict spec ready for ``create_deep_agent``.
+
+    Raises:
+        ConfigError: If ``agent_ref`` is set but no ``config_resolver`` is provided.
+    """
+    if config_resolver is None:
+        raise ConfigError(
+            f"Subagent '{sa.name}' references agent '{sa.agent_ref}' but no config_resolver was provided."
+        )
+
+    assert sa.agent_ref is not None
+    ref = await config_resolver(sa.agent_ref)
+
+    if ref.subagents:
+        logger.warning(
+            "Referenced agent '%s' has its own subagents; ignoring them (one level only).",
+            sa.agent_ref,
+        )
+
+    instructions = await _resolve_subagent_instructions(sa, prompt_manager)
+    system_prompt = instructions if instructions is not None else ref.system_prompt
+
+    local_tools = _resolve_tools_list(sa.tools) if sa.tools else None
+    ref_tools = _resolve_tools_list(ref.tools) if ref.tools else None
+    mcp_tools: list = []
+    servers = list(sa.mcp_servers) + list(ref.mcp_servers)
+    if servers and mcp_tool_loader:
+        mcp_tools = await mcp_tool_loader.load_tools(servers)
+    all_tools = (local_tools or []) + (ref_tools or []) + mcp_tools if (local_tools or ref_tools or mcp_tools) else None
+
+    return {
+        "name": sa.name,
+        "description": sa.description,
+        "system_prompt": system_prompt,
+        "model": sa.model if sa.model else ref.model,
+        "tools": all_tools,
+        "response_format": sa.response_format if sa.response_format else ref.response_format,
+    }
 
 
 def _resolve_tools_list(tool_paths: list[str]) -> list | None:
@@ -329,7 +395,7 @@ async def _prepare_agent_namespace(
                 except Exception:
                     logger.exception("Failed to delete stale agent skill: %s", item.key)
         elif item.key.startswith(agent_memories_dir):
-            filename = item.key[len(agent_memories_dir):]
+            filename = item.key[len(agent_memories_dir) :]
             if filename not in selected_memory_files:
                 try:
                     await store.adelete(ns, item.key)
@@ -362,12 +428,16 @@ async def create_agent_from_config(
     config: AgentConfig,
     mcp_tool_loader: McpToolLoader | None = None,
     prompt_manager: PromptManager | None = None,
+    config_resolver: Callable[[str], Awaitable[AgentConfig]] | None = None,
 ):
     """Create a compiled Deep Agent from configuration.
 
     Args:
         config: Agent configuration.
         mcp_tool_loader: Optional MCP tool loader for loading remote tools.
+        prompt_manager: Optional prompt manager for loading system prompts.
+        config_resolver: Optional async callable used to resolve subagent
+            ``agent_ref`` references into full ``AgentConfig`` objects.
 
     Returns:
         Tuple of (compiled agent graph, response_format_model or None).
@@ -428,7 +498,7 @@ async def create_agent_from_config(
     else:
         response_format_model = None
 
-    subagents = await _resolve_subagents(config, mcp_tool_loader, prompt_manager)
+    subagents = await _resolve_subagents(config, mcp_tool_loader, prompt_manager, config_resolver)
     if subagents:
         kwargs["subagents"] = subagents
         logger.info(LogMessage.AGENT_SUBAGENTS, config.name, len(subagents))

@@ -1,6 +1,7 @@
 import logging
 from datetime import UTC, datetime
 
+from src.application.use_cases._subagent_ref_utils import validate_subagent_refs
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.entities.agent_config_metadata import AgentConfigMetadata
 from src.domain.errors.agent import AgentConfigAlreadyExistsError
@@ -46,6 +47,8 @@ class CreateAgentConfigUseCase:
         if config.name != name:
             raise ConfigError(ErrorMessage.AGENT_NAME_MISMATCH.format(yaml_name=config.name, name=name))
 
+        await validate_subagent_refs(config, self._config_repository.exists)
+
         if await self._config_repository.exists(name):
             raise AgentConfigAlreadyExistsError(ErrorMessage.AGENT_CONFIG_ALREADY_EXISTS.format(name=name))
 
@@ -56,6 +59,7 @@ class CreateAgentConfigUseCase:
             name=name,
             model=config.model,
             minio_path=f"{name}.yaml",
+            description=config.description,
             created_at=now,
             updated_at=now,
         )

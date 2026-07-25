@@ -11,3 +11,4 @@ class AgentConfigMetadata(BaseModel):
     minio_path: str
     created_at: datetime
     updated_at: datetime
+    description: str | None = None
