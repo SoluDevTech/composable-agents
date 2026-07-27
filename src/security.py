@@ -25,7 +25,12 @@ from src.domain.entities.auth.auth_context import AuthContext
 from src.domain.errors.messages import ErrorMessage
 from src.domain.errors.security import AuthenticationError, InvalidApiKeyError
 from src.domain.services.auth.auth_service import AuthService
-from src.infrastructure.database.rls_context import current_auth_method, current_credential, current_user_id
+from src.infrastructure.database.rls_context import (
+    current_auth_context,
+    current_auth_method,
+    current_credential,
+    current_user_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +192,7 @@ class ComposableAgentsSecurity:
         current_user_id.set(ctx.user_id)
         current_credential.set(ctx.raw_credential)
         current_auth_method.set(ctx.method)
+        current_auth_context.set(ctx)
         return ctx
 
     async def verify_credentials_ws(self, websocket: WebSocket) -> AuthContext | None:
@@ -231,4 +237,5 @@ class ComposableAgentsSecurity:
         current_user_id.set(ctx.user_id)
         current_credential.set(ctx.raw_credential)
         current_auth_method.set(ctx.method)
+        current_auth_context.set(ctx)
         return ctx

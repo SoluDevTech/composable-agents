@@ -32,10 +32,12 @@ from src.application.use_cases.send_message import SendMessageUseCase
 from src.application.use_cases.stream_message import StreamMessageUseCase
 from src.application.use_cases.update_agent_config import UpdateAgentConfigUseCase
 from src.application.use_cases.update_prompt import UpdatePromptUseCase
+from src.application.use_cases.user.get_current_user import GetCurrentUserUseCase
 from src.application.use_cases.user_llm_settings.delete_user_llm_settings import DeleteUserLlmSettingsUseCase
 from src.application.use_cases.user_llm_settings.get_user_llm_settings import GetUserLlmSettingsUseCase
 from src.application.use_cases.user_llm_settings.upsert_user_llm_settings import UpsertUserLlmSettingsUseCase
 from src.config import Settings
+from src.domain.entities.auth.auth_context import AuthContext
 from src.domain.errors.messages import ErrorMessage
 from src.domain.errors.security import AuthenticationError
 from src.domain.errors.storage import StorageError
@@ -50,7 +52,7 @@ from src.domain.ports.tracing_provider import TracingProvider
 from src.domain.ports.user_llm_settings_repository import UserLlmSettingsRepository
 from src.infrastructure.auth.jwt_adapter import JwtAdapter
 from src.infrastructure.crypto.fernet_crypto import FernetCrypto
-from src.infrastructure.database.rls_context import current_user_id
+from src.infrastructure.database.rls_context import current_auth_context, current_user_id
 from src.infrastructure.mcp.adapter import LangchainMcpToolLoader
 from src.infrastructure.minio_store.adapter import MinioAgentConfigStore
 from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
@@ -559,6 +561,32 @@ def get_current_user_id() -> str:
     if user_id is None:
         raise AuthenticationError(ErrorMessage.AUTH_INVALID_CREDENTIALS)
     return user_id
+
+
+def get_current_auth_context() -> AuthContext:
+    """Provide the full :class:`AuthContext` resolved for the current request.
+
+    Set by :meth:`ComposableAgentsSecurity.verify_credentials` after a
+    successful JWT / API-key authentication. Carries the propagated profile
+    claims (``email`` / ``name`` / ``username``) on the JWT path, which the
+    ``GET /api/v1/users/me`` endpoint exposes.
+
+    Returns:
+        The authenticated :class:`AuthContext`.
+
+    Raises:
+        AuthenticationError: If no auth context is set in the current context
+            (e.g. the dependency is not overridden and no auth middleware ran).
+    """
+    ctx = current_auth_context.get()
+    if ctx is None:
+        raise AuthenticationError(ErrorMessage.AUTH_INVALID_CREDENTIALS)
+    return ctx
+
+
+def get_get_current_user_use_case() -> GetCurrentUserUseCase:
+    """Provide a :class:`GetCurrentUserUseCase` instance."""
+    return GetCurrentUserUseCase()
 
 
 def _require_api_key_repository() -> ApiKeyRepository:

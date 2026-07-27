@@ -22,6 +22,10 @@ without an authenticated principal.
 import contextvars
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.domain.entities.auth.auth_context import AuthContext
 
 current_user_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_user_id", default=None)
 current_credential: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_credential", default=None)
@@ -31,6 +35,13 @@ current_credential: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 # propagation resolver (``${USER_JWT}`` / ``${USER_API_KEY}``) to decide which
 # credential placeholder to fill.
 current_auth_method: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_auth_method", default=None)
+# Full AuthContext resolved for the current request (carries email/name/username
+# propagated from the JWT when available). Set by
+# ``ComposableAgentsSecurity.verify_credentials`` and consumed by the
+# ``get_current_auth_context`` FastAPI dependency (e.g. ``GET /api/v1/users/me``).
+current_auth_context: contextvars.ContextVar["AuthContext | None"] = contextvars.ContextVar(
+    "current_auth_context", default=None
+)
 # When True, the RLS event listener emits ``SET LOCAL row_security = off`` so
 # that system/migration queries can read across all users.
 bypass_rls: contextvars.ContextVar[bool] = contextvars.ContextVar("bypass_rls", default=False)

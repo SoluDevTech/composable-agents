@@ -56,6 +56,37 @@ class TestAuthServiceJwtPath:
         assert result.raw_credential == "tok"
         jwt_port.decode_token.assert_awaited_once_with("tok")
 
+    async def test_jwt_valid_propagates_profile_claims(self, auth_service, jwt_port):
+        # Arrange — IdP returns a fully populated User
+        jwt_port.decode_token.return_value = User(
+            sub="user-123",
+            email="jane@example.com",
+            name="Jane Doe",
+            username="jane",
+        )
+
+        # Act
+        result = await auth_service.authenticate(authorization="Bearer tok", api_key=None)
+
+        # Assert — email / name / username propagated to the AuthContext
+        assert result is not None
+        assert result.email == "jane@example.com"
+        assert result.name == "Jane Doe"
+        assert result.username == "jane"
+
+    async def test_jwt_valid_with_missing_optional_claims_yields_none_profile(self, auth_service, jwt_port):
+        # Arrange — IdP returns only the required ``sub`` claim
+        jwt_port.decode_token.return_value = User(sub="user-123")
+
+        # Act
+        result = await auth_service.authenticate(authorization="Bearer tok", api_key=None)
+
+        # Assert — optional profile fields are None, not defaulted
+        assert result is not None
+        assert result.email is None
+        assert result.name is None
+        assert result.username is None
+
     async def test_jwt_invalid_returns_none(self, auth_service, jwt_port):
         # Arrange
         jwt_port.decode_token.return_value = None
@@ -105,6 +136,10 @@ class TestAuthServiceApiKeyPath:
         assert result.user_id == "user-456"
         assert result.method == "api_key"
         assert result.raw_credential == api_key
+        # API-key auth never carries profile claims (no JWT to decode).
+        assert result.email is None
+        assert result.name is None
+        assert result.username is None
         expected_hash = hashlib.sha256(api_key.encode()).hexdigest()
         api_key_repo.find_active_by_hash.assert_awaited_once_with(expected_hash)
 

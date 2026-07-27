@@ -18,6 +18,7 @@ from src.application.routes.store import router as store_router
 from src.application.routes.threads import router as threads_router
 from src.application.routes.trace import router as trace_router
 from src.application.routes.user_llm_settings import router as user_llm_settings_router
+from src.application.routes.users import router as users_router
 from src.application.routes.websocket import router as websocket_router
 from src.config import Settings
 from src.dependencies import (
@@ -128,6 +129,7 @@ protected.include_router(prompt_router)
 protected.include_router(store_router)
 protected.include_router(api_keys_router)
 protected.include_router(user_llm_settings_router)
+protected.include_router(users_router)
 app.include_router(protected)
 
 

@@ -68,7 +68,14 @@ class AuthService:
                     user.sub,
                     "jwt",
                 )
-                return AuthContext(user_id=user.sub, method="jwt", raw_credential=token)
+                return AuthContext(
+                    user_id=user.sub,
+                    method="jwt",
+                    raw_credential=token,
+                    email=user.email,
+                    name=user.name,
+                    username=user.username,
+                )
             # Invalid JWT → no fallback to API key (matches the test contract).
             return None
 

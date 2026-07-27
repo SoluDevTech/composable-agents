@@ -20,8 +20,18 @@ class AuthContext(BaseModel):
         raw_credential: The raw credential value as received (JWT token without
             the ``Bearer `` prefix, or the API key plaintext). Used to set the
             RLS contextvar for audit / row-level security.
+        email: User email (optional — populated on the JWT path when the IdP
+            provides the ``email`` claim; ``None`` for API-key auth).
+        name: User full name (optional — populated on the JWT path when the
+            IdP provides the ``name`` claim; ``None`` for API-key auth).
+        username: Username (optional — populated on the JWT path when the IdP
+            provides the ``username`` / ``preferred_username`` claim; ``None``
+            for API-key auth).
     """
 
     user_id: str
     method: Literal["jwt", "api_key"]
     raw_credential: str
+    email: str | None = None
+    name: str | None = None
+    username: str | None = None
