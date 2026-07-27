@@ -74,8 +74,18 @@ def _override_dependencies(
     mock_put_use_case: AsyncMock,
     mock_delete_use_case: AsyncMock,
 ):
-    """Wire mocked use cases via app.dependency_overrides and bypass API key."""
-    app.dependency_overrides[security.verify_api_key] = lambda: ""
+    """Wire mocked use cases via app.dependency_overrides and bypass auth.
+
+    The protected router now depends on ``verify_credentials`` (dual JWT /
+    API-key) instead of the master-key ``verify_api_key``. We override it to a
+    fixed AuthContext so the route handlers run without real auth. The auth
+    behaviour itself is covered by ``test_verify_credentials_wiring.py``.
+    """
+    from src.domain.entities.auth.auth_context import AuthContext
+
+    app.dependency_overrides[security.verify_credentials] = lambda: AuthContext(
+        user_id="test-user", method="api_key", raw_credential=""
+    )
     app.dependency_overrides[get_list_store_files_use_case] = lambda: mock_list_use_case
     app.dependency_overrides[get_get_store_file_use_case] = lambda: mock_get_use_case
     app.dependency_overrides[get_put_store_file_use_case] = lambda: mock_put_use_case

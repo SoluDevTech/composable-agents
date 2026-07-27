@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.infrastructure.database.models.base import Base
@@ -21,6 +21,7 @@ class TraceEventModel(Base):
     """
 
     __tablename__ = "trace_events"
+    __table_args__ = (Index("ix_trace_events_user_id", "user_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     thread_id: Mapped[str] = mapped_column(
@@ -38,3 +39,6 @@ class TraceEventModel(Base):
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
 
     thread: Mapped["ThreadModel"] = relationship("ThreadModel", back_populates="trace_events")
+    # Owner of the event (denormalized from the parent thread for direct
+    # filtering without a JOIN). NOT NULL with default '' (RLS plumbing).
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, server_default="", default="")

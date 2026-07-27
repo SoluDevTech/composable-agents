@@ -53,3 +53,7 @@ class TraceEvent(BaseModel, frozen=True):
     metadata: dict | None = None
     timestamp: datetime
     sequence: int = Field(ge=0)
+    # Owner of the event (denormalized from the parent thread). Defaults to
+    # ``""`` so existing constructions keep working; the repository sets it
+    # from ``current_user_id`` on add/add_batch.
+    user_id: str = ""

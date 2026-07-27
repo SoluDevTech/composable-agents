@@ -22,6 +22,11 @@ class Thread(BaseModel):
     trace_events: list[TraceEvent] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # Owner of the thread — set by the repository from the ``current_user_id``
+    # contextvar on create. Defaults to ``""`` so existing constructions (no
+    # auth context, pre-auth-core tests) keep working and the row is invisible
+    # under RLS but visible in SQLite tests (no RLS policies).
+    user_id: str = ""
 
     @computed_field  # type: ignore[prop-decorator]
     @property

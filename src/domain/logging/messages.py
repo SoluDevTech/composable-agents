@@ -46,6 +46,7 @@ class LogMessage(StrEnum):
     PERSISTENCE_REGISTRY_SET = "Persistence layer initialized, agent_registry set to PersistentAgentRegistry"
     PERSISTENT_REGISTRY_CLOSED = "Persistent registry closed"
     SQLALCHEMY_ENGINE_DISPOSED = "SQLAlchemy engine disposed"
+    JWT_ADAPTER_CLOSED = "JWT adapter httpx client closed"
     PERSISTENCE_STORE_FILE_INITIALIZED = "Store file repository initialized (AsyncPostgresStore)"
     PERSISTENCE_STORE_FILE_INIT_FAILED = (
         "Failed to initialize store file repository with Postgres, falling back to InMemoryStore"
@@ -259,3 +260,28 @@ class LogMessage(StrEnum):
 
     # --- Security ---
     LOG_INVALID_API_KEY = "Invalid API key: %s"
+
+    # --- Auth (dual JWT / API key) ---
+    # The enum value is a stable prefix kept verbatim in the formatted log line
+    # (no ``%s`` inside it) so tests can assert ``LogMessage.X in r.getMessage()``.
+    # No PII is interpolated here — only error type / message for diagnostics.
+    AUTH_JWT_DECODE_FAILED = "JWT decode failed"
+    AUTH_JWKS_FETCH_FAILED = "JWKS fetch failed"
+    AUTH_CREDENTIALS_VALIDATED = "Credentials validated for user_id=%s method=%s"
+
+    # --- API key management (per-user) ---
+    API_KEY_CREATED = "API key created: id=%s user_id=%s"
+    API_KEY_REVOKED = "API key revoked: id=%s user_id=%s"
+    API_KEY_LISTED = "Listed %d API keys for user_id=%s"
+
+    # --- RLS (Row-Level Security) ---
+    RLS_CONTEXT_SET = "RLS context set: app.user_id=%s"
+    RLS_BYPASS_ENABLED = "RLS bypass enabled (row_security=off)"
+
+    # --- LLM settings (per user) ---
+    LLM_SETTINGS_DECRYPT_FAILED = "Failed to decrypt LLM API key for user_id=%s; returning masked=None"
+    LLM_SETTINGS_REPO_INITIALIZED = "User LLM settings repository initialized"
+    LLM_CRYPTO_KEY_EMPTY = (
+        "SECRET_ENCRYPTION_KEY is empty — generated a throwaway in-memory Fernet key. "
+        "Set SECRET_ENCRYPTION_KEY in production to persist encrypted API keys across restarts."
+    )

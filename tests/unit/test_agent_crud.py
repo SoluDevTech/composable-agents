@@ -340,9 +340,7 @@ class TestUpdateAgentConfigUseCase:
     # New: description update + dependent agents invalidation on update.
     # ------------------------------------------------------------------
 
-    async def test_updates_description_in_metadata(
-        self, use_case, mock_agent_config_repository, existing_metadata
-    ):
+    async def test_updates_description_in_metadata(self, use_case, mock_agent_config_repository, existing_metadata):
         """Should update the metadata description when the YAML provides one."""
         # Arrange
         mock_agent_config_repository.get.return_value = existing_metadata
@@ -375,15 +373,8 @@ class TestUpdateAgentConfigUseCase:
             "    description: d\n"
             "    agent_ref: X\n"
         )
-        agent_b_yaml = (
-            "name: B\n"
-            "model: claude-sonnet-4-5-20250929\n"
-        )
-        agent_x_yaml = (
-            "name: X\n"
-            "model: claude-sonnet-4-5-20250929\n"
-            'system_prompt: "You are X."\n'
-        )
+        agent_b_yaml = "name: B\nmodel: claude-sonnet-4-5-20250929\n"
+        agent_x_yaml = 'name: X\nmodel: claude-sonnet-4-5-20250929\nsystem_prompt: "You are X."\n'
 
         mock_agent_config_repository.get.return_value = AgentConfigMetadata(
             name="X",
@@ -508,10 +499,7 @@ class TestDeleteAgentConfigUseCase:
             "    description: d\n"
             "    agent_ref: X\n"
         )
-        agent_b_yaml = (
-            "name: B\n"
-            "model: claude-sonnet-4-5-20250929\n"
-        )
+        agent_b_yaml = "name: B\nmodel: claude-sonnet-4-5-20250929\n"
 
         mock_agent_config_repository.get.return_value = AgentConfigMetadata(
             name="X",
@@ -547,13 +535,32 @@ class TestGetAgentConfigUseCase:
     """Tests for GetAgentConfigUseCase."""
 
     @pytest.fixture
-    def use_case(self, yaml_loader, mock_agent_config_store):
+    def use_case(self, yaml_loader, mock_agent_config_store, mock_agent_config_repository):
         return GetAgentConfigUseCase(
             config_loader=yaml_loader,
             config_store=mock_agent_config_store,
+            config_repository=mock_agent_config_repository,
         )
 
-    async def test_returns_config_with_name_when_found(self, use_case, mock_agent_config_store):
+    @pytest.fixture
+    def repo_returns_test_agent(self, mock_agent_config_repository):
+        """Make the repository's RLS-filtered ``get`` return a test-agent metadata row."""
+        from datetime import UTC, datetime
+
+        from src.domain.entities.agent_config_metadata import AgentConfigMetadata
+
+        mock_agent_config_repository.get.return_value = AgentConfigMetadata(
+            name="test-agent",
+            model="claude-sonnet-4-5-20250929",
+            minio_path="test-agent.yaml",
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+            description=None,
+            user_id="",
+        )
+        return mock_agent_config_repository
+
+    async def test_returns_config_with_name_when_found(self, use_case, mock_agent_config_store, repo_returns_test_agent):
         """Should return parsed config with the agent name."""
         # Arrange
         mock_agent_config_store.get.return_value = VALID_YAML
@@ -564,7 +571,7 @@ class TestGetAgentConfigUseCase:
         # Assert
         assert result.name == "test-agent"
 
-    async def test_returns_config_with_model_when_found(self, use_case, mock_agent_config_store):
+    async def test_returns_config_with_model_when_found(self, use_case, mock_agent_config_store, repo_returns_test_agent):
         """Should return parsed config with the YAML model."""
         # Arrange
         mock_agent_config_store.get.return_value = VALID_YAML
@@ -575,7 +582,7 @@ class TestGetAgentConfigUseCase:
         # Assert
         assert result.model == "claude-sonnet-4-5-20250929"
 
-    async def test_returns_config_with_system_prompt_when_found(self, use_case, mock_agent_config_store):
+    async def test_returns_config_with_system_prompt_when_found(self, use_case, mock_agent_config_store, repo_returns_test_agent):
         """Should return parsed config with the YAML system_prompt."""
         # Arrange
         mock_agent_config_store.get.return_value = VALID_YAML
@@ -586,8 +593,8 @@ class TestGetAgentConfigUseCase:
         # Assert
         assert result.system_prompt == "You are a test agent."
 
-    async def test_fetches_yaml_from_store_with_name(self, use_case, mock_agent_config_store):
-        """Should fetch the YAML from the store with the agent name."""
+    async def test_fetches_yaml_from_store_with_name(self, use_case, mock_agent_config_store, repo_returns_test_agent):
+        """Should fetch the YAML from the store with the agent name resolved from metadata."""
         # Arrange
         mock_agent_config_store.get.return_value = VALID_YAML
 
@@ -596,6 +603,23 @@ class TestGetAgentConfigUseCase:
 
         # Assert
         mock_agent_config_store.get.assert_awaited_once_with("test-agent")
+
+    async def test_raises_agent_not_found_when_repository_says_not_owned(
+        self, use_case, mock_agent_config_repository, mock_agent_config_store
+    ):
+        """Should raise AgentNotFoundError (not fetch from MinIO) when the agent
+        is not visible to the current user (RLS-filtered repository returns 404).
+        This prevents cross-user leaks via the shared MinIO bucket.
+        """
+        from src.domain.errors.agent import AgentNotFoundError
+
+        mock_agent_config_repository.get.side_effect = AgentNotFoundError("not found")
+
+        with pytest.raises(AgentNotFoundError):
+            await use_case.execute(name="someone-elsses-agent")
+
+        # MinIO must never be consulted when ownership check fails.
+        mock_agent_config_store.get.assert_not_awaited()
 
 
 class TestListAgentConfigsUseCase:

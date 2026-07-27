@@ -10,12 +10,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.application.routes.agents import router as agents_router
+from src.application.routes.api_keys import router as api_keys_router
 from src.application.routes.chat import router as chat_router
 from src.application.routes.health import router as health_router
 from src.application.routes.prompt import router as prompt_router
 from src.application.routes.store import router as store_router
 from src.application.routes.threads import router as threads_router
 from src.application.routes.trace import router as trace_router
+from src.application.routes.user_llm_settings import router as user_llm_settings_router
 from src.application.routes.websocket import router as websocket_router
 from src.config import Settings
 from src.dependencies import (
@@ -29,13 +31,14 @@ from src.domain.errors.agent import AgentConfigAlreadyExistsError, AgentError, A
 from src.domain.errors.base import DomainError
 from src.domain.errors.config import ConfigError, ConfigNotFoundError, ConfigValidationError
 from src.domain.errors.hitl import InvalidHitlActionError
+from src.domain.errors.llm import LlmNotConfiguredError
 from src.domain.errors.mcp import McpError
 from src.domain.errors.prompt import (
     PromptAlreadyExistsError,
     PromptManagerUnavailableError,
     PromptNotFoundError,
 )
-from src.domain.errors.security import InvalidApiKeyError
+from src.domain.errors.security import AuthenticationError, InvalidApiKeyError
 from src.domain.errors.storage import StorageError
 from src.domain.errors.store_file import StoreFileNotFoundError
 from src.domain.errors.thread import ThreadNotFoundError
@@ -112,14 +115,19 @@ app.include_router(health_router)
 # because FastAPI APIRouter(dependencies=...) does not apply to WebSocket endpoints.
 app.include_router(websocket_router)
 
-# All non-WebSocket routes except health are protected behind the API key check.
-protected = APIRouter(dependencies=[Depends(security.verify_api_key)])
+# All non-WebSocket routes except health are protected behind dual auth
+# (JWT bearer token OR per-user API key) via verify_credentials. The
+# master-key verify_api_key stays available for backward-compat and is still
+# used by the WebSocket router's fallback path.
+protected = APIRouter(dependencies=[Depends(security.verify_credentials)])
 protected.include_router(threads_router)
 protected.include_router(chat_router)
 protected.include_router(trace_router)
 protected.include_router(agents_router)
 protected.include_router(prompt_router)
 protected.include_router(store_router)
+protected.include_router(api_keys_router)
+protected.include_router(user_llm_settings_router)
 app.include_router(protected)
 
 
@@ -216,6 +224,18 @@ async def invalid_api_key_handler(_request: Request, exc: InvalidApiKeyError) ->
     return _error_response(exc)
 
 
+def authentication_error_handler(_request: Request, exc: AuthenticationError) -> JSONResponse:
+    """Map :class:`AuthenticationError` (raised by verify_credentials) to 401."""
+    logger.warning("Authentication failed: %s", exc.detail)
+    return _error_response(exc)
+
+
+def llm_not_configured_handler(_request: Request, exc: LlmNotConfiguredError) -> JSONResponse:
+    """Map :class:`LlmNotConfiguredError` (no LLM provider configured) to 422."""
+    logger.warning("LLM not configured: %s", exc.detail)
+    return _error_response(exc)
+
+
 # Register one handler per domain error type explicitly. Each handler reads the
 # exception's own status_code/detail, so no separate error->HTTP mapping table
 # is required. Most-specific types are registered first.
@@ -234,6 +254,8 @@ app.add_exception_handler(PromptNotFoundError, prompt_not_found_handler)
 app.add_exception_handler(PromptAlreadyExistsError, prompt_already_exists_handler)
 app.add_exception_handler(PromptManagerUnavailableError, prompt_manager_unavailable_handler)
 app.add_exception_handler(InvalidApiKeyError, invalid_api_key_handler)
+app.add_exception_handler(AuthenticationError, authentication_error_handler)
+app.add_exception_handler(LlmNotConfiguredError, llm_not_configured_handler)
 app.add_exception_handler(DomainError, domain_error_handler)
 
 

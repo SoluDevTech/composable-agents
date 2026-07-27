@@ -195,4 +195,5 @@ mcp_servers:
     transport: http
     url: https://raganything.soludev.tech/classical/mcp
     headers:
-      X-API-Key: "${MCP_RAGANYTHING_API_KEY}"
+      Authorization: "Bearer ${USER_JWT}"
+      X-API-Key: "${USER_API_KEY}"

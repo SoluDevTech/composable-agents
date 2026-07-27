@@ -169,8 +169,6 @@ class TestPostgresAgentConfigRepository:
         await repository.save(metadata)
 
         # Assert — read the raw ORM row to confirm the column was written
-        result = await db_session.execute(
-            select(AgentConfigModel).where(AgentConfigModel.name == "desc-agent")
-        )
+        result = await db_session.execute(select(AgentConfigModel).where(AgentConfigModel.name == "desc-agent"))
         model = result.scalar_one()
         assert model.description == "Persisted description"

@@ -73,6 +73,7 @@ class ErrorMessage(StrEnum):
     STORAGE_FAILED_DELETE_AGENT_CONFIG = "Failed to delete agent config metadata '{name}': {error}"
     STORAGE_FAILED_EXISTS_AGENT_CONFIG = "Failed to check existence of agent config '{name}': {error}"
     STORAGE_FAILED_PERSIST_STREAM = "Failed to persist AI message after stream: {error}"
+    STORAGE_FAILED_API_KEY_OP = "Failed to perform API key operation: {error}"
 
     # --- HITL ---
     INVALID_HITL_ACTION = "Unsupported HITL action: {action}"
@@ -93,6 +94,17 @@ class ErrorMessage(StrEnum):
     API_KEY_UNAUTHORIZED = "The Api Key you provided is unauthorized"
     API_KEY_EMPTY = "The Api Key is empty"
     API_KEY_DISABLED = "Auth by Api key is disabled"
+    API_KEY_NOT_FOUND = "API key not found: {key_id}"
+    API_KEY_NAME_REQUIRED = "API key name is required"
+
+    # --- Auth (dual JWT / API key) ---
+    AUTH_INVALID_CREDENTIALS = "Invalid or missing credentials"
+    AUTH_JWT_INVALID = "Invalid JWT token"
+    AUTH_API_KEY_INVALID = "Invalid API key"
+
+    # --- LLM credentials (per user) ---
+    LLM_NOT_CONFIGURED = "No LLM provider configured for user {user_id}. Configure via PUT /api/v1/settings/llm."
+    LLM_SETTINGS_NOT_FOUND = "LLM settings not found for user {user_id}"
 
 
 def tmpl(template: str) -> Template:
