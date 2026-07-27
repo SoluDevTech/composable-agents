@@ -6,6 +6,7 @@ from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import StoreBackend
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.memory import InMemoryStore
@@ -18,9 +19,55 @@ from src.domain.errors.config import ConfigError
 from src.domain.logging.messages import LogMessage
 from src.domain.ports.mcp_tool_loader import McpToolLoader
 from src.domain.ports.prompt_manager import PromptManager
+from src.infrastructure.deepagent.namespace import user_namespaced
 from src.infrastructure.deepagent.schema_utils import schema_to_pydantic_model
 
 logger = logging.getLogger(__name__)
+
+
+async def _resolve_model(
+    model_name: str,
+    llm_credentials_resolver: Callable[[str], Awaitable[tuple[str, str] | None]] | None,
+):
+    """Resolve the ``model`` argument passed to ``create_deep_agent``.
+
+    * When ``llm_credentials_resolver`` is provided AND ``current_user_id`` is
+      set (authenticated request), resolve the user's ``(base_url, api_key)``
+      and build a per-user :class:`ChatOpenAI` instance (passed by reference).
+    * When the resolver returns ``None`` for a set user, raise
+      :class:`LlmNotConfiguredError` (422).
+    * When the resolver is ``None`` OR ``current_user_id`` is unset (no auth
+      context, tests), fall back to the env-based string model so existing
+      factory / registry / runner tests stay green.
+
+    Args:
+        model_name: The configured model name (e.g. ``claude-sonnet-4-5``).
+        llm_credentials_resolver: Optional async callable resolving the
+            current user's LLM credentials.
+
+    Returns:
+        Either a model string (env fallback) or a :class:`ChatOpenAI` instance
+        (per-user credentials).
+
+    Raises:
+        LlmNotConfiguredError: When the user is authenticated but has no
+            configured LLM provider.
+    """
+    from src.domain.errors.llm import LlmNotConfiguredError
+    from src.domain.errors.messages import ErrorMessage
+    from src.infrastructure.database.rls_context import current_user_id
+
+    user_id = current_user_id.get()
+    if llm_credentials_resolver is None or user_id is None:
+        # Env-based fallback (existing behaviour).
+        return model_name
+
+    credentials = await llm_credentials_resolver(user_id)
+    if credentials is None:
+        raise LlmNotConfiguredError(ErrorMessage.LLM_NOT_CONFIGURED.format(user_id=user_id))
+
+    base_url, api_key = credentials
+    return ChatOpenAI(model=model_name, base_url=base_url, api_key=api_key)
 
 
 def _to_pg_conn_string(database_url: str) -> str:
@@ -185,13 +232,17 @@ def _resolve_backend(store):
     from the shared LangGraph store (Postgres). This ensures skills and
     memories created via the Store File API are visible to all agents.
 
+    The namespace is resolved per-request via ``user_namespaced("filesystem")``
+    so each authenticated user's skills/memories are isolated. When no user
+    context is set (tests), the namespace falls back to ``("filesystem",)``.
+
     Args:
         store: The shared store instance (Postgres or InMemoryStore).
 
     Returns:
         A ``StoreBackend`` instance.
     """
-    return StoreBackend(store=store, namespace=lambda _r: ("filesystem",))
+    return StoreBackend(store=store, namespace=lambda _r: user_namespaced("filesystem"))
 
 
 def _resolve_interrupt_on(config: AgentConfig) -> dict | None:
@@ -376,33 +427,113 @@ async def _prepare_agent_namespace(
     Returns:
         Tuple of (skills_source_path, memory_paths) for create_deep_agent.
     """
-    ns = ("filesystem",)
+    ns = user_namespaced("filesystem")
     agent_skills_dir = f"/agents/{agent_name}/skills/"
     agent_memories_dir = f"/agents/{agent_name}/memories/"
 
-    # 1. Cleanup: delete files in agent namespace that are no longer selected
-    existing_items = await store.asearch(ns, limit=1000)
     selected_skill_names = {s.rstrip("/").split("/")[-1] for s in skills}
     selected_memory_files = {m.split("/")[-1] for m in memory}
 
-    for item in existing_items:
-        if item.key.startswith(agent_skills_dir):
-            remainder = item.key[len(agent_skills_dir) :]
-            skill_name = remainder.split("/")[0] if "/" in remainder else remainder
-            if skill_name not in selected_skill_names:
-                try:
-                    await store.adelete(ns, item.key)
-                except Exception:
-                    logger.exception("Failed to delete stale agent skill: %s", item.key)
-        elif item.key.startswith(agent_memories_dir):
-            filename = item.key[len(agent_memories_dir) :]
-            if filename not in selected_memory_files:
-                try:
-                    await store.adelete(ns, item.key)
-                except Exception:
-                    logger.exception("Failed to delete stale agent memory: %s", item.key)
+    await _cleanup_stale_agent_files(
+        store, ns, agent_skills_dir, agent_memories_dir, selected_skill_names, selected_memory_files
+    )
+    await _copy_skills_to_agent_ns(store, ns, agent_skills_dir, skills)
+    new_memory_paths = await _copy_memories_to_agent_ns(store, ns, agent_memories_dir, memory)
 
-    # 2. Copy selected skills to agent namespace
+    return agent_skills_dir, new_memory_paths
+
+
+async def _cleanup_stale_agent_files(
+    store,
+    ns: tuple[str, ...],
+    agent_skills_dir: str,
+    agent_memories_dir: str,
+    selected_skill_names: set[str],
+    selected_memory_files: set[str],
+) -> None:
+    """Delete files in agent namespace that are no longer selected.
+
+    Args:
+        store: The shared LangGraph BaseStore instance.
+        ns: The resolved user namespace.
+        agent_skills_dir: Agent skills directory prefix.
+        agent_memories_dir: Agent memories directory prefix.
+        selected_skill_names: Currently selected skill names.
+        selected_memory_files: Currently selected memory filenames.
+    """
+    existing_items = await store.asearch(ns, limit=1000)
+    for item in existing_items:
+        await _maybe_delete_stale_item(
+            store,
+            ns,
+            item,
+            agent_skills_dir,
+            agent_memories_dir,
+            selected_skill_names,
+            selected_memory_files,
+        )
+
+
+async def _maybe_delete_stale_item(
+    store,
+    ns: tuple[str, ...],
+    item,
+    agent_skills_dir: str,
+    agent_memories_dir: str,
+    selected_skill_names: set[str],
+    selected_memory_files: set[str],
+) -> None:
+    """Delete a single store item if it is a stale skill or memory.
+
+    Args:
+        store: The shared LangGraph BaseStore instance.
+        ns: The resolved user namespace.
+        item: A store item to evaluate.
+        agent_skills_dir: Agent skills directory prefix.
+        agent_memories_dir: Agent memories directory prefix.
+        selected_skill_names: Currently selected skill names.
+        selected_memory_files: Currently selected memory filenames.
+    """
+    if item.key.startswith(agent_skills_dir):
+        remainder = item.key[len(agent_skills_dir) :]
+        skill_name = remainder.split("/")[0] if "/" in remainder else remainder
+        if skill_name not in selected_skill_names:
+            await _safe_delete(store, ns, item.key, "stale agent skill")
+    elif item.key.startswith(agent_memories_dir):
+        filename = item.key[len(agent_memories_dir) :]
+        if filename not in selected_memory_files:
+            await _safe_delete(store, ns, item.key, "stale agent memory")
+
+
+async def _safe_delete(store, ns: tuple[str, ...], key: str, label: str) -> None:
+    """Best-effort delete of a store key, logging failures instead of raising.
+
+    Args:
+        store: The shared LangGraph BaseStore instance.
+        ns: The resolved user namespace.
+        key: The store key to delete.
+        label: Human-readable label for the log message.
+    """
+    try:
+        await store.adelete(ns, key)
+    except Exception:
+        logger.exception("Failed to delete %s: %s", label, key)
+
+
+async def _copy_skills_to_agent_ns(
+    store,
+    ns: tuple[str, ...],
+    agent_skills_dir: str,
+    skills: list[str],
+) -> None:
+    """Copy selected skills' ``SKILL.md`` into the agent namespace.
+
+    Args:
+        store: The shared LangGraph BaseStore instance.
+        ns: The resolved user namespace.
+        agent_skills_dir: Agent skills directory prefix.
+        skills: List of skill directory paths.
+    """
     for skill_dir in skills:
         skill_name = skill_dir.rstrip("/").split("/")[-1]
         src_path = f"{skill_dir.rstrip('/')}/SKILL.md"
@@ -411,7 +542,24 @@ async def _prepare_agent_namespace(
         if item is not None:
             await store.aput(ns, dst_path, item.value)
 
-    # 3. Copy selected memories to agent namespace
+
+async def _copy_memories_to_agent_ns(
+    store,
+    ns: tuple[str, ...],
+    agent_memories_dir: str,
+    memory: list[str],
+) -> list[str]:
+    """Copy selected memory files into the agent namespace.
+
+    Args:
+        store: The shared LangGraph BaseStore instance.
+        ns: The resolved user namespace.
+        agent_memories_dir: Agent memories directory prefix.
+        memory: List of memory file paths.
+
+    Returns:
+        List of destination paths written into the agent namespace.
+    """
     new_memory_paths: list[str] = []
     for mem_path in memory:
         filename = mem_path.split("/")[-1]
@@ -420,8 +568,7 @@ async def _prepare_agent_namespace(
         if item is not None:
             await store.aput(ns, dst_path, item.value)
         new_memory_paths.append(dst_path)
-
-    return agent_skills_dir, new_memory_paths
+    return new_memory_paths
 
 
 async def create_agent_from_config(
@@ -429,6 +576,7 @@ async def create_agent_from_config(
     mcp_tool_loader: McpToolLoader | None = None,
     prompt_manager: PromptManager | None = None,
     config_resolver: Callable[[str], Awaitable[AgentConfig]] | None = None,
+    llm_credentials_resolver: Callable[[str], Awaitable[tuple[str, str] | None]] | None = None,
 ):
     """Create a compiled Deep Agent from configuration.
 
@@ -438,6 +586,15 @@ async def create_agent_from_config(
         prompt_manager: Optional prompt manager for loading system prompts.
         config_resolver: Optional async callable used to resolve subagent
             ``agent_ref`` references into full ``AgentConfig`` objects.
+        llm_credentials_resolver: Optional async callable returning
+            ``(base_url, api_key_plaintext)`` for the current user. When
+            provided AND ``current_user_id`` is set, a per-user
+            :class:`ChatOpenAI` instance is built with these credentials and
+            passed to ``create_deep_agent`` instead of the string model. When
+            the resolver returns ``None`` for a set user,
+            :class:`LlmNotConfiguredError` is raised. When the resolver is
+            ``None`` OR ``current_user_id`` is unset (no auth context, tests),
+            the env-based string model fallback is used (current behaviour).
 
     Returns:
         Tuple of (compiled agent graph, response_format_model or None).
@@ -455,30 +612,13 @@ async def create_agent_from_config(
     # per-agent store_backend setting.
     store = await _get_shared_store()
 
-    local_tools = _resolve_tools(config)
-    mcp_tools: list = []
-    if config.mcp_servers and mcp_tool_loader:
-        logger.info(LogMessage.AGENT_MCP_TOOLS_LOADING, config.name, len(config.mcp_servers))
-        mcp_tools = await mcp_tool_loader.load_tools(config.mcp_servers)
-        logger.info(LogMessage.AGENT_MCP_TOOLS_LOADED, len(mcp_tools), config.name)
-    all_tools = (local_tools or []) + mcp_tools if (local_tools or mcp_tools) else None
-    logger.info(LogMessage.AGENT_TOOLS_TOTAL, config.name, len(all_tools) if all_tools else 0)
-
+    all_tools = await _resolve_agent_tools(config, mcp_tool_loader)
     system_prompt = await get_system_prompt_from_phoenix(config.name, prompt_manager) if prompt_manager else None
-
-    # Prepare agent namespace: copy selected skills and memories to
-    # /agents/{name}/skills/ and /agents/{name}/memories/ so that
-    # SkillsMiddleware only loads the selected ones.
-    skills_source: str | None = None
-    memory_paths: list[str] | None = None
-    if config.skills:
-        skills_source, memory_paths = await _prepare_agent_namespace(store, config.name, config.skills, config.memory)
-    elif config.memory:
-        _, memory_paths = await _prepare_agent_namespace(store, config.name, [], config.memory)
+    skills_source, memory_paths = await _resolve_skills_and_memory(store, config)
 
     kwargs = {
         "name": config.name,
-        "model": config.model,
+        "model": await _resolve_model(config.model, llm_credentials_resolver),
         "system_prompt": system_prompt if system_prompt else config.system_prompt,
         "tools": all_tools,
         "checkpointer": checkpointer,
@@ -509,6 +649,52 @@ async def create_agent_from_config(
         raise
     logger.info(LogMessage.AGENT_CREATED, config.name)
     return graph, response_format_model
+
+
+async def _resolve_agent_tools(
+    config: AgentConfig,
+    mcp_tool_loader: McpToolLoader | None,
+) -> list | None:
+    """Resolve an agent's combined local + MCP tools list.
+
+    Args:
+        config: The agent configuration.
+        mcp_tool_loader: Optional MCP tool loader for remote tools.
+
+    Returns:
+        Combined tools list or ``None`` when the agent has no tools.
+    """
+    local_tools = _resolve_tools(config)
+    mcp_tools: list = []
+    if config.mcp_servers and mcp_tool_loader:
+        logger.info(LogMessage.AGENT_MCP_TOOLS_LOADING, config.name, len(config.mcp_servers))
+        mcp_tools = await mcp_tool_loader.load_tools(config.mcp_servers)
+        logger.info(LogMessage.AGENT_MCP_TOOLS_LOADED, len(mcp_tools), config.name)
+    all_tools = (local_tools or []) + mcp_tools if (local_tools or mcp_tools) else None
+    logger.info(LogMessage.AGENT_TOOLS_TOTAL, config.name, len(all_tools) if all_tools else 0)
+    return all_tools
+
+
+async def _resolve_skills_and_memory(
+    store,
+    config: AgentConfig,
+) -> tuple[str | None, list[str] | None]:
+    """Prepare the agent namespace and resolve skills/memory paths.
+
+    Args:
+        store: The shared LangGraph BaseStore instance.
+        config: The agent configuration.
+
+    Returns:
+        Tuple of ``(skills_source, memory_paths)``; both are ``None`` when
+        the agent declares neither skills nor memory.
+    """
+    if config.skills:
+        return await _prepare_agent_namespace(store, config.name, config.skills, config.memory)
+    if config.memory:
+        _, memory_paths = await _prepare_agent_namespace(store, config.name, [], config.memory)
+        return None, memory_paths
+    return None, None
 
 
 # helper to get system_prompt from Phoenix

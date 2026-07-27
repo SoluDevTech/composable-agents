@@ -73,4 +73,5 @@ mcp_servers:
   transport: http
   url: http://raganything-api:8000/classical/mcp
   headers:
-    X-API-Key: "${MCP_RAGANYTHING_API_KEY}"
+    Authorization: "Bearer ${USER_JWT}"
+    X-API-Key: "${USER_API_KEY}"

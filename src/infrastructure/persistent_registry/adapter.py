@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 
 from src.domain.entities.agent_config import AgentConfig
 from src.domain.logging.messages import LogMessage
@@ -30,6 +31,7 @@ class PersistentAgentRegistry(AgentRegistry):
         prompt_manager: PromptManager | None = None,
         stream_idle_timeout: float = 120.0,
         invoke_timeout: float = 120.0,
+        llm_credentials_resolver: Callable[[str], Awaitable[tuple[str, str] | None]] | None = None,
     ) -> None:
         self._config_loader = config_loader
         self._config_store = config_store
@@ -39,6 +41,7 @@ class PersistentAgentRegistry(AgentRegistry):
         self._prompt_manager = prompt_manager
         self._stream_idle_timeout = stream_idle_timeout
         self._invoke_timeout = invoke_timeout
+        self._llm_credentials_resolver = llm_credentials_resolver
         self._runners: dict[str, AgentRunner] = {}
         self._lock = asyncio.Lock()
 
@@ -71,7 +74,11 @@ class PersistentAgentRegistry(AgentRegistry):
                 return self._config_loader.load_from_string(referenced_yaml)
 
             graph, response_format_model = await create_agent_from_config(
-                config, self._mcp_tool_loader, self._prompt_manager, config_resolver=config_resolver
+                config,
+                self._mcp_tool_loader,
+                self._prompt_manager,
+                config_resolver=config_resolver,
+                llm_credentials_resolver=self._llm_credentials_resolver,
             )
             runner = DeepAgentRunner(
                 graph,

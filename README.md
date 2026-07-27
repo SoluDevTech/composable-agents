@@ -6,6 +6,74 @@ Configure Deep Agent LangGraph agents in YAML and expose them via FastAPI.
 
 The server supports **multi-agent mode**: multiple agents are defined as separate YAML files in an `agents/` directory, each thread is bound to a specific agent at creation time, and agents are lazily instantiated on first use. Sub-agents declared in the `subagents` config are fully traced: every event emitted by a sub-agent carries its name in the `source` field of the corresponding `TraceEvent`, so the client can group events per sub-agent (see [TraceEvent](#traceevent-format)).
 
+The server enforces **per-user isolation** via **dual authentication** (JWT via Logto OIDC **or** per-user API keys), **PostgreSQL Row-Level Security** (RLS) on every per-user table, **per-user LLM credentials** (each user brings their own provider/key), and **per-user LangGraph Store namespaces** for skills and memories. See [Authentication](#authentication), [Row-Level Security (RLS)](#row-level-security-rls), [Per-User LLM Settings](#per-user-llm-settings), and [Store Namespaces per User](#store-namespaces-per-user).
+
+---
+
+## Authentication
+
+composable-agents uses **dual authentication**: every protected endpoint accepts **either** a JWT bearer token (validated against the Logto OIDC JWKS) **or** a per-user API key. The chosen credential determines the authenticated `user_id` that is propagated to PostgreSQL Row-Level Security and to the per-user LLM credential resolver.
+
+### Methods
+
+| Method | Header | `user_id` source | Validated by |
+|---|---|---|---|
+| **JWT** | `Authorization: Bearer <jwt>` | the JWT `sub` claim | Logto OIDC JWKS (`LOGTO_URL` + `JWT_AUDIENCE`) |
+| **API key** | `X-API-Key: cpk_...` | the `user_id` column on the matching `api_keys` row | SHA-256 hash lookup in the `api_keys` table |
+
+The two methods are mutually exclusive on a given request — send **one** of the two headers. If neither validates, the server returns `401 {"detail": "Invalid or missing credentials"}`.
+
+> **Deprecated for auth:** The old single master `OPENAI_API_KEY` / `API_KEY` settings are no longer used to authenticate requests. `OPENAI_API_KEY` is also no longer used to call the LLM — each user configures their own provider via [Per-User LLM Settings](#per-user-llm-settings).
+
+### Obtaining a JWT (production)
+
+In production, the user authenticates against **Logto** (via an oauth2-proxy in front of composable-agents) and receives a JWT. The `Authorization: Bearer <jwt>` header is then forwarded to composable-agents, which validates the signature against the Logto JWKS and the `aud` claim against `JWT_AUDIENCE`. The JWT `sub` becomes the `user_id` for RLS and per-user LLM resolution.
+
+### Obtaining a per-user API key
+
+A user first authenticates with a JWT, then creates an API key they can reuse for script/automation use:
+
+```bash
+# Requires a JWT first (the user must be logged in via Logto).
+curl -X POST http://localhost:8000/api/v1/api-keys \
+  -H "Authorization: Bearer <jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-ci-key"}'
+# → 201 Created
+# {
+#   "id": "8f3c...",
+#   "name": "my-ci-key",
+#   "key_prefix": "cpk_abcde",
+#   "plaintext": "cpk_abcdefghijklmnopqrstuvwxyz0123456789...",  # shown ONCE
+#   "created_at": "2026-07-27T10:00:00Z"
+# }
+```
+
+The plaintext is returned **exactly once**; only its SHA-256 hash is persisted in `api_keys` (column `key_hash`). Store the plaintext securely — it cannot be recovered. The `cpk_...` prefix identifies composable-agents keys.
+
+### QA / local mode (no Logto)
+
+In QA and local dev, there is no Logto instance. The QA stack seeds two API keys directly in the `api_keys` table via the `composable-agents-qa-init` one-shot service (see [Testing](#testing)). The two seed keys are:
+
+| `user_id` | plaintext `X-API-Key` |
+|---|---|
+| `qa-user-1` | `cpk_qa_test_key_12345` |
+| `qa-user-2` | `cpk_qa_test_key_67890` |
+
+When `LOGTO_URL` is empty, the JWT path is disabled and only the per-user API key path is active.
+
+### Authenticated request examples
+
+```bash
+# JWT
+curl http://localhost:8000/api/v1/agents \
+  -H "Authorization: Bearer <jwt>"
+
+# Per-user API key
+curl http://localhost:8000/api/v1/agents \
+  -H "X-API-Key: cpk_..."
+```
+
 ---
 
 ## Quickstart (5 minutes)
@@ -14,8 +82,9 @@ The server supports **multi-agent mode**: multiple agents are defined as separat
 
 - Python 3.11+
 - [UV](https://docs.astral.sh/uv/) package manager
-- PostgreSQL 15+ (required for thread and agent config persistence)
-- An API key for at least one LLM provider (Anthropic, OpenAI, or Google)
+- PostgreSQL 15+ (required for thread, agent config, API key, and LLM-settings persistence, with Row-Level Security enabled)
+- A **Logto** instance (OIDC issuer) for JWT validation in production — optional in QA/local (see [Authentication](#authentication))
+- Each end-user configures their own LLM provider credentials via [Per-User LLM Settings](#per-user-llm-settings); there is no longer a server-wide LLM key
 
 ### Installation
 
@@ -26,16 +95,26 @@ uv sync
 cp .env.example .env
 ```
 
-Edit `.env` and add your API key and database credentials:
+Edit `.env` and add your database and dual-auth credentials:
 
 ```dotenv
-OPENAI_API_KEY=sk-...
-
 # PostgreSQL (required)
 DATABASE_URL=postgresql://raganything:raganything@localhost:5433/raganything
+
+# Dual auth (JWT via Logto OIDC + per-user API keys)
+# Leave LOGTO_URL empty in local QA (only X-API-Key auth is used).
+# In prod, set both to enable JWT validation.
+LOGTO_URL=
+JWT_AUDIENCE=
+
+# Fernet key used to encrypt per-user LLM API keys at rest.
+# Generate one with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+SECRET_ENCRYPTION_KEY=<your-fernet-key>
 ```
 
 > **⚠️ Breaking change:** The `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DATABASE` environment variables have been replaced by a single `DATABASE_URL` variable. If you are upgrading from a previous version, construct your `DATABASE_URL` as `postgresql://<user>:<password>@<host>:<port>/<database>` and remove the old `POSTGRES_*` variables from your `.env`.
+
+> **⚠️ Breaking change (auth):** The single master `X-API-Key` / `API_KEY` model has been replaced by **dual JWT + per-user API keys**. The `OPENAI_API_KEY` env var is no longer used to call the LLM — each user configures their own provider via `PUT /api/v1/settings/llm`. See [Authentication](#authentication) and [Per-User LLM Settings](#per-user-llm-settings).
 
 > **⚠️ Breaking change (trace events):** The legacy `StreamEvent` SSE format and the `messages` table have been removed. The `/stream` and WebSocket endpoints now emit `TraceEvent` JSON objects. See [Breaking Changes](#breaking-changes) for migration details.
 
@@ -71,30 +150,37 @@ Agents are not loaded into memory until a thread references them for the first t
 
 ### Test with curl
 
+> Replace `<API_KEY>` with a per-user API key (e.g. `cpk_qa_test_key_12345` in QA) or use `-H "Authorization: Bearer <jwt>"`. See [Authentication](#authentication).
+
 ```bash
-# Health check
+# Health check (public, no auth)
 curl http://localhost:8000/health
 
 # Create a thread bound to an agent (agent_name must match a YAML filename in agents/)
 curl -X POST http://localhost:8000/api/v1/threads \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"agent_name": "my-agent"}'
 
 # Send a message (replace <thread_id> with the id from the previous response)
 curl -X POST http://localhost:8000/api/v1/chat/<thread_id> \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"message": "Hello, what can you do?"}'
 
 # Stream a message (yields TraceEvent JSON objects, one per SSE line, ends with [DONE])
 curl -N -X POST http://localhost:8000/api/v1/chat/<thread_id>/stream \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"message": "Hello, what can you do?"}'
 
 # Get the full thread history (thread + turns grouped by turn_id)
-curl http://localhost:8000/api/v1/threads/<thread_id>/history
+curl http://localhost:8000/api/v1/threads/<thread_id>/history \
+  -H "X-API-Key: <API_KEY>"
 
 # Get the flat trace of events for a thread
-curl http://localhost:8000/api/v1/threads/<thread_id>/trace
+curl http://localhost:8000/api/v1/threads/<thread_id>/trace \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 ---
@@ -116,30 +202,36 @@ composable-agents now supports running **multiple agents simultaneously**. Each 
 |---|---|---|
 | `AgentRegistry` (port) | `src/domain/ports/agent_registry.py` | Abstract interface for retrieving agent runners by name. |
 | `DeepAgentRegistry` (adapter) | `src/infrastructure/deepagent/registry.py` | Scans `agents/` directory, creates and caches runners on demand. |
-| `AgentNotFoundError` | `src/domain/exceptions.py` | Raised when a requested agent name has no corresponding YAML file. |
+| `AgentNotFoundError` | `src/domain/errors/agent.py` | Raised when a requested agent name has no corresponding YAML file. |
 
 ### Example: two agents, two threads
+
+> All requests require `X-API-Key` or `Authorization: Bearer` (see [Authentication](#authentication)).
 
 ```bash
 # Create a thread using the research assistant agent
 curl -X POST http://localhost:8000/api/v1/threads \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"agent_name": "research-assistant"}'
 # Returns: {"id": "thread-1-uuid", "agent_name": "research-assistant", ...}
 
 # Create another thread using the code reviewer agent
 curl -X POST http://localhost:8000/api/v1/threads \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"agent_name": "code-reviewer"}'
 # Returns: {"id": "thread-2-uuid", "agent_name": "code-reviewer", ...}
 
 # Each thread talks to its own agent
 curl -X POST http://localhost:8000/api/v1/chat/<thread-1-uuid> \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"message": "Summarize the latest research on transformers."}'
 
 curl -X POST http://localhost:8000/api/v1/chat/<thread-2-uuid> \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"message": "Review this Python function for security issues."}'
 ```
 
@@ -374,6 +466,33 @@ MCP_RAGANYTHING_API_KEY=your-shared-secret-key
 
 The value must match the `API_KEY` configured on the [mcp-raganything](https://github.com/soludev/mcp-raganything) server.
 
+### Per-user credential propagation (`${USER_JWT}` / `${USER_API_KEY}`)
+
+In addition to env-var placeholders, MCP server `headers` support two **per-user** placeholders that are resolved from the authenticated caller's credential at agent-build time:
+
+| Placeholder | Resolved to | When |
+|---|---|---|
+| `${USER_JWT}` | the caller's raw JWT (without `Bearer ` prefix) | the request was authenticated with a JWT |
+| `${USER_API_KEY}` | the caller's raw per-user API key (`cpk_...`) | the request was authenticated with an API key |
+
+This lets an agent forward the caller's identity to a downstream MCP server (e.g. raganything) without storing a shared secret, so the downstream server can apply its own per-user RLS:
+
+```yaml
+mcp_servers:
+  - name: raganything
+    transport: http
+    url: https://raganything.soludev.tech/bricks/mcp
+    headers:
+      Authorization: "Bearer ${USER_JWT}"
+      X-API-Key: "${USER_API_KEY}"
+```
+
+Resolution rules:
+
+- The placeholder is filled with `current_credential` only when `current_auth_method` matches (`"jwt"` for `${USER_JWT}`, `"api_key"` for `${USER_API_KEY}`).
+- If the method does not match (e.g. the caller used an API key but the header uses `${USER_JWT}`), or no credential is set, the resolved value is **empty**.
+- **Empty resolved headers are dropped** from the outgoing MCP request, so the downstream server receives no spurious empty auth header.
+
 ---
 
 ## Middlewares
@@ -423,11 +542,19 @@ The `StoreBackend` is wired with a per-run namespace via `StoreBackend(store=sto
 
 All endpoints are prefixed appropriately. The server runs on `http://localhost:8000` by default.
 
+> **Auth:** Every endpoint **except** `GET /health` requires either `Authorization: Bearer <jwt>` or `X-API-Key: cpk_...` (see [Authentication](#authentication)). The `X-API-Key` shown in the curl examples below is a placeholder — replace it with your per-user key. Each authenticated user only sees rows they own (see [Row-Level Security (RLS)](#row-level-security-rls)).
+
 | Method | Path | Description | Success Status |
 |---|---|---|---|
-| `GET` | `/health` | Health check | `200` |
+| `GET` | `/health` | Health check (public, no auth) | `200` |
+| `POST` | `/api/v1/api-keys` | Create a new per-user API key (returns plaintext once) | `201` |
+| `GET` | `/api/v1/api-keys` | List the authenticated user's API keys (no plaintext) | `200` |
+| `DELETE` | `/api/v1/api-keys/{key_id}` | Revoke a per-user API key (idempotent) | `204` |
+| `GET` | `/api/v1/settings/llm` | Get the authenticated user's LLM provider settings (masked key) | `200` |
+| `PUT` | `/api/v1/settings/llm` | Insert or update the authenticated user's LLM provider settings | `200` |
+| `DELETE` | `/api/v1/settings/llm` | Delete the authenticated user's LLM provider settings (idempotent) | `204` |
 | `POST` | `/api/v1/threads` | Create a new conversation thread (bound to an agent) | `201` |
-| `GET` | `/api/v1/threads` | List all threads | `200` |
+| `GET` | `/api/v1/threads` | List all threads owned by the authenticated user | `200` |
 | `GET` | `/api/v1/threads/{thread_id}` | Get a specific thread | `200` |
 | `DELETE` | `/api/v1/threads/{thread_id}` | Delete a thread | `204` |
 | `GET` | `/api/v1/threads/{thread_id}/history` | Get thread history grouped by turn (`ThreadHistory`) | `200` |
@@ -452,8 +579,9 @@ All endpoints are prefixed appropriately. The server runs on `http://localhost:8
 | Status | Condition |
 |---|---|
 | `400` | General configuration error |
+| `401` | Missing or invalid credentials (no JWT, no API key, or unknown/revoked key) |
 | `404` | Thread not found, agent not found, or config file not found |
-| `422` | Validation error (bad request body, invalid config schema) |
+| `422` | Validation error (bad request body, invalid config schema, **or no LLM provider configured for the user** — `LlmNotConfiguredError`) |
 | `502` | Agent execution error (LLM failure) |
 | `500` | Unexpected domain error |
 
@@ -476,7 +604,8 @@ Response:
 ### 2. List Available Agents
 
 ```bash
-curl http://localhost:8000/api/v1/agents
+curl http://localhost:8000/api/v1/agents \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response (`200`):
@@ -507,7 +636,8 @@ Response (`200`):
 ### 3. Get a Specific Agent Configuration
 
 ```bash
-curl http://localhost:8000/api/v1/agents/example-agent
+curl http://localhost:8000/api/v1/agents/example-agent \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response (`200`):
@@ -532,7 +662,8 @@ Response (`200`):
 If the agent does not exist:
 
 ```bash
-curl http://localhost:8000/api/v1/agents/nonexistent
+curl http://localhost:8000/api/v1/agents/nonexistent \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response (`404`):
@@ -548,6 +679,7 @@ The `agent_name` must match an existing YAML filename (without the `.yaml` exten
 ```bash
 curl -X POST http://localhost:8000/api/v1/threads \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"agent_name": "example-agent"}'
 ```
 
@@ -568,6 +700,7 @@ If the agent name does not match any YAML file:
 ```bash
 curl -X POST http://localhost:8000/api/v1/threads \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"agent_name": "nonexistent-agent"}'
 ```
 
@@ -582,6 +715,7 @@ Response (`404`):
 ```bash
 curl -X POST http://localhost:8000/api/v1/chat/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"message": "Explain the hexagonal architecture pattern in 3 sentences."}'
 ```
 
@@ -602,6 +736,7 @@ Response (`200`):
 ```bash
 curl -N -X POST http://localhost:8000/api/v1/chat/a1b2c3d4-e5f6-7890-abcd-ef1234567890/stream \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"message": "Write a haiku about programming."}'
 ```
 
@@ -665,7 +800,8 @@ This design prevents Cloudflare timeout issues (~100s on idle connections) becau
 ### 6b. Get Thread History
 
 ```bash
-curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/history
+curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/history \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response (`200`) — `ThreadHistory`:
@@ -698,7 +834,8 @@ Response (`200`) — `ThreadHistory`:
 ### 6c. Get Flat Trace
 
 ```bash
-curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/trace
+curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/trace \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response (`200`):
@@ -718,7 +855,8 @@ Returns the full flat list of `TraceEvent`s for the thread, ordered by `sequence
 ### 7. List All Threads
 
 ```bash
-curl http://localhost:8000/api/v1/threads
+curl http://localhost:8000/api/v1/threads \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response (`200`):
@@ -745,13 +883,15 @@ Response (`200`):
 ### 8. Get a Specific Thread
 
 ```bash
-curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 ### 9. List Messages in a Thread
 
 ```bash
-curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/messages
+curl http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/messages \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response (`200`):
@@ -782,6 +922,7 @@ When the agent is configured with HITL rules and a tool call is interrupted, sub
 ```bash
 curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/hitl \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{
     "tool_call_id": "call_abc123",
     "action": "approve"
@@ -805,6 +946,7 @@ Response (`200`):
 ```bash
 curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/hitl \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{
     "tool_call_id": "call_abc123",
     "action": "reject",
@@ -817,6 +959,7 @@ curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234
 ```bash
 curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/hitl \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{
     "tool_call_id": "call_abc123",
     "action": "edit",
@@ -827,7 +970,8 @@ curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234
 ### 13. Delete a Thread
 
 ```bash
-curl -X DELETE http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+curl -X DELETE http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response: `204 No Content`
@@ -841,6 +985,7 @@ Prompts are managed via a dedicated registry backed by Phoenix. Enable prompt ma
 ```bash
 curl -X POST http://localhost:8000/prompts/create \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{
     "identifier": "customer-support",
     "content": [
@@ -880,7 +1025,8 @@ Response (`200`):
 #### 14.2 List All Prompts
 
 ```bash
-curl http://localhost:8000/prompts/customer-support
+curl http://localhost:8000/prompts/customer-support \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Optional query parameters:
@@ -919,6 +1065,7 @@ Create a new version of an existing prompt:
 ```bash
 curl -X PUT http://localhost:8000/prompts/update/customer-support \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{
     "content": [
       {
@@ -955,10 +1102,12 @@ Response (`200`):
 
 ### WebSocket
 
-Connect to the WebSocket endpoint and send JSON messages:
+Connect to the WebSocket endpoint and send JSON messages. The WebSocket handshake accepts either `Authorization: Bearer <jwt>` or `X-API-Key: cpk_...` as headers; if neither validates, the server rejects the upgrade with HTTP 401.
 
 ```javascript
-const ws = new WebSocket("ws://localhost:8000/api/v1/ws/<thread_id>");
+const ws = new WebSocket("ws://localhost:8000/api/v1/ws/<thread_id>", {
+  headers: { "X-API-Key": "<API_KEY>" }   // or "Authorization": "Bearer <jwt>"
+});
 ws.onopen = () => ws.send(JSON.stringify({ message: "Hello" }));
 ws.onmessage = (event) => {
   if (event.data === "[END]") {
@@ -1043,7 +1192,8 @@ The `{path}` segment uses FastAPI's `:path` converter, so it can contain slashes
 ### Listing files
 
 ```bash
-curl 'http://localhost:8000/api/v1/store/files?prefix=/skills/'
+curl 'http://localhost:8000/api/v1/store/files?prefix=/skills/' \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response (`200`) — a JSON array of path strings:
@@ -1055,7 +1205,8 @@ Response (`200`) — a JSON array of path strings:
 ### Getting a file
 
 ```bash
-curl http://localhost:8000/api/v1/store/files/skills/code-review/SKILL.md
+curl http://localhost:8000/api/v1/store/files/skills/code-review/SKILL.md \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response (`200`):
@@ -1071,6 +1222,7 @@ If the file does not exist, the API returns `404` with `{"detail": "File not fou
 ```bash
 curl -X PUT http://localhost:8000/api/v1/store/files/skills/code-review/SKILL.md \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"content": "# Code Review Skill\n\nReview code for correctness and security."}'
 ```
 
@@ -1083,7 +1235,8 @@ Response (`200`):
 ### Deleting a file
 
 ```bash
-curl -X DELETE http://localhost:8000/api/v1/store/files/skills/code-review/SKILL.md
+curl -X DELETE http://localhost:8000/api/v1/store/files/skills/code-review/SKILL.md \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response: `204 No Content`. The operation is idempotent — deleting a non-existent path does not raise.
@@ -1099,10 +1252,13 @@ This ensures each agent only loads the skills and memories explicitly selected i
 
 When an agent is updated and a skill or memory is **removed** from the selection, the corresponding copy in the agent namespace is **deleted** automatically.
 
+> **Per-user isolation:** As of the `feat/dual-auth-rls-llm-peruser` branch, both the Store File API (`/api/v1/store/files`) and the agent namespace copies (`/agents/{name}/skills/`, `/agents/{name}/memories/`) are scoped **per authenticated user** via a namespace prefix `(user_id, "filesystem")`. A user only ever sees the skills/memories they own. See [Store Namespaces per User](#store-namespaces-per-user).
+
 To discover which agents reference a given skill, use the usage-tracking endpoint:
 
 ```bash
-curl http://localhost:8000/api/v1/store/skills/my-skill/usage
+curl http://localhost:8000/api/v1/store/skills/my-skill/usage \
+  -H "X-API-Key: <API_KEY>"
 ```
 
 Response (`200`) — the list of agent names that have `my-skill` in their namespace:
@@ -1122,6 +1278,7 @@ Skills are `SKILL.md` files stored in the LangGraph store under the `/skills/` p
 ```bash
 curl -X PUT http://localhost:8000/api/v1/store/files/skills/my-skill/SKILL.md \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"content": "# my-skill\n\n## Description\nA skill for ..."}'
 ```
 
@@ -1148,6 +1305,7 @@ Memories are Markdown files (e.g. `AGENTS.md`) stored in the LangGraph store, ty
 ```bash
 curl -X PUT http://localhost:8000/api/v1/store/files/memories/AGENTS.md \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
   -d '{"content": "# Project Guidelines\n\n- Always write tests.\n- Follow the hexagonal architecture."}'
 ```
 
@@ -1162,6 +1320,219 @@ memory:
 ```
 
 In the frontend agent form, the Memory field is a **multi-select dropdown** (`PillMultiSelect`) that lists all available memories from the store, replacing the previous free-text input.
+
+---
+
+## Row-Level Security (RLS)
+
+composable-agents enforces per-user isolation at the **database level** using PostgreSQL Row-Level Security. RLS is enabled **and forced** (so even the table owner is subject to the policies) on every per-user table.
+
+### RLS-protected tables
+
+| Table | `user_id` column added by |
+|---|---|
+| `agent_configs` | migration `012_add_user_id_to_rls_tables` |
+| `threads` | migration `012_add_user_id_to_rls_tables` |
+| `trace_events` | migration `012_add_user_id_to_rls_tables` |
+| `api_keys` | migration `011_create_api_keys_table` (column present at creation) |
+| `user_llm_settings` | migration `014_create_user_llm_settings_table` (column is the PK) |
+
+### How the `app.user_id` GUC is set
+
+For each authenticated request, the `ComposableAgentsSecurity.verify_credentials` dependency resolves the `user_id` (JWT `sub` or the API key's `user_id`) and stores it in a `contextvars.ContextVar` (`current_user_id`). A SQLAlchemy `before_cursor_execute` event listener on the engine then emits:
+
+```sql
+SET LOCAL app.user_id = '<user_id>';
+```
+
+inside the current transaction. The RLS policies compare each row's `user_id` against this GUC:
+
+```sql
+CREATE POLICY <table>_user_isolation ON <table>
+  USING       (user_id = current_setting('app.user_id', true))
+  WITH CHECK  (user_id = current_setting('app.user_id', true));
+```
+
+When the GUC is unset (unauthenticated session), `current_setting(..., true)` returns `NULL` and the policy filters out **every** row — the defensive default.
+
+### Bypassing RLS (migrations / background jobs)
+
+System operations that must read across all users (Alembic migrations, cron jobs) wrap their work in the `system_rls_context()` async context manager, which sets a `bypass_rls` contextvar that makes the listener emit `SET LOCAL row_security = off` for that transaction.
+
+### Tables NOT protected by RLS
+
+The LangGraph **`store`** table is **not** RLS-protected. It is accessed via its own asyncpg connection pool (the `PostgresStore` from `langgraph-checkpoint-postgres`), not via the SQLAlchemy engine that sets the `app.user_id` GUC. Per-user isolation for skills and memories is therefore enforced at the **application layer** via namespace prefixes — see [Store Namespaces per User](#store-namespaces-per-user).
+
+---
+
+## Per-User LLM Settings
+
+Each authenticated user configures their **own** OpenAI-compatible LLM provider (provider label, base URL, and API key). The agent factory resolves the credentials per request from the authenticated `user_id` and builds a per-user `ChatOpenAI` instance. The server-wide `OPENAI_API_KEY` env var is **no longer used** to call the LLM.
+
+### Endpoints
+
+| Method | Path | Description | Success Status |
+|---|---|---|---|
+| `GET` | `/api/v1/settings/llm` | Get the authenticated user's LLM settings (masked key) | `200` (or `null` body if not configured) |
+| `PUT` | `/api/v1/settings/llm` | Insert or update the user's LLM settings | `200` |
+| `DELETE` | `/api/v1/settings/llm` | Delete the user's LLM settings (idempotent) | `204` |
+
+The `api_key` is plaintext on the wire (HTTPS) and stored **encrypted at rest** with Fernet using `SECRET_ENCRYPTION_KEY`. GET responses return only a masked preview (`api_key_masked`), never the plaintext.
+
+### Get current settings
+
+```bash
+curl http://localhost:8000/api/v1/settings/llm \
+  -H "X-API-Key: <API_KEY>"
+```
+
+Response (`200`) — `null` when nothing is configured yet:
+
+```json
+{
+  "user_id": "qa-user-1",
+  "provider": "openrouter",
+  "base_url": "https://openrouter.ai/api/v1",
+  "api_key_masked": "sk-or-v1-8e1a…b147",
+  "created_at": "2026-07-27T10:00:00Z",
+  "updated_at": "2026-07-27T10:00:00Z"
+}
+```
+
+### Configure (insert or update)
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/settings/llm \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
+  -d '{
+    "provider": "openrouter",
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key": "sk-or-v1-..."
+  }'
+```
+
+Response (`200`):
+
+```json
+{
+  "user_id": "qa-user-1",
+  "provider": "openrouter",
+  "base_url": "https://openrouter.ai/api/v1",
+  "api_key_masked": "sk-or-v1-8e1a…b147",
+  "created_at": "2026-07-27T10:00:00Z",
+  "updated_at": "2026-07-27T10:05:00Z"
+}
+```
+
+### Delete settings
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/settings/llm \
+  -H "X-API-Key: <API_KEY>"
+```
+
+Response: `204 No Content` (idempotent — deleting non-existent settings does not raise).
+
+### Missing LLM configuration
+
+If the user invokes an agent (e.g. `POST /api/v1/chat/{thread_id}`) **before** configuring an LLM provider, the agent factory raises `LlmNotConfiguredError` and the API returns:
+
+```json
+{"detail": "No LLM provider configured for user <user_id>. Configure via PUT /api/v1/settings/llm."}
+```
+
+with HTTP status **`422`**. The user must call `PUT /api/v1/settings/llm` first.
+
+---
+
+## Store Namespaces per User
+
+The LangGraph Store (used by the [Store File API](#store-file-api) and the per-agent skill/memory namespaces) is **not** RLS-protected (see [Row-Level Security (RLS)](#row-level-security-rls)). Instead, per-user isolation is enforced at the **application layer** via namespace prefixes.
+
+When a request is authenticated, the `LangGraphStoreFileRepository` resolves its namespace as:
+
+```python
+(user_id, "filesystem")
+```
+
+so a file written by `qa-user-1` is stored under the namespace `("qa-user-1", "filesystem")` and is invisible to `qa-user-2`. The same prefixing applies to the agent namespace copies (`/agents/{name}/skills/`, `/agents/{name}/memories/`).
+
+When no user is authenticated (tests, system context), the namespace falls back to the static default `("filesystem",)` so existing tests stay green.
+
+### Practical consequences
+
+- `GET /api/v1/store/files?prefix=/skills/` lists **only the calling user's** skills.
+- `PUT /api/v1/store/files/skills/my-skill/SKILL.md` writes into **the calling user's** namespace.
+- An agent's `/agents/{name}/skills/` and `/agents/{name}/memories/` copies are scoped to the user who owns the agent config (RLS on `agent_configs` ensures the agent itself is per-user).
+
+---
+
+## Per-User API Keys
+
+Per-user API keys allow a user to authenticate without a JWT (e.g. from a CI pipeline or a script). Keys are SHA-256 hashed at rest; the plaintext is returned **exactly once** at creation time.
+
+### Endpoints
+
+| Method | Path | Description | Success Status |
+|---|---|---|---|
+| `POST` | `/api/v1/api-keys` | Create a new API key (returns plaintext once) | `201` |
+| `GET` | `/api/v1/api-keys` | List the user's API keys (no plaintext) | `200` |
+| `DELETE` | `/api/v1/api-keys/{key_id}` | Revoke an API key (idempotent) | `204` |
+
+> Creating an API key requires an existing authenticated session (JWT). In QA/local, keys are seeded directly in the database (see [Testing](#testing)).
+
+### Create an API key
+
+```bash
+curl -X POST http://localhost:8000/api/v1/api-keys \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <jwt>" \
+  -d '{"name": "my-ci-key"}'
+```
+
+Response (`201`):
+
+```json
+{
+  "id": "8f3c1d2e-...",
+  "name": "my-ci-key",
+  "key_prefix": "cpk_abcde",
+  "plaintext": "cpk_abcdefghijklmnopqrstuvwxyz0123456789...",
+  "created_at": "2026-07-27T10:00:00Z"
+}
+```
+
+### List API keys
+
+```bash
+curl http://localhost:8000/api/v1/api-keys \
+  -H "X-API-Key: <API_KEY>"
+```
+
+Response (`200`) — a list of safe projections (no hash, no plaintext):
+
+```json
+[
+  {
+    "id": "8f3c1d2e-...",
+    "name": "my-ci-key",
+    "key_prefix": "cpk_abcde",
+    "created_at": "2026-07-27T10:00:00Z",
+    "last_used_at": "2026-07-27T11:30:00Z",
+    "revoked_at": null
+  }
+]
+```
+
+### Revoke an API key
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/api-keys/8f3c1d2e-... \
+  -H "X-API-Key: <API_KEY>"
+```
+
+Response: `204 No Content` (idempotent — revoking an already-revoked key returns 204). Revoking a key owned by another user returns `404` (RLS hides it).
 
 ---
 
@@ -1219,21 +1590,31 @@ composable-agents/
       versions/
         001_create_agent_configs_table.py
         002_create_threads_and_messages_tables.py
-        005_create_trace_events_table.py   # Create trace_events table
-        006_migrate_messages_to_trace_events.py  # Backfill trace_events from messages
-        007_drop_messages_table.py          # Drop legacy messages table
+        005_create_trace_events_table.py
+        006_migrate_messages_to_trace_events.py
+        007_drop_messages_table.py
+        010_add_description_to_agent_configs.py
+        011_create_api_keys_table.py             # Per-user API keys (SHA-256 hashed)
+        012_add_user_id_to_rls_tables.py         # Add user_id to agent_configs/threads/trace_events
+        013_enable_rls_policies.py               # Enable + force RLS, create per-user policies
+        014_create_user_llm_settings_table.py    # Per-user LLM settings (Fernet-encrypted)
+    security.py                        # Dual-auth FastAPI dependency (JWT + per-user API key)
     application/
       requests/
         chat.py                        # Request models (ChatRequest, CreateThreadRequest, HITLDecisionRequest)
+        api_key.py                     # CreateApiKeyRequest
+        user_llm_settings.py           # UpsertUserLlmSettingsRequest
       responses/
-        thread_history.py               # ThreadHistory response DTO (thread + turns)
+        thread_history.py              # ThreadHistory response DTO (thread + turns)
       routes/
-        health.py                      # GET /health
+        health.py                      # GET /health (public)
         threads.py                     # CRUD /api/v1/threads
         chat.py                        # POST /api/v1/chat/{id} and /stream
         trace.py                       # GET /api/v1/threads/{id}/history and /trace
         agents.py                      # GET /api/v1/agents
         store.py                       # Store File API — /api/v1/store/files
+        api_keys.py                    # POST/GET/DELETE /api/v1/api-keys (per-user API keys)
+        user_llm_settings.py           # GET/PUT/DELETE /api/v1/settings/llm (per-user LLM)
         websocket.py                   # WS /api/v1/ws/{id}
       use_cases/
         send_message.py                # Invoke agent synchronously
@@ -1248,15 +1629,19 @@ composable-agents/
         load_agent_config.py           # Load and validate a YAML config
         seed_agents.py                 # Seed built-in agents from agents/ dir
         thread_management.py           # Create / get / list / delete threads
+        api_key/                       # create / list / revoke per-user API keys
+        user_llm_settings/             # get / upsert / delete per-user LLM settings
     domain/
       entities/
         agent_config.py                # AgentConfig, BackendConfig, HITLConfig, SubAgentConfig
         agent_config_metadata.py       # AgentConfigMetadata (incl. description)
         mcp_server_config.py           # McpServerConfig, McpTransportType
         message.py                     # Message (role, content, timestamp, tool_calls) — projection model
-        thread.py                       # Thread (id, agent_name, timestamps) — no more MessageModel
-        trace_event.py                  # TraceEvent entity + TraceEventType enum (6 types)
+        thread.py                      # Thread (id, agent_name, user_id, timestamps)
+        trace_event.py                 # TraceEvent entity + TraceEventType enum (6 types)
         tracing_config.py              # TracingConfig, TracingProviderType
+        user_llm_settings.py           # UserLlmSettings, UserLlmSettingsInput
+        auth/                          # AuthContext, ApiKeyView, CreatedApiKey
       ports/
         agent_config_loader.py         # Abstract: load config from file
         agent_config_repository.py     # Abstract: CRUD for agent config metadata
@@ -1264,26 +1649,34 @@ composable-agents/
         agent_registry.py              # Abstract: get_runner(name), list_agents(), close()
         agent_runner.py                # Abstract: invoke, stream, HITL operations
         mcp_tool_loader.py             # Abstract: load MCP tools
-        store_file_repository.py        # Abstract: file CRUD on the LangGraph store (StoreFileRepository port)
+        store_file_repository.py       # Abstract: file CRUD on the LangGraph store (StoreFileRepository port)
         thread_repository.py           # Abstract: CRUD for threads
         trace_event_repository.py      # Abstract: persist/append/list TraceEvents
         tracing_provider.py            # Abstract: tracing lifecycle
-      exceptions.py                    # DomainError hierarchy (incl. AgentNotFoundError, StorageError)
+        api_key_repository.py          # Abstract: per-user API key CRUD + hash lookup
+        user_llm_settings_repository.py # Abstract: per-user LLM settings CRUD
+        jwt_validator.py               # Abstract: JWT validation against Logto JWKS
+      services/auth/                   # AuthService (dual JWT + API key orchestration)
+      errors/                          # DomainError hierarchy (incl. AuthenticationError, LlmNotConfiguredError)
     infrastructure/
-      env_utils.py                     # ${VAR_NAME} environment variable resolution
+      env_utils.py                     # ${VAR_NAME} + ${USER_JWT}/${USER_API_KEY} resolution
       database/
+        rls_context.py                 # Per-request RLS contextvars + system_rls_context bypass
+        rls_listener.py                # SQLAlchemy before_cursor_execute listener (SET LOCAL app.user_id)
         models/
           base.py                      # SQLAlchemy DeclarativeBase
-          agent_config.py              # AgentConfigModel (ORM)
-          thread.py                    # ThreadModel (ORM) — MessageModel removed
-          trace_event.py               # TraceEventModel (ORM)
+          agent_config.py              # AgentConfigModel (ORM, incl. user_id)
+          thread.py                    # ThreadModel (ORM, incl. user_id)
+          trace_event.py               # TraceEventModel (ORM, incl. user_id)
+          api_key.py                   # ApiKeyModel (ORM)
+          user_llm_settings.py         # UserLlmSettingModel (ORM)
       deepagent/
         adapter.py                     # DeepAgentRunner (LangGraph adapter) — emits TraceEvent
-        factory.py                     # create_agent_from_config (resolves tools, backend)
+        factory.py                     # create_agent_from_config (per-user LLM credential resolution)
         registry.py                    # DeepAgentRegistry (lazy loading + caching from agents/ dir)
         example_tools.py               # Example tools: current_time, word_count
       mcp/
-        adapter.py                     # LangchainMcpToolLoader
+        adapter.py                     # LangchainMcpToolLoader (resolves ${USER_JWT}/${USER_API_KEY})
       minio_store/
         adapter.py                     # MinioAgentConfigStore (YAML blob storage)
       persistent_registry/
@@ -1432,23 +1825,26 @@ subagents:
 
 ## Database (PostgreSQL)
 
-Thread and agent config persistence is backed by PostgreSQL, accessed via SQLAlchemy's async ORM (`asyncpg` driver).
+Thread, agent config, API key, and LLM-settings persistence is backed by PostgreSQL, accessed via SQLAlchemy's async ORM (`asyncpg` driver). Per-user tables are protected by Row-Level Security (see [Row-Level Security (RLS)](#row-level-security-rls)).
 
 ### Schema
 
 The database uses a flat normalized schema. Thread persistence relies on a single `trace_events` table as the source of truth for all conversation activity (the legacy `messages` table has been dropped — see [Breaking changes](#breaking-changes)).
 
-| Table | Description |
-|---|---|
-| `threads` | One row per conversation thread. Columns: `id` (PK, VARCHAR 36), `agent_name`, `created_at`, `updated_at`. |
-| `trace_events` | One row per trace event. Columns: `id` (PK), `thread_id` (FK to `threads.id`, CASCADE delete), `turn_id`, `type` (enum: `HUMAN_MESSAGE`, `AI_MESSAGE`, `THINKING`, `CONTENT`, `TOOL_CALL`, `TOOL_RESULT`), `source` (sub-agent name or null), `name` (tool name or null), `content` (text), `metadata` (JSONB), `timestamp`, `sequence` (int, monotonic per thread). |
-| `agent_configs` | Agent configuration metadata. |
+| Table | Description | RLS? |
+|---|---|---|
+| `threads` | One row per conversation thread. Columns: `id` (PK, VARCHAR 36), `agent_name`, `user_id`, `created_at`, `updated_at`. | ✅ |
+| `trace_events` | One row per trace event. Columns: `id` (PK), `thread_id` (FK to `threads.id`, CASCADE delete), `turn_id`, `type` (enum), `source`, `name`, `content`, `metadata` (JSONB), `timestamp`, `sequence`, `user_id`. | ✅ |
+| `agent_configs` | Agent configuration metadata (incl. `description`, `user_id`). | ✅ |
+| `api_keys` | Per-user API keys (SHA-256 hashed). Columns: `id` (PK), `user_id`, `name`, `key_hash`, `key_prefix`, `revoked_at`, `last_used_at`, `created_at`. Unique index on `key_hash`. | ✅ |
+| `user_llm_settings` | Per-user LLM provider settings (Fernet-encrypted `api_key_encrypted`). PK is `user_id` — one configured provider per user. | ✅ |
 
 Indexes on `trace_events`:
 
 - `ix_trace_events_thread_id` — fast lookup of all events for a thread.
 - `ix_trace_events_thread_id_sequence` — ordered retrieval of events within a thread (used by `/trace` and `/history`).
 - `ix_trace_events_thread_id_turn_id` — grouping events by turn (used by `/history`).
+- `ix_trace_events_user_id` — per-user RLS filter.
 
 The `messages` table has been **dropped** (migration `007`). Its data was backfilled into `trace_events` by migration `006` (each old `Message` row became a `HUMAN_MESSAGE` or `AI_MESSAGE` event). The legacy `GET /api/v1/threads/{id}/messages` endpoint is preserved as a backward-compatible projection that filters `trace_events` to `HUMAN_MESSAGE` + `AI_MESSAGE` rows.
 
@@ -1456,7 +1852,7 @@ The `messages` table has been **dropped** (migration `007`). Its data was backfi
 
 Alembic migrations live in `src/alembic/versions/` and run **automatically at startup** (via `asyncio.to_thread()` in the FastAPI lifespan). You never need to run `alembic upgrade` manually in normal operation.
 
-Relevant migrations for the trace events refactor:
+Relevant migrations:
 
 | Migration | Description |
 |---|---|
@@ -1464,6 +1860,10 @@ Relevant migrations for the trace events refactor:
 | `006_migrate_messages_to_trace_events` | Backfills `trace_events` from existing `messages` rows (`role = "human"` → `HUMAN_MESSAGE`, `role = "ai"` → `AI_MESSAGE`). |
 | `007_drop_messages_table` | Drops the legacy `messages` table. |
 | `010_add_description_to_agent_configs` | Adds a `description VARCHAR(500)` column to the `agent_configs` table. |
+| `011_create_api_keys_table` | Creates the `api_keys` table (per-user API keys, SHA-256 hashed). Unique index on `key_hash`, index on `user_id`. |
+| `012_add_user_id_to_rls_tables` | Adds a `user_id VARCHAR(255)` column to `agent_configs`, `threads`, and `trace_events` so RLS policies can filter rows per user. Adds an index on `user_id` for each table. |
+| `013_enable_rls_policies` | Enables **and forces** Row-Level Security on `agent_configs`, `threads`, `trace_events`, and `api_keys`. Creates the per-user `user_isolation` policy on each table. |
+| `014_create_user_llm_settings_table` | Creates the `user_llm_settings` table (per-user LLM provider settings, Fernet-encrypted API key) and enables RLS with a per-user policy. |
 
 > The `mcp_servers` table is **not** managed here. It is owned by mcp-raganything's Alembic migration `001_create_mcp_servers_table` (tracked in the `raganything_alembic_version` table).
 
@@ -1502,7 +1902,19 @@ uv run alembic current
 
 ## Breaking Changes
 
-This release replaces the legacy `StreamEvent` / `messages`-based model with a unified `TraceEvent` model.
+This release replaces the legacy `StreamEvent` / `messages`-based model with a unified `TraceEvent` model, and switches auth from a single master `X-API-Key` to **dual JWT + per-user API keys** with **Row-Level Security** and **per-user LLM credentials**.
+
+### Dual auth replaces the master `X-API-Key`
+
+The single master `X-API-Key` / `API_KEY` / `OPENAI_API_KEY` model is **removed** for authentication. Every protected endpoint now requires either `Authorization: Bearer <jwt>` (validated against Logto OIDC JWKS, `LOGTO_URL` + `JWT_AUDIENCE`) or `X-API-Key: cpk_...` (per-user, SHA-256 hashed, created via `POST /api/v1/api-keys`). See [Authentication](#authentication). Existing clients sending the old master key will receive `401 {"detail": "Invalid or missing credentials"}`.
+
+### Per-user LLM credentials (no server-wide `OPENAI_API_KEY`)
+
+The server-wide `OPENAI_API_KEY` env var is **no longer used** to call the LLM. Each authenticated user must configure their own provider via `PUT /api/v1/settings/llm`. If a user invokes an agent before configuring a provider, the API returns `422 LlmNotConfiguredError`. See [Per-User LLM Settings](#per-user-llm-settings).
+
+### Row-Level Security on per-user tables
+
+Migrations `011`–`014` add a `user_id` column to `agent_configs`, `threads`, and `trace_events`, create the `api_keys` and `user_llm_settings` tables, and enable **forced** Row-Level Security on all five tables. Existing rows become `user_id = ''` and are **invisible** under RLS (the policy compares against `current_setting('app.user_id', true)` which is NULL for unauthenticated sessions). Backfill existing rows to a real `user_id` before enabling RLS in production if you need to preserve access. See [Row-Level Security (RLS)](#row-level-security-rls).
 
 ### `StreamEvent` removed
 
@@ -1523,7 +1935,7 @@ Adapters and tests calling the old `invoke(thread_id, message) -> Message` / `st
 
 ### Migrations
 
-Migrations `005`, `006`, `007` run automatically on startup. They are idempotent and safe to run on an existing database with data.
+Migrations `005`, `006`, `007`, `010`, `011`, `012`, `013`, `014` run automatically on startup. They are idempotent and safe to run on an existing database with data, **except** that `012`/`013` will make pre-existing rows with `user_id = ''` invisible under RLS — backfill them first.
 
 ---
 
@@ -1531,14 +1943,33 @@ Migrations `005`, `006`, `007` run automatically on startup. They are idempotent
 
 Configured via `.env` file or environment variables. See `.env.example`.
 
+### General
+
 | Variable | Default | Description |
 |---|---|---|
 | `AGENTS_DIR` | `./agents` | Directory containing agent YAML configuration files. |
-| `OPENAI_API_KEY` | -- | API key for OpenAI models. |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL for OpenAI-compatible endpoints. Set to use OpenRouter, LiteLLM, vLLM, etc. |
 | `HOST` | `0.0.0.0` | Server bind host. |
 | `PORT` | `8000` | Server bind port. |
-| `MCP_RAGANYTHING_API_KEY` | -- | Shared API key for authenticating to mcp-raganything MCP servers. Must match the `API_KEY` set on the raganything server. |
+| `LOG_LEVEL` | `INFO` | Application log level. |
+| `UVICORN_LOG_LEVEL` | `info` | Uvicorn log level. |
+| `ALLOWED_ORIGINS` | `["http://localhost:8080"]` | JSON array of CORS allowed origins. |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Base URL for OpenAI-compatible endpoints. Set to use OpenRouter, LiteLLM, vLLM, etc. **Per-user** base URLs configured via `PUT /api/v1/settings/llm` override this for authenticated requests. |
+| `MCP_RAGANYTHING_API_KEY` | -- | Shared API key for authenticating to mcp-raganything MCP servers via `${MCP_RAGANYTHING_API_KEY}` in agent YAML. Must match the `API_KEY` set on the raganything server. |
+
+### Dual Authentication
+
+| Variable | Default | Description |
+|---|---|---|
+| `LOGTO_URL` | `""` (empty) | Logto OIDC issuer URL for JWT validation (e.g. `https://logto.soludev.tech`). When empty, the JWT path is disabled and only the per-user API key path is active (QA/local mode). |
+| `JWT_AUDIENCE` | `""` (empty) | Expected `aud` claim for incoming JWTs (typically the Logto app ID). When `LOGTO_URL` is set, this **must** be set too. |
+| `SECRET_ENCRYPTION_KEY` | `""` (empty) | Fernet key used to encrypt per-user LLM API keys at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **Required** when per-user LLM settings are enabled. Must be stable across restarts. |
+
+### Deprecated (no longer used for auth / LLM)
+
+| Variable | Status | Replacement |
+|---|---|---|
+| `OPENAI_API_KEY` | **Deprecated** for both auth and LLM calls. Still read as an env fallback by `ChatOpenAI` when no authenticated user is present (tests). | Per-user LLM credentials via `PUT /api/v1/settings/llm` (see [Per-User LLM Settings](#per-user-llm-settings)). |
+| `API_KEY` (master `X-API-Key`) | **Deprecated** for auth. | Dual JWT + per-user API keys (see [Authentication](#authentication)). |
 
 ### PostgreSQL Variables
 
@@ -1581,6 +2012,10 @@ uv sync
 ### Run the test suite
 
 ```bash
+# Unit tests (no DB / no Docker required) — 667 tests
+uv run pytest tests/unit -q
+
+# Full suite (unit + integration)
 uv run pytest tests/ -v
 ```
 
@@ -1589,6 +2024,56 @@ uv run pytest tests/ -v
 ```bash
 uv run pytest tests/ -v --cov=src
 ```
+
+## Testing
+
+The project has two test layers: **unit tests** (in this repo, no infrastructure) and a **QA suite** (in `soludev-compose-apps/bricks/qa`, runs against the local Docker compose stack).
+
+### Unit tests
+
+```bash
+cd bricks/composable-agents
+uv run pytest tests/unit -q
+# → 667 passed
+```
+
+Unit tests use in-memory fixtures (`Base.metadata.create_all` on SQLite, in-memory repositories) — no PostgreSQL, no Logto, no MinIO. The RLS migrations do **not** run in unit tests (RLS is Postgres-only and validated in QA).
+
+### QA suite (dual-auth + RLS + per-user LLM + store namespaces)
+
+The QA suite exercises the full dual-auth + RLS + per-user LLM + store-namespace feature against a real PostgreSQL instance via Docker compose. It lives in `soludev-compose-apps/bricks/qa`.
+
+#### 1. Start the stack
+
+```bash
+cd soludev-compose-apps/bricks
+docker compose up -d --build composable-agents bricks-db minio composable-agents-qa-init
+docker compose ps   # wait for composable-agents to be healthy
+```
+
+The `composable-agents-qa-init` one-shot service waits for `composable-agents` to be healthy (so the Alembic migrations that create `api_keys` have applied), then seeds two per-user API keys directly in `bricks-db`:
+
+| `user_id` | plaintext `X-API-Key` | `id` |
+|---|---|---|
+| `qa-user-1` | `cpk_qa_test_key_12345` | `qa-key-id-1` |
+| `qa-user-2` | `cpk_qa_test_key_67890` | `qa-key-id-2` |
+
+The seed is idempotent (`ON CONFLICT DO UPDATE` re-activates revoked rows), so re-running `docker compose up -d composable-agents-qa-init` is safe. In QA, `LOGTO_URL` is empty, so only the per-user API key path is exercised (JWT validation is unit-tested separately).
+
+#### 2. Run the QA tests
+
+```bash
+cd qa
+uv run pytest                              # whole suite
+# or just the dual-auth / RLS / per-user feature tests:
+uv run pytest test_dual_auth.py test_api_keys_crud.py test_rls_isolation.py \
+              test_llm_settings.py test_store_isolation.py test_api_keys.py \
+              test_threads.py test_agents.py test_health.py --tb=short
+```
+
+The QA fixtures (`qa/conftest.py`) read `QA_API_KEY_USER_1` / `QA_API_KEY_USER_2` (defaulting to the seeded plaintext keys above) and send them as `X-API-Key` headers automatically. `COMPOSABLE_AGENTS_URL` defaults to `http://localhost:8010` (the port mapped in `docker-compose.yml`).
+
+> **Note:** `test_mcp_bricks_endpoints.py`, `test_txt_support.py`, `test_file_endpoints.py`, and `test_extraction*.py` target the **raganything-api** service and require `API_KEY` to be set for that service — they are independent of the dual-auth feature.
 
 ### Lint
 
@@ -1657,13 +2142,16 @@ Railway project
 
    | Variable | Example | Notes |
    |----------|---------|-------|
-   | `OPENAI_API_KEY` | `sk-...` | OpenAI API key |
-   | `OPENAI_BASE_URL` | `https://openrouter.ai/api/v1` | OpenAI-compatible endpoint |
-   | `DATABASE_URL` | `postgresql://postgres:pass@roundhouse.proxy.rlwy.net:33019/railway` | Railway PostgreSQL connection URL |
+   | `DATABASE_URL` | `postgresql://postgres:pass@roundhouse.proxy.rlwy.net:33019/railway` | Railway PostgreSQL connection URL (required) |
+   | `LOGTO_URL` | `https://logto.soludev.tech` | Logto OIDC issuer URL for JWT validation. Required in prod to enable the JWT auth path. |
+   | `JWT_AUDIENCE` | `<logto-app-id>` | Expected `aud` claim for JWTs. Required when `LOGTO_URL` is set. |
+   | `SECRET_ENCRYPTION_KEY` | `I32ylYwnej8p2Wa72G3FibHBoRNxWlVxWsC5F4LvXSU=` | Fernet key for encrypting per-user LLM API keys at rest. Generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. |
    | `AGENTS_DIR` | `./agents` | Directory containing agent YAML configs |
    | `MCP_RAGANYTHING_API_KEY` | `your-shared-secret` | Must match `API_KEY` on mcp-raganything |
    | `TRACING_PROVIDER` | `phoenix` | Tracing backend: `none`, `langfuse`, or `phoenix` |
    | `PHOENIX_COLLECTOR_ENDPOINT` | `https://phoenix.xxx.railway.app` | Phoenix collector URL |
+
+   > **Note:** `OPENAI_API_KEY` and `API_KEY` (master) are **deprecated** for auth and LLM. Each end-user now configures their own LLM provider via `PUT /api/v1/settings/llm` (see [Per-User LLM Settings](#per-user-llm-settings)). `OPENAI_BASE_URL` is still read as a fallback for unauthenticated/test contexts.
 
 5. **Update agent YAML configs** to point MCP server URLs to the Railway-deployed mcp-raganything domain:
 
@@ -1674,9 +2162,12 @@ Railway project
        url: https://mcp-raganything-production.up.railway.app/bricks/mcp
        headers:
          X-API-Key: "${MCP_RAGANYTHING_API_KEY}"
+         # Or, to forward the caller's identity to raganything:
+         # Authorization: "Bearer ${USER_JWT}"
+         # X-API-Key: "${USER_API_KEY}"
    ```
 
-   The `${MCP_RAGANYTHING_API_KEY}` placeholder is resolved from the environment variable at runtime.
+   The `${MCP_RAGANYTHING_API_KEY}` placeholder is resolved from the environment variable at runtime; `${USER_JWT}` / `${USER_API_KEY}` are resolved from the authenticated caller's credential (see [Per-user credential propagation](#per-user-credential-propagation-user_jwt--user_api_key)).
 
 6. **MinIO** (optional — only if using MinIO for agent config storage):
    - Deploy MinIO as a separate Railway service or use an external S3-compatible service.

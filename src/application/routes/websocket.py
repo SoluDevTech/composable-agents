@@ -41,8 +41,22 @@ async def websocket_chat(
         security: Security validator (API key check at handshake).
         use_case: StreamMessageUseCase wired with real repositories + mock runner.
     """
-    # Validate API key before accepting the WebSocket handshake.
-    await security.verify_api_key_ws(websocket)
+    # Dual-auth: JWT bearer token OR per-user API key. verify_credentials_ws
+    # rejects the handshake with HTTP 401 on failure and returns None; the
+    # master-key verify_api_key_ws is kept as a backward-compat fallback ONLY
+    # when no auth service is wired (dev/test without dual auth). When dual
+    # auth is wired, a 401 from verify_credentials_ws is final — we must NOT
+    # call websocket.accept() on an already-rejected handshake.
+    ctx = await security.verify_credentials_ws(websocket)
+    if ctx is None:
+        if security.has_auth_service():
+            # Dual auth wired: verify_credentials_ws already rejected with 401.
+            return
+        # No dual auth wired (master-key only): fall back to the master key.
+        key = await security.verify_api_key_ws(websocket)
+        if not key and security.master_key:
+            # Master-key auth enabled and the key was invalid — already rejected.
+            return
     await websocket.accept()
     logger.info(LogMessage.WS_CONNECTED, thread_id)
     try:

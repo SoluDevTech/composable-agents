@@ -10,7 +10,7 @@ from src.domain.errors.mcp import McpConnectionError, McpToolLoadError
 from src.domain.errors.messages import ErrorMessage
 from src.domain.logging.messages import LogMessage
 from src.domain.ports.mcp_tool_loader import McpToolLoader
-from src.infrastructure.env_utils import resolve_env_vars
+from src.infrastructure.env_utils import resolve_headers_drop_empty
 
 logger = logging.getLogger(__name__)
 
@@ -128,9 +128,21 @@ class LangchainMcpToolLoader(McpToolLoader):
         return patched
 
     def _resolve_env_vars(self, mapping: dict[str, str]) -> dict[str, str]:
-        """Resout les variables d'environnement dans un mapping.
+        """Resolve ${VAR_NAME} placeholders (os.environ + user credentials) in a mapping.
 
-        Les variables au format ${VAR_NAME} sont remplacees par leur valeur
-        depuis os.environ. Si la variable n'existe pas, le placeholder est conserve.
+        Delegates to :func:`resolve_headers_drop_empty`, which resolves both
+        environment variables (``${OPENROUTER_API_KEY}`` etc.) and the
+        user-credential placeholders (``${USER_JWT}``, ``${USER_API_KEY}``)
+        from the RLS contextvars, then DROPS entries whose resolved value is
+        empty or whose user-credential placeholder resolved to empty. This
+        prevents sending a malformed ``Authorization: Bearer `` (with no token)
+        or an empty ``X-API-Key`` to a remote MCP server.
+
+        Args:
+            mapping: The input header/env mapping.
+
+        Returns:
+            A new dict with resolved values; empty/credential-empty entries
+            dropped. Non-string values are passed through unchanged.
         """
-        return {key: resolve_env_vars(value) for key, value in mapping.items()}
+        return resolve_headers_drop_empty(mapping)

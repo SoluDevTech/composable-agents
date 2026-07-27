@@ -11,6 +11,11 @@ import os
 # src.dependencies) can validate. Tests that need a real engine use the
 # in-memory SQLite db_engine fixture, not this value.
 os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
+# Provide auth-related env vars so Settings() accepts the new auth fields
+# without requiring real Logto/JWKS/encryption configuration in tests.
+os.environ.setdefault("LOGTO_URL", "http://test")
+os.environ.setdefault("JWT_AUDIENCE", "test-audience")
+os.environ.setdefault("SECRET_ENCRYPTION_KEY", "")
 
 from collections.abc import AsyncGenerator
 

@@ -39,9 +39,7 @@ async def validate_subagent_refs(
                 f"Subagent '{sa.name}' references its own agent '{config.name}' (self-reference is not allowed)."
             )
         if not await repository.exists(sa.agent_ref):
-            raise ConfigError(
-                f"Subagent '{sa.name}' references unknown agent '{sa.agent_ref}'."
-            )
+            raise ConfigError(f"Subagent '{sa.name}' references unknown agent '{sa.agent_ref}'.")
 
 
 async def invalidate_dependent_agents(

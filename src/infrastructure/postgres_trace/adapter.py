@@ -2,6 +2,13 @@
 
 Each method opens its own :class:`AsyncSession` (session-per-method) to ensure
 thread-safety and proper session lifecycle under concurrent FastAPI requests.
+
+Per-user isolation (RLS plumbing): the repository reads the
+``current_user_id`` contextvar and filters the parent thread lookup by
+``user_id`` so a user can only add/list events on threads they own. The
+``user_id`` is denormalized onto each ``trace_events`` row on insert so list
+queries can filter without a JOIN. When the contextvar is ``None`` (no auth
+context) no filter is applied so existing behaviour is preserved.
 """
 
 import logging
@@ -17,6 +24,7 @@ from src.domain.errors.thread import ThreadNotFoundError
 from src.domain.ports.trace_event_repository import TraceEventRepository
 from src.infrastructure.database.models.thread import ThreadModel
 from src.infrastructure.database.models.trace_event import TraceEventModel
+from src.infrastructure.database.rls_context import current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +42,7 @@ def _model_to_event(model: TraceEventModel) -> TraceEvent:
         metadata=model.event_metadata,
         timestamp=model.timestamp,
         sequence=model.sequence,
+        user_id=model.user_id,
     )
 
 
@@ -43,11 +52,27 @@ class PostgresTraceEventRepository(TraceEventRepository):
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
-    async def _assert_thread_exists(self, session: AsyncSession, thread_id: str) -> None:
-        """Raise ThreadNotFoundError if the thread is not present."""
-        thread = await session.get(ThreadModel, thread_id)
+    @staticmethod
+    def _current_user_id() -> str | None:
+        """Return the ``current_user_id`` contextvar value or ``None``."""
+        return current_user_id.get()
+
+    async def _assert_thread_exists(self, session: AsyncSession, thread_id: str) -> ThreadModel:
+        """Return the parent thread row, filtered by ``user_id`` when set.
+
+        Raises:
+            ThreadNotFoundError: If the thread does not exist (or is owned by
+                another user when the contextvar is set).
+        """
+        uid = self._current_user_id()
+        if uid is None:
+            thread = await session.get(ThreadModel, thread_id)
+        else:
+            stmt = select(ThreadModel).where(ThreadModel.id == thread_id, ThreadModel.user_id == uid)
+            thread = (await session.execute(stmt)).scalar_one_or_none()
         if thread is None:
             raise ThreadNotFoundError(ErrorMessage.THREAD_NOT_FOUND.format(thread_id=thread_id))
+        return thread
 
     async def add(self, thread_id: str, event: TraceEvent) -> None:
         """Persist a single trace event.
@@ -62,8 +87,8 @@ class PostgresTraceEventRepository(TraceEventRepository):
         """
         async with AsyncSession(self._engine, expire_on_commit=False) as session:
             try:
-                await self._assert_thread_exists(session, thread_id)
-                session.add(self._to_model(event))
+                thread = await self._assert_thread_exists(session, thread_id)
+                session.add(self._to_model(event, user_id=thread.user_id))
                 await session.commit()
             except ThreadNotFoundError:
                 raise
@@ -85,8 +110,8 @@ class PostgresTraceEventRepository(TraceEventRepository):
         """
         async with AsyncSession(self._engine, expire_on_commit=False) as session:
             try:
-                await self._assert_thread_exists(session, thread_id)
-                session.add_all([self._to_model(e) for e in events])
+                thread = await self._assert_thread_exists(session, thread_id)
+                session.add_all([self._to_model(e, user_id=thread.user_id) for e in events])
                 await session.commit()
             except ThreadNotFoundError:
                 raise
@@ -173,8 +198,13 @@ class PostgresTraceEventRepository(TraceEventRepository):
                 raise StorageError(ErrorMessage.TRACE_FAILED_LIST.format(thread_id=thread_id, error=e)) from e
 
     @staticmethod
-    def _to_model(event: TraceEvent) -> TraceEventModel:
-        """Convert a domain TraceEvent to its ORM model."""
+    def _to_model(event: TraceEvent, *, user_id: str = "") -> TraceEventModel:
+        """Convert a domain TraceEvent to its ORM model.
+
+        Args:
+            event: The domain event to convert.
+            user_id: Owner to denormalize onto the row (defaults to ``""``).
+        """
         return TraceEventModel(
             id=event.id,
             thread_id=event.thread_id,
@@ -186,4 +216,5 @@ class PostgresTraceEventRepository(TraceEventRepository):
             event_metadata=event.metadata,
             timestamp=event.timestamp,
             sequence=event.sequence,
+            user_id=user_id,
         )

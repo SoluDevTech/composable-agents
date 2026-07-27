@@ -196,6 +196,25 @@ def mock_config_repository():
         )
         for name in sorted(AGENTS)
     ]
+
+    # ``get`` mirrors the RLS-filtered Postgres repository: returns metadata
+    # for known agents, raises AgentNotFoundError for unknown ones. This is
+    # what GetAgentConfigUseCase now relies on for the ownership check before
+    # touching the shared MinIO bucket.
+    async def _get(name):
+        from src.domain.errors.agent import AgentNotFoundError
+
+        if name not in AGENTS:
+            raise AgentNotFoundError(f"Agent config not found: {name}")
+        return AgentConfigMetadata(
+            name=name,
+            model="test-model",
+            minio_path=f"{name}.yaml",
+            created_at=now,
+            updated_at=now,
+        )
+
+    repo.get.side_effect = _get
     return repo
 
 
@@ -226,7 +245,7 @@ def _override_dependencies(stub_registry, thread_repo, trace_repo, mock_config_s
         return DeleteThreadUseCase(thread_repo)
 
     def _get_agent_config():
-        return GetAgentConfigUseCase(yaml_loader, mock_config_store)
+        return GetAgentConfigUseCase(yaml_loader, mock_config_store, mock_config_repository)
 
     def _list_agent_configs():
         return ListAgentConfigsUseCase(mock_config_repository)
@@ -240,9 +259,16 @@ def _override_dependencies(stub_registry, thread_repo, trace_repo, mock_config_s
     def _delete_agent_config():
         return DeleteAgentConfigUseCase(mock_config_store, mock_config_repository, stub_registry)
 
-    # Bypass API key security for route tests — security is covered by
-    # tests/unit/test_security.py with a dedicated minimal app.
-    app.dependency_overrides[security.verify_api_key] = lambda: ""
+    # Bypass dual-auth security for route tests — security is covered by
+    # tests/unit/test_security.py and tests/unit/test_verify_credentials_wiring.py
+    # with dedicated apps. The protected router now depends on
+    # ``verify_credentials`` (dual JWT/API-key); we override it to a no-op
+    # returning a fixed AuthContext so the route handlers run without auth.
+    from src.domain.entities.auth.auth_context import AuthContext
+
+    app.dependency_overrides[security.verify_credentials] = lambda: AuthContext(
+        user_id="test-user", method="api_key", raw_credential=""
+    )
 
     app.dependency_overrides[get_send_message_use_case] = _send_message
     app.dependency_overrides[get_stream_message_use_case] = _stream_message
