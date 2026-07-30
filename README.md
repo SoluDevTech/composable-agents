@@ -249,7 +249,7 @@ Every agent is defined by a single YAML file validated against the `AgentConfig`
 | `system_prompt` | `string` | `null` | Inline system prompt. Mutually exclusive with `system_prompt_file`. |
 | `system_prompt_file` | `string` | `null` | Path to a text file containing the system prompt (resolved relative to the YAML file). Mutually exclusive with `system_prompt`. |
 | `tools` | `list[string]` | `[]` | Python tool references in `module.path:attribute` format. |
-| `backend` | `BackendConfig` | `{"type": "state", "store_backend": "memory", "checkpoint_backend": "memory"}` | Persistence backend. See [Backends](#backends). |
+| `backend` | `BackendConfig` | `{"type": "state", "store_backend": "memory", "checkpoint_backend": "postgres"}` | Persistence backend. See [Backends](#backends). |
 | `hitl` | `HITLConfig` | `{"rules": {}}` | Human-in-the-loop interrupt rules. |
 | `memory` | `list[string]` | `[]` | Paths to memory files (e.g. `"./AGENTS.md"`). |
 | `skills` | `list[string]` | `[]` | Paths to skill directories (e.g. `"./skills/"`). |
@@ -509,7 +509,7 @@ The `BackendConfig` schema controls where agent state and checkpoints are persis
 |---|---|---|---|
 | `type` | `BackendType` (`state` \| `store`) | `state` | Backend kind. `state` = in-memory LangGraph state, `store` = LangGraph store-backed. |
 | `store_backend` | `Literal["memory", "postgres"]` | `memory"` | Where the LangGraph store lives. `memory` = in-process, `postgres` = PostgreSQL-backed (singleton reused across all agent builds). |
-| `checkpoint_backend` | `Literal["memory", "postgres"]` | `memory"` | Where the LangGraph checkpointer lives. `memory` = in-process, `postgres` = PostgreSQL-backed (singleton reused across all agent builds). |
+| `checkpoint_backend` | `Literal["memory", "postgres"]` | `"postgres"` | Where the LangGraph checkpointer lives. `memory` = in-process, `postgres` = PostgreSQL-backed (singleton reused across all agent builds). Defaults to `postgres` for durability; falls back to `memory` with a warning if Postgres is unreachable at agent-build time. |
 
 ### Supported `type` values
 
@@ -562,7 +562,7 @@ All endpoints are prefixed appropriately. The server runs on `http://localhost:8
 | `GET` | `/api/v1/threads/{thread_id}/messages` | List messages in a thread (projection from `trace_events`: `HUMAN_MESSAGE` + `AI_MESSAGE` only, backward-compat) | `200` |
 | `POST` | `/api/v1/chat/{thread_id}` | Send a message and get the full response | `200` |
 | `POST` | `/api/v1/chat/{thread_id}/stream` | Send a message and stream the response (SSE) | `200` |
-| `POST` | `/api/v1/threads/{thread_id}/hitl` | Submit a human-in-the-loop decision | `200` |
+| `POST` | `/api/v1/chat/{thread_id}` | Submit a human-in-the-loop decision (approve/reject/edit, single or multi `decisions`) | `200` |
 | `GET` | `/api/v1/agents` | List all agent configs from `agents/` directory | `200` |
 | `GET` | `/api/v1/agents/{agent_name}` | Get a specific agent configuration | `200` |
 | `GET` | `/api/v1/store/files` | List file paths in the store (optional `prefix` query param) | `200` |
@@ -917,15 +917,18 @@ Response (`200`):
 
 ### 10. HITL -- Approve a Pending Tool Call
 
-When the agent is configured with HITL rules and a tool call is interrupted, submit a decision:
+When the agent is configured with HITL rules and one or more tool calls are
+interrupted, submit decisions via `POST /api/v1/chat/{thread_id}`. The preferred
+payload is a `decisions` list (one entry per interrupted tool call):
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/hitl \
+curl -X POST http://localhost:8000/api/v1/chat/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <API_KEY>" \
   -d '{
-    "tool_call_id": "call_abc123",
-    "action": "approve"
+    "decisions": [
+      {"tool_call_id": "call_abc123", "action": "approve"}
+    ]
   }'
 ```
 
@@ -937,33 +940,53 @@ Response (`200`):
   "content": "Action approved. Proceeding with file write.",
   "timestamp": "2025-01-15T10:31:00.000000",
   "tool_calls": null,
-  "tool_call_id": null
+  "status": "completed"
 }
 ```
+
+A legacy single-decision shape (`tool_call_id` + `action`) is still accepted and
+internally converted to a one-element `decisions` list.
 
 ### 11. HITL -- Reject a Pending Tool Call
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/hitl \
+curl -X POST http://localhost:8000/api/v1/chat/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <API_KEY>" \
   -d '{
-    "tool_call_id": "call_abc123",
-    "action": "reject",
-    "reason": "This operation is too risky for production."
+    "decisions": [
+      {"tool_call_id": "call_abc123", "action": "reject", "reason": "This operation is too risky for production."}
+    ]
   }'
 ```
 
 ### 12. HITL -- Edit and Approve a Pending Tool Call
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/threads/a1b2c3d4-e5f6-7890-abcd-ef1234567890/hitl \
+curl -X POST http://localhost:8000/api/v1/chat/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
   -H "Content-Type: application/json" \
   -H "X-API-Key: <API_KEY>" \
   -d '{
-    "tool_call_id": "call_abc123",
-    "action": "edit",
-    "edits": {"filename": "safe_output.txt", "content": "sanitized content"}
+    "decisions": [
+      {"tool_call_id": "call_abc123", "action": "edit", "edits": {"filename": "safe_output.txt", "content": "sanitized content"}}
+    ]
+  }'
+```
+
+### 12b. HITL -- Multiple Tool Calls in One Resume
+
+When several tool calls are interrupted in the same turn, provide one decision
+per tool call (positional order matches the interrupted actions):
+
+```bash
+curl -X POST http://localhost:8000/api/v1/chat/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: <API_KEY>" \
+  -d '{
+    "decisions": [
+      {"tool_call_id": "call_001", "action": "approve"},
+      {"tool_call_id": "call_002", "action": "reject", "reason": "Not safe"}
+    ]
   }'
 ```
 

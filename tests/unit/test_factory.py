@@ -197,12 +197,19 @@ class TestStoreBackendResolution:
 
 
 class TestPostgresStoreCheckpointer:
-    """Tests for the checkpoint_backend resolution."""
+    """Tests for the checkpoint_backend resolution.
+
+    The default checkpoint_backend is now ``postgres`` (async-only). The
+    memory checkpointer is only used when explicitly requested via
+    ``backend={"checkpoint_backend": "memory"}``.
+    """
 
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
-    async def test_memory_checkpointer_used_by_default(self, mock_create):
-        """When checkpoint_backend=memory (default), MemorySaver should be used."""
+    @patch("src.infrastructure.deepagent.factory._create_postgres_checkpointer")
+    async def test_postgres_checkpointer_used_by_default(self, mock_pg_cp, mock_create):
+        """By default a Postgres checkpointer (via _create_postgres_checkpointer) is used."""
         # Arrange
+        mock_pg_cp.return_value = MagicMock()
         mock_create.return_value = MagicMock()
         config = AgentConfig(name="test")
 
@@ -211,9 +218,7 @@ class TestPostgresStoreCheckpointer:
 
         # Assert
         kwargs = mock_create.call_args.kwargs
-        from langgraph.checkpoint.memory import MemorySaver
-
-        assert isinstance(kwargs["checkpointer"], MemorySaver)
+        assert kwargs["checkpointer"] is mock_pg_cp.return_value
 
     @patch("src.infrastructure.deepagent.factory.create_deep_agent")
     @patch("src.infrastructure.deepagent.factory._create_postgres_checkpointer")
@@ -233,6 +238,25 @@ class TestPostgresStoreCheckpointer:
         # Assert
         kwargs = mock_create.call_args.kwargs
         assert kwargs["checkpointer"] is mock_pg_cp.return_value
+
+    @patch("src.infrastructure.deepagent.factory.create_deep_agent")
+    async def test_memory_checkpointer_used_when_explicitly_set(self, mock_create):
+        """When checkpoint_backend=memory is set explicitly, a MemorySaver is used."""
+        # Arrange
+        mock_create.return_value = MagicMock()
+        config = AgentConfig(
+            name="test",
+            backend={"type": "store", "checkpoint_backend": "memory"},
+        )
+
+        # Act
+        await create_agent_from_config(config)
+
+        # Assert
+        kwargs = mock_create.call_args.kwargs
+        from langgraph.checkpoint.memory import MemorySaver
+
+        assert isinstance(kwargs["checkpointer"], MemorySaver)
 
 
 class TestMiddlewareRemovedFromFactory:

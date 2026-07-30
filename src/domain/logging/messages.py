@@ -172,6 +172,11 @@ class LogMessage(StrEnum):
     HITL_EDIT = "[thread=%s] HITL edit, tool_call_id=%s"
     HITL_EDIT_COMPLETE = "[thread=%s] HITL edit complete, elapsed=%.2fs"
     HITL_EDIT_ERROR_LOG = "HITL edit error"
+    HITL_RESUME = "[thread=%s] HITL resume, decisions=%d"
+    HITL_RESUME_COMPLETE = "[thread=%s] HITL resume complete, elapsed=%.2fs, status=%s"
+    HITL_RESUME_ERROR_LOG = "HITL resume error"
+    HITL_NO_PENDING_INTERRUPT = "[thread=%s] HITL resume aborted: no pending interrupt"
+    CHECKPOINTER_POSTGRES_UNAVAILABLE = "Postgres checkpointer unavailable, falling back to MemorySaver: %s"
 
     # --- DeepAgent runner / ToolNode patching ---
     TOOLS_NODE_MISSING = "No 'tools' node found in graph; cannot patch handle_tool_errors"

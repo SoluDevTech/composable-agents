@@ -1,10 +1,11 @@
-"""SendMessageUseCase — send a message or an HITL decision to the agent.
+"""SendMessageUseCase — send a message or HITL decisions to the agent.
 
-Ticket 3 rewrite: the use case now depends on TraceEventRepository + the new
-runner API ``invoke(thread_id, message, turn_id) -> (Message, list[TraceEvent])``.
-The full trace is persisted in a single batch via ``trace_repo.add_batch``.
-The HITL path (approve/reject/edit) returns the runner Message directly
-without persisting trace events.
+The use case depends on TraceEventRepository + the runner API
+``invoke(thread_id, message, turn_id) -> (Message, list[TraceEvent])`` and the
+unified HITL resume method
+``resume_hitl(thread_id, decisions, turn_id) -> (Message, list[TraceEvent])``.
+The full trace is persisted in a single batch via ``trace_repo.add_batch`` for
+both the human-message and the HITL resume paths.
 """
 
 import logging
@@ -12,6 +13,7 @@ import time
 import uuid
 from typing import Any
 
+from src.domain.entities.hitl_decision import HitlDecision
 from src.domain.entities.message import Message
 from src.domain.errors.hitl import InvalidHitlActionError
 from src.domain.errors.messages import ErrorMessage
@@ -24,14 +26,17 @@ logger = logging.getLogger(__name__)
 
 
 class SendMessageUseCase:
-    """Send a human message or an HITL decision to the agent and return the response.
+    """Send a human message or HITL decisions to the agent and return the response.
 
     For a human message: generates a fresh ``turn_id``, invokes the runner,
     persists the full trace in a batch, and returns the final AI Message.
 
-    For HITL decisions (approve/reject/edit): calls the corresponding runner
-    method and returns the Message directly (no trace persistence — HITL does
-    not currently emit trace events).
+    For HITL decisions (approve/reject/edit, single or multiple): generates a
+    fresh ``turn_id``, calls ``runner.resume_hitl`` with the decisions list,
+    persists the returned trace in a batch, and returns the final AI Message.
+    The legacy single-decision shape (``action`` + ``tool_call_id`` +
+    optional ``reason``/``edits``) is converted into a one-element decisions
+    list for backward compatibility.
     """
 
     def __init__(self, registry: AgentRegistry, threads: ThreadRepository, trace_repo: TraceEventRepository) -> None:
@@ -45,19 +50,21 @@ class SendMessageUseCase:
         *,
         message: str | None = None,
         action: str | None = None,
-        tool_call_id: str | None = None,  # noqa: ARG002
-        reason: str | None = None,  # noqa: ARG002
-        edits: dict[str, Any] | None = None,  # noqa: ARG002
+        tool_call_id: str | None = None,
+        reason: str | None = None,
+        edits: dict[str, Any] | None = None,
+        decisions: list[HitlDecision] | None = None,
     ) -> Message:
         """Execute the use case.
 
         Args:
             thread_id: Conversation thread identifier.
             message: Human message text (mutually exclusive with HITL fields).
-            action: HITL action ("approve", "reject", "edit").
-            tool_call_id: Tool call id targeted by the HITL decision.
-            reason: Optional reject reason.
-            edits: Edited args for the "edit" action.
+            action: Legacy single HITL action ("approve", "reject", "edit").
+            tool_call_id: Tool call id targeted by a legacy single HITL decision.
+            reason: Optional reject reason (legacy single decision).
+            edits: Edited args for the "edit" action (legacy single decision).
+            decisions: List of HITL decisions (new multi-decision contract).
 
         Returns:
             The final AI Message.
@@ -67,13 +74,9 @@ class SendMessageUseCase:
             AgentError: On runner failure.
             ThreadNotFoundError: If the thread does not exist.
         """
-        # Validate HITL action name up-front to keep the 422 contract intact.
-        if message is None:
-            match action:
-                case "approve" | "reject" | "edit":
-                    pass
-                case _:
-                    raise InvalidHitlActionError(ErrorMessage.INVALID_HITL_ACTION.format(action=action))
+        is_hitl = message is None
+        if is_hitl and decisions is None and action not in {"approve", "reject", "edit"}:
+            raise InvalidHitlActionError(ErrorMessage.INVALID_HITL_ACTION.format(action=action))
 
         thread = await self._threads.get(thread_id)
         runner = await self._registry.get_runner(thread.agent_name)
@@ -83,7 +86,6 @@ class SendMessageUseCase:
             turn_id = str(uuid.uuid4())
             start = time.monotonic()
             final_message, trace = await runner.invoke(thread_id, message, turn_id)
-            # Persist all trace events of the turn in a single batch.
             await self._trace_repo.add_batch(thread_id, trace)
             elapsed = time.monotonic() - start
             logger.info(
@@ -96,19 +98,14 @@ class SendMessageUseCase:
             )
             return final_message
 
-        # HITL path — returns the runner Message directly, no trace persistence.
-        logger.info(LogMessage.CHAT_HITL_RECEIVED, thread_id, thread.agent_name, action, tool_call_id)
+        if decisions is None:
+            decisions = [HitlDecision(tool_call_id=tool_call_id, action=action, reason=reason, edits=edits)]  # type: ignore[arg-type]
+
+        logger.info(LogMessage.CHAT_HITL_RECEIVED, thread_id, thread.agent_name, "decisions", len(decisions))
+        turn_id = str(uuid.uuid4())
         start = time.monotonic()
-        match action:
-            case "approve":
-                response = await runner.approve_hitl(thread_id, tool_call_id)  # type: ignore[arg-type]
-            case "reject":
-                response = await runner.reject_hitl(thread_id, tool_call_id, reason)  # type: ignore[arg-type]
-            case "edit":
-                response = await runner.edit_hitl(thread_id, tool_call_id, edits)  # type: ignore[arg-type]
-            case _:
-                # Defensive — already validated above, but keeps mypy happy.
-                raise InvalidHitlActionError(ErrorMessage.INVALID_HITL_ACTION.format(action=action))
+        final_message, trace = await runner.resume_hitl(thread_id, decisions, turn_id)
+        await self._trace_repo.add_batch(thread_id, trace)
         elapsed = time.monotonic() - start
-        logger.info(LogMessage.CHAT_HITL_COMPLETE, thread_id, thread.agent_name, elapsed, response.status)
-        return response
+        logger.info(LogMessage.CHAT_HITL_COMPLETE, thread_id, thread.agent_name, elapsed, final_message.status)
+        return final_message

@@ -195,8 +195,8 @@ class TestBackendConfigChanges:
         assert not hasattr(BackendType, "COMPOSITE")
         assert not hasattr(BackendType, "STATE")
 
-    def test_backend_config_has_checkpoint_backend_default_memory(self):
-        """BackendConfig should default checkpoint_backend to 'memory'."""
+    def test_backend_config_has_checkpoint_backend_default_postgres(self):
+        """BackendConfig should default checkpoint_backend to 'postgres'."""
         # Arrange
         config = BackendConfig()
 
@@ -204,7 +204,7 @@ class TestBackendConfigChanges:
         checkpoint_backend = config.checkpoint_backend
 
         # Assert
-        assert checkpoint_backend == "memory"
+        assert checkpoint_backend == "postgres"
 
     def test_backend_config_accepts_postgres_checkpoint_backend(self):
         """BackendConfig should accept checkpoint_backend='postgres'."""

@@ -114,15 +114,48 @@ def mock_runner():
         )
 
     runner.invoke.side_effect = _invoke
-    runner.approve_hitl.return_value = Message(
-        role=MessageRole.AI, content="Action approved.", status=MessageStatus.COMPLETED
-    )
-    runner.reject_hitl.return_value = Message(
-        role=MessageRole.AI, content="Action rejected: Too risky", status=MessageStatus.COMPLETED
-    )
-    runner.edit_hitl.return_value = Message(
-        role=MessageRole.AI, content="Action edited and approved.", status=MessageStatus.COMPLETED
-    )
+
+    async def _resume_approve(_thread_id: str, _decisions, _turn_id: str):
+        msg = Message(role=MessageRole.AI, content="Action approved.", status=MessageStatus.COMPLETED)
+        return (
+            msg,
+            [
+                _trace_event(_thread_id, _turn_id, TraceEventType.HITL_DECISION, "approve", seq=0),
+                _trace_event(_thread_id, _turn_id, TraceEventType.AI_MESSAGE, msg.model_dump_json(), seq=1),
+            ],
+        )
+
+    async def _resume_reject(_thread_id: str, _decisions, _turn_id: str):
+        msg = Message(role=MessageRole.AI, content="Action rejected: Too risky", status=MessageStatus.COMPLETED)
+        return (
+            msg,
+            [
+                _trace_event(_thread_id, _turn_id, TraceEventType.HITL_DECISION, "reject", seq=0),
+                _trace_event(_thread_id, _turn_id, TraceEventType.AI_MESSAGE, msg.model_dump_json(), seq=1),
+            ],
+        )
+
+    async def _resume_edit(_thread_id: str, _decisions, _turn_id: str):
+        msg = Message(role=MessageRole.AI, content="Action edited and approved.", status=MessageStatus.COMPLETED)
+        return (
+            msg,
+            [
+                _trace_event(_thread_id, _turn_id, TraceEventType.HITL_DECISION, "edit", seq=0),
+                _trace_event(_thread_id, _turn_id, TraceEventType.AI_MESSAGE, msg.model_dump_json(), seq=1),
+            ],
+        )
+
+    async def _resume_hitl(_thread_id: str, decisions, _turn_id: str):
+        if not decisions:
+            return Message(role=MessageRole.AI, content="", status=MessageStatus.COMPLETED), []
+        action = decisions[0].action
+        if action == "approve":
+            return await _resume_approve(_thread_id, decisions, _turn_id)
+        if action == "reject":
+            return await _resume_reject(_thread_id, decisions, _turn_id)
+        return await _resume_edit(_thread_id, decisions, _turn_id)
+
+    runner.resume_hitl.side_effect = _resume_hitl
 
     async def mock_stream(_thread_id, _message, _turn_id):
         # Yield a full TraceEvent sequence: HUMAN_MESSAGE, intermediates, AI_MESSAGE.

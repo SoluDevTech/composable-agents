@@ -44,6 +44,18 @@ class ErrorMessage(StrEnum):
     AGENT_HITL_APPROVE_ERROR = "HITL approve error: {error}"
     AGENT_HITL_REJECT_ERROR = "HITL reject error: {error}"
     AGENT_HITL_EDIT_ERROR = "HITL edit error: {error}"
+    AGENT_HITL_RESUME_ERROR = "HITL resume error: {error}"
+    AGENT_HITL_NO_PENDING_INTERRUPT = (
+        "HITL resume failed: no pending interrupt to resume (nothing to resume) for thread {thread_id}."
+    )
+    AGENT_HITL_UNKNOWN_TOOL_CALL = (
+        "HITL resume failed: unknown tool_call_id {tool_call_id} (not found in pending interrupts) "
+        "for thread {thread_id}."
+    )
+    AGENT_HITL_MISSING_DECISION = (
+        "HITL resume failed: missing decision for {pending} interrupted tool call(s) "
+        "(mismatch with provided {provided}) for thread {thread_id}."
+    )
     AGENT_STREAM_IDLE_TIMEOUT = (
         "Agent stream idle for {timeout}s (thread={thread_id}); aborting — a tool result "
         "was likely lost (flaky transport)."

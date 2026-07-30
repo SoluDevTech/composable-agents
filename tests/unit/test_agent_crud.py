@@ -560,7 +560,9 @@ class TestGetAgentConfigUseCase:
         )
         return mock_agent_config_repository
 
-    async def test_returns_config_with_name_when_found(self, use_case, mock_agent_config_store, repo_returns_test_agent):
+    async def test_returns_config_with_name_when_found(
+        self, use_case, mock_agent_config_store, repo_returns_test_agent
+    ):
         """Should return parsed config with the agent name."""
         # Arrange
         mock_agent_config_store.get.return_value = VALID_YAML
@@ -571,7 +573,9 @@ class TestGetAgentConfigUseCase:
         # Assert
         assert result.name == "test-agent"
 
-    async def test_returns_config_with_model_when_found(self, use_case, mock_agent_config_store, repo_returns_test_agent):
+    async def test_returns_config_with_model_when_found(
+        self, use_case, mock_agent_config_store, repo_returns_test_agent
+    ):
         """Should return parsed config with the YAML model."""
         # Arrange
         mock_agent_config_store.get.return_value = VALID_YAML
@@ -582,7 +586,9 @@ class TestGetAgentConfigUseCase:
         # Assert
         assert result.model == "claude-sonnet-4-5-20250929"
 
-    async def test_returns_config_with_system_prompt_when_found(self, use_case, mock_agent_config_store, repo_returns_test_agent):
+    async def test_returns_config_with_system_prompt_when_found(
+        self, use_case, mock_agent_config_store, repo_returns_test_agent
+    ):
         """Should return parsed config with the YAML system_prompt."""
         # Arrange
         mock_agent_config_store.get.return_value = VALID_YAML

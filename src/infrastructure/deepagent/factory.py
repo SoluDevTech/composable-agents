@@ -601,7 +601,11 @@ async def create_agent_from_config(
     """
     logger.info(LogMessage.AGENT_CREATING, config.name, config.model)
     if config.backend.checkpoint_backend == "postgres":
-        checkpointer = await _create_postgres_checkpointer()
+        try:
+            checkpointer = await _create_postgres_checkpointer()
+        except Exception as e:
+            logger.warning(LogMessage.CHECKPOINTER_POSTGRES_UNAVAILABLE, e)
+            checkpointer = MemorySaver()
     else:
         checkpointer = MemorySaver()
 

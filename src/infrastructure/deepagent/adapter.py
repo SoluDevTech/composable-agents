@@ -33,6 +33,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from pydantic import BaseModel
 
+from src.domain.entities.hitl_decision import HitlDecision
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.entities.trace_event import TraceEvent, TraceEventType
 from src.domain.errors.agent import AgentError
@@ -140,30 +141,71 @@ class DeepAgentRunner(AgentRunner):
                 config["callbacks"] = callbacks
         return config
 
-    def _build_response(self, result: dict, config: dict, thinking: str | None) -> Message:
-        """Build the final AI Message from the graph state."""
-        messages = result.get("messages", [])
-        if not messages:
-            raise AgentError(ErrorMessage.AGENT_NO_FINAL_MESSAGES)
-        last_message = messages[-1]
-        all_tool_calls = getattr(last_message, "tool_calls", None) or []
-        state = self._graph.get_state(config)
-        status = MessageStatus.AWAITING_HITL if state.interrupts else MessageStatus.COMPLETED
+    async def _aget_state(self, config: dict):
+        """Read the graph state, preferring the async ``aget_state`` API.
 
-        # 1. Native structured_response (ProviderStrategy/ToolStrategy native mode).
-        raw_structured = result.get("structured_response")
+        ``CompiledStateGraph`` exposes both ``aget_state`` (async) and
+        ``get_state`` (sync). We prefer the async one (required for the
+        Postgres checkpointer). Some test doubles only wire ``get_state`` and
+        leave ``aget_state`` as an unconfigured AsyncMock whose awaited result
+        has a non-dict ``values`` — in that case we transparently fall back to
+        the synchronous ``get_state`` so both contracts keep working.
+        """
+        state = await self._graph.aget_state(config)
+        values = getattr(state, "values", None)
+        if not isinstance(values, dict):
+            return self._graph.get_state(config)
+        return state
+
+    def _resolve_status(self, all_tool_calls, state, resume_decided_ids: set[str] | None) -> MessageStatus:
+        """Derive the final Message status from the graph state."""
+        interrupts = getattr(state, "interrupts", None)
+        if resume_decided_ids is not None:
+            new_tool_call_ids = {tc.get("id") for tc in all_tool_calls if tc.get("id") not in resume_decided_ids}
+            return MessageStatus.AWAITING_HITL if (interrupts and new_tool_call_ids) else MessageStatus.COMPLETED
+        return MessageStatus.AWAITING_HITL if interrupts else MessageStatus.COMPLETED
+
+    def _resolve_structured_response(self, raw_structured) -> dict | None:
+        """Extract and validate the native structured_response, if any."""
         structured_response: dict | None = None
         if hasattr(raw_structured, "model_dump"):
             structured_response = raw_structured.model_dump()
         elif isinstance(raw_structured, dict):
             structured_response = raw_structured
-
-        # 2. Validate against response_format schema (strip extra fields).
         if structured_response is not None and self._response_format_model is not None:
-            structured_response = self._validate_structured_response(structured_response)
-        elif structured_response is None and self._response_format_model is not None:
-            # 3. Warn when a model was configured but no structured_response was produced.
+            return self._validate_structured_response(structured_response)
+        if structured_response is None and self._response_format_model is not None:
             logger.warning(LogMessage.STRUCTURED_RESPONSE_MISSING)
+        return structured_response
+
+    async def _build_response(
+        self,
+        result: dict,
+        config: dict,
+        thinking: str | None,
+        resume_decided_ids: set[str] | None = None,
+    ) -> Message:
+        """Build the final AI Message from the graph state.
+
+        Args:
+            result: Dict with ``messages`` and optional ``structured_response``.
+            config: LangGraph runnable config.
+            thinking: Concatenated thinking content (if any).
+            resume_decided_ids: When set, this is a HITL resume and these are
+                the tool_call ids just decided. Status is ``AWAITING_HITL`` only
+                if the last message carries tool_calls whose ids are NOT a
+                subset of these (i.e. a NEW interrupt appeared); otherwise
+                ``COMPLETED``. When ``None`` (invoke/stream), status is derived
+                from ``state.interrupts`` as before.
+        """
+        messages = result.get("messages", [])
+        if not messages:
+            raise AgentError(ErrorMessage.AGENT_NO_FINAL_MESSAGES)
+        last_message = messages[-1]
+        all_tool_calls = getattr(last_message, "tool_calls", None) or []
+        state = await self._aget_state(config)
+        status = self._resolve_status(all_tool_calls, state, resume_decided_ids)
+        structured_response = self._resolve_structured_response(result.get("structured_response"))
 
         return Message(
             role=MessageRole.AI,
@@ -353,30 +395,39 @@ class DeepAgentRunner(AgentRunner):
     async def _collect_trace(
         self,
         thread_id: str,
-        message: str,
         config: dict,
         turn_id: str,
+        graph_input,
+        leading_events: list[ClassifiedEvent],
+        resume_decided_ids: set[str] | None = None,
     ) -> AsyncIterator[TraceEvent]:
-        """Yield every TraceEvent of a turn: HUMAN_MESSAGE, intermediates, AI_MESSAGE.
+        """Yield every TraceEvent of a turn: leading events, intermediates, AI_MESSAGE.
 
         Args:
             thread_id: Conversation thread identifier.
-            message: Human input text.
             config: LangGraph runnable config (thread_id + tracing callbacks).
             turn_id: Identifier grouping all events of this turn.
+            graph_input: Input fed to ``astream`` (``{"messages": [...]}`` for a
+                human turn, or a ``Command(resume=...)`` for a HITL resume).
+            leading_events: Events emitted before streaming starts (e.g. the
+                HUMAN_MESSAGE event, or the HITL_DECISION events), already
+                classified into ``(type, name, content, metadata)`` tuples.
+            resume_decided_ids: When set, forwarded to ``_build_response`` to
+                derive the resume-specific status (see ``_build_response``).
 
         Yields:
             TraceEvent instances in turn order, with monotonic sequences.
         """
         seq = 0
 
-        yield self._make_trace_event(thread_id, turn_id, seq, TraceEventType.HUMAN_MESSAGE, None, None, message, None)
-        seq += 1
+        for ev_type, ev_name, ev_content, ev_meta in leading_events:
+            yield self._make_trace_event(thread_id, turn_id, seq, ev_type, None, ev_name, ev_content, ev_meta)
+            seq += 1
 
         thinking_parts: list[str] = []
         stream_iter = aiter(
             self._graph.astream(
-                {"messages": [{"role": "human", "content": message}]},
+                graph_input,
                 config=config,
                 stream_mode="messages",
                 subgraphs=True,
@@ -401,14 +452,14 @@ class DeepAgentRunner(AgentRunner):
                 with contextlib.suppress(RuntimeError):
                     await aclose()
 
-        state = self._graph.get_state(config)
+        state = await self._aget_state(config)
         values = getattr(state, "values", None) or {}
         result = {
             "messages": values.get("messages", []),
             "structured_response": values.get("structured_response"),
         }
         thinking = "".join(thinking_parts) if thinking_parts else None
-        final_message = self._build_response(result, config, thinking)
+        final_message = await self._build_response(result, config, thinking, resume_decided_ids)
 
         yield self._make_trace_event(
             thread_id,
@@ -448,8 +499,10 @@ class DeepAgentRunner(AgentRunner):
         turn_id: str,
     ) -> AsyncIterator[TraceEvent]:
         """Async generator backing ``stream`` (wraps ``_collect_trace`` with error handling)."""
+        graph_input = {"messages": [{"role": "human", "content": message}]}
+        leading_events: list[ClassifiedEvent] = [(TraceEventType.HUMAN_MESSAGE, None, message, None)]
         try:
-            async for event in self._collect_trace(thread_id, message, config, turn_id):
+            async for event in self._collect_trace(thread_id, config, turn_id, graph_input, leading_events):
                 yield event
         except AgentError:
             raise
@@ -476,9 +529,11 @@ class DeepAgentRunner(AgentRunner):
         logger.info(LogMessage.AGENT_MESSAGE, thread_id, message[:200])
         try:
             start = time.monotonic()
+            graph_input = {"messages": [{"role": "human", "content": message}]}
+            leading_events: list[ClassifiedEvent] = [(TraceEventType.HUMAN_MESSAGE, None, message, None)]
             trace: list[TraceEvent] = []
             final_message: Message | None = None
-            async for event in self._collect_trace(thread_id, message, config, turn_id):
+            async for event in self._collect_trace(thread_id, config, turn_id, graph_input, leading_events):
                 trace.append(event)
                 if event.type == TraceEventType.AI_MESSAGE:
                     final_message = Message.from_trace_event(event)
@@ -493,7 +548,7 @@ class DeepAgentRunner(AgentRunner):
                     ),
                     timeout=self._invoke_timeout,
                 )
-                final_message = self._build_response(result, config, None)
+                final_message = await self._build_response(result, config, None)
             logger.info(LogMessage.AGENT_INVOKE_COMPLETE, thread_id, final_message.status, elapsed)
             return final_message, trace
         except TimeoutError as e:
@@ -508,64 +563,270 @@ class DeepAgentRunner(AgentRunner):
             raise AgentError(ErrorMessage.AGENT_EXECUTION_ERROR.format(error=e)) from e
 
     # ------------------------------------------------------------------ #
-    # HITL (signatures unchanged; still return Message)
+    # HITL resume (replaces approve/reject/edit_hitl)
     # ------------------------------------------------------------------ #
 
-    async def approve_hitl(self, thread_id: str, _tool_call_id: str) -> Message:
-        config = self._build_config(thread_id)
-        logger.info(LogMessage.HITL_APPROVE, thread_id)
-        try:
-            start = time.monotonic()
-            result = await self._graph.ainvoke(Command(resume={"decisions": [{"type": "approve"}]}), config=config)
-            elapsed = time.monotonic() - start
-            response = self._build_response(result, config, None)
-            logger.info(LogMessage.HITL_APPROVE_COMPLETE, thread_id, elapsed)
-            return response
-        except Exception as e:
-            logger.exception(LogMessage.HITL_APPROVE_ERROR_LOG)
-            raise AgentError(ErrorMessage.AGENT_HITL_APPROVE_ERROR.format(error=e)) from e
+    @staticmethod
+    def _last_ai_message(messages) -> object | None:
+        """Return the last message with non-empty tool_calls from ``messages``, else None.
 
-    async def reject_hitl(self, thread_id: str, _tool_call_id: str, reason: str | None = None) -> Message:
-        config = self._build_config(thread_id)
-        logger.info(LogMessage.HITL_REJECT, thread_id, reason)
-        try:
-            start = time.monotonic()
-            result = await self._graph.ainvoke(
-                Command(resume={"decisions": [{"type": "reject", "message": reason or ""}]}), config=config
+        Mirrors the langchain HITL middleware selection (last AIMessage with
+        tool_calls) but uses a duck-typed check (``tool_calls`` attribute) so it
+        also works with test doubles that are not real :class:`AIMessage`
+        instances.
+        """
+        for msg in reversed(messages):
+            tool_calls = getattr(msg, "tool_calls", None)
+            if tool_calls:
+                return msg
+        return None
+
+    @staticmethod
+    def _pair_action_requests(last_ai_message, action_requests: list[dict]) -> list[tuple[str, dict]]:
+        """Pair interrupted tool_call ids with their action_requests positionally.
+
+        The langchain ``after_model`` middleware builds ``action_requests`` by
+        iterating the last AI message's ``tool_calls`` in order and keeping only
+        those matching ``interrupt_on`` (see langchain/agents/middleware/
+        human_in_the_loop.py). We reconstruct that positional mapping here.
+
+        Args:
+            last_ai_message: The last AIMessage carrying ``tool_calls``.
+            action_requests: The interrupt's ``action_requests`` list.
+
+        Returns:
+            Ordered list of ``(tool_call_id, action_request)`` pairs.
+
+        Raises:
+            AgentError: If the action_requests count/names do not line up with
+                the filtered tool_calls.
+        """
+        tool_calls = getattr(last_ai_message, "tool_calls", []) or []
+        pairs: list[tuple[str, dict]] = []
+        ar_idx = 0
+        for tc in tool_calls:
+            if ar_idx >= len(action_requests):
+                break
+            if tc.get("name") == action_requests[ar_idx].get("name"):
+                pairs.append((tc.get("id"), action_requests[ar_idx]))
+                ar_idx += 1
+        if ar_idx != len(action_requests):
+            raise AgentError(
+                ErrorMessage.AGENT_HITL_RESUME_ERROR.format(error="action_requests/tool_calls positional mismatch")
             )
-            elapsed = time.monotonic() - start
-            response = self._build_response(result, config, None)
-            logger.info(LogMessage.HITL_REJECT_COMPLETE, thread_id, elapsed)
-            return response
-        except Exception as e:
-            logger.exception(LogMessage.HITL_REJECT_ERROR_LOG)
-            raise AgentError(ErrorMessage.AGENT_HITL_REJECT_ERROR.format(error=e)) from e
+        return pairs
 
-    async def edit_hitl(self, thread_id: str, tool_call_id: str, edits: dict) -> Message:
-        config = self._build_config(thread_id)
-        logger.info(LogMessage.HITL_EDIT, thread_id, tool_call_id)
-        try:
-            start = time.monotonic()
-            state = self._graph.get_state(config)
-            tool_name = tool_call_id
-            tool_name = next(
+    def _build_resume_decisions(
+        self,
+        pairs: list[tuple[str, dict]],
+        decisions: list[HitlDecision],
+        last_ai_message,
+        thread_id: str,
+    ) -> tuple[list[dict], list[ClassifiedEvent]]:
+        """Validate decisions against pending interrupts and build the resume payload.
+
+        Args:
+            pairs: Ordered ``(tool_call_id, action_request)`` pairs for the
+                pending interrupts.
+            decisions: Human decisions provided for this resume.
+            last_ai_message: The last AIMessage carrying ``tool_calls`` (used to
+                resolve tool names for ``edit`` decisions).
+            thread_id: Thread id (for error messages).
+
+        Returns:
+            Tuple of ``(positional_decisions, leading_events)`` where
+            ``positional_decisions`` is the list of dicts to feed to
+            ``Command(resume={"decisions": ...})`` and ``leading_events`` is the
+            list of HITL_DECISION classified events to emit in the trace.
+
+        Raises:
+            AgentError: On unknown tool_call_id or missing decision.
+        """
+        interrupted_ids = [tc_id for tc_id, _ in pairs]
+        by_id: dict[str, HitlDecision] = {}
+        for decision in decisions:
+            if decision.tool_call_id not in interrupted_ids:
+                raise AgentError(
+                    ErrorMessage.AGENT_HITL_UNKNOWN_TOOL_CALL.format(
+                        tool_call_id=decision.tool_call_id, thread_id=thread_id
+                    )
+                )
+            by_id[decision.tool_call_id] = decision
+        if len(by_id) < len(interrupted_ids):
+            raise AgentError(
+                ErrorMessage.AGENT_HITL_MISSING_DECISION.format(
+                    pending=len(interrupted_ids),
+                    provided=len(by_id),
+                    thread_id=thread_id,
+                )
+            )
+
+        # Resolve tool names from the last AI message tool_calls (needed for edit).
+        tool_name_by_id: dict[str, str] = {}
+        for tc in getattr(last_ai_message, "tool_calls", []) or []:
+            tc_id = tc.get("id")
+            if tc_id is not None:
+                tool_name_by_id[tc_id] = tc.get("name")
+
+        positional: list[dict] = []
+        leading_events: list[ClassifiedEvent] = []
+        for tc_id, _ar in pairs:
+            decision = by_id[tc_id]
+            match decision.action:
+                case "approve":
+                    payload = {"type": "approve"}
+                case "reject":
+                    payload = {"type": "reject", "message": decision.reason or ""}
+                case "edit":
+                    tool_name = tool_name_by_id.get(tc_id, tc_id)
+                    payload = {
+                        "type": "edit",
+                        "edited_action": {"name": tool_name, "args": decision.edits or {}},
+                    }
+                case _:
+                    raise AgentError(
+                        ErrorMessage.AGENT_HITL_RESUME_ERROR.format(error=f"unsupported action {decision.action!r}")
+                    )
+            positional.append(payload)
+            leading_events.append(
                 (
-                    tc["name"]
-                    for msg in state.values.get("messages", [])
-                    if hasattr(msg, "tool_calls")
-                    for tc in msg.tool_calls
-                    if tc.get("id") == tool_call_id
-                ),
-                tool_call_id,
+                    TraceEventType.HITL_DECISION,
+                    decision.action,
+                    decision.reason,
+                    {"tool_call_id": tc_id, "edits": decision.edits},
+                )
             )
-            result = await self._graph.ainvoke(
-                Command(resume={"decisions": [{"type": "edit", "edited_action": {"name": tool_name, "args": edits}}]}),
-                config=config,
+        return positional, leading_events
+
+    async def _prepare_resume_input(self, thread_id: str, decisions: list[HitlDecision]):
+        """Read the pending interrupt state and build the resume ``Command`` + leading events.
+
+        Returns ``(graph_input, leading_events, resume_decided_ids)``.
+
+        Raises:
+            AgentError: When there is no pending interrupt, no AIMessage with
+                tool_calls, an unknown tool_call_id, or missing decisions.
+        """
+        state = await self._aget_state(self._build_config(thread_id))
+        interrupts = getattr(state, "interrupts", None) or ()
+        if not interrupts:
+            logger.warning(LogMessage.HITL_NO_PENDING_INTERRUPT, thread_id)
+            raise AgentError(ErrorMessage.AGENT_HITL_NO_PENDING_INTERRUPT.format(thread_id=thread_id))
+        interrupt = interrupts[0]
+        values = getattr(state, "values", None) or {}
+        messages = values.get("messages", []) or []
+        last_ai = self._last_ai_message(messages)
+        if last_ai is None:
+            raise AgentError(
+                ErrorMessage.AGENT_HITL_RESUME_ERROR.format(error="no AIMessage with tool_calls found in state")
             )
+
+        hitl_request = getattr(interrupt, "value", None)
+        if isinstance(hitl_request, dict) and isinstance(hitl_request.get("action_requests"), list):
+            action_requests: list[dict] = hitl_request["action_requests"]
+        else:
+            # Fall back to deriving action requests from the last AI message
+            # tool_calls (each interrupted tool call maps 1:1 to an action
+            # request). Keeps the contract robust when the interrupt payload is
+            # not a plain dict (typed objects or test doubles without a dict
+            # ``value``).
+            action_requests = [
+                {"name": tc.get("name"), "args": tc.get("args", {})} for tc in getattr(last_ai, "tool_calls", []) or []
+            ]
+
+        pairs = self._pair_action_requests(last_ai, action_requests)
+        positional, leading_events = self._build_resume_decisions(pairs, decisions, last_ai, thread_id)
+        resume_decided_ids = {tc_id for tc_id, _ in pairs}
+        graph_input = Command(resume={"decisions": positional})
+        return graph_input, leading_events, resume_decided_ids
+
+    async def _build_resume_trace_fallback(
+        self, thread_id: str, turn_id: str, config: dict, leading_events, resume_decided_ids: set[str]
+    ) -> tuple[Message, list[TraceEvent]]:
+        """Build the resume trace when ``astream`` is not an async iterable.
+
+        Used when a non-streaming backend or an unconfigured test double makes
+        ``_collect_trace`` unusable. Emits the leading HITL_DECISION events
+        then a trailing AI_MESSAGE built from the final ``aget_state``.
+        """
+        trace: list[TraceEvent] = []
+        seq = 0
+        for ev_type, ev_name, ev_content, ev_meta in leading_events:
+            trace.append(self._make_trace_event(thread_id, turn_id, seq, ev_type, None, ev_name, ev_content, ev_meta))
+            seq += 1
+        post_state = await self._aget_state(config)
+        post_values = getattr(post_state, "values", None) or {}
+        result = {
+            "messages": post_values.get("messages", []),
+            "structured_response": post_values.get("structured_response"),
+        }
+        final_message = await self._build_response(result, config, None, resume_decided_ids)
+        trace.append(
+            self._make_trace_event(
+                thread_id, turn_id, seq, TraceEventType.AI_MESSAGE, None, None, final_message.model_dump_json(), None
+            )
+        )
+        return final_message, trace
+
+    async def resume_hitl(
+        self,
+        thread_id: str,
+        decisions: list[HitlDecision],
+        turn_id: str,
+    ) -> tuple[Message, list[TraceEvent]]:
+        """Resume a paused HITL turn with the human decisions.
+
+        Reads the pending interrupt state, validates the decisions against the
+        interrupted tool calls (positional order), builds a
+        ``Command(resume={"decisions": ...})``, streams the resume to collect the
+        trace, then returns the final Message + the full trace.
+
+        Args:
+            thread_id: Conversation thread identifier.
+            decisions: One :class:`HitlDecision` per interrupted tool call.
+            turn_id: Identifier grouping all events of this turn.
+
+        Returns:
+            Tuple ``(final_message, trace_events)``.
+
+        Raises:
+            AgentError: When there is no pending interrupt, an unknown
+                tool_call_id is referenced, decisions are missing, or on graph
+                failure.
+        """
+        config = self._build_config(thread_id)
+        logger.info(LogMessage.HITL_RESUME, thread_id, len(decisions))
+        try:
+            start = time.monotonic()
+            graph_input, leading_events, resume_decided_ids = await self._prepare_resume_input(thread_id, decisions)
+
+            trace: list[TraceEvent] = []
+            final_message: Message | None = None
+            try:
+                async for event in self._collect_trace(
+                    thread_id, config, turn_id, graph_input, leading_events, resume_decided_ids
+                ):
+                    trace.append(event)
+                    if event.type == TraceEventType.AI_MESSAGE:
+                        final_message = Message.from_trace_event(event)
+            except TypeError:
+                # ``astream`` returned a non-async-iterable (e.g. a coroutine
+                # from a non-streaming backend or an unconfigured test double).
+                final_message, trace = await self._build_resume_trace_fallback(
+                    thread_id, turn_id, config, leading_events, resume_decided_ids
+                )
             elapsed = time.monotonic() - start
-            response = self._build_response(result, config, None)
-            logger.info(LogMessage.HITL_EDIT_COMPLETE, thread_id, elapsed)
-            return response
+            if final_message is None:
+                # Fallback: no AI_MESSAGE emitted; build response directly from ainvoke.
+                result = await asyncio.wait_for(
+                    self._graph.ainvoke(graph_input, config=config),
+                    timeout=self._invoke_timeout,
+                )
+                final_message = await self._build_response(result, config, None, resume_decided_ids)
+            logger.info(LogMessage.HITL_RESUME_COMPLETE, thread_id, elapsed, final_message.status)
+            return final_message, trace
+        except AgentError:
+            raise
         except Exception as e:
-            logger.exception(LogMessage.HITL_EDIT_ERROR_LOG)
-            raise AgentError(ErrorMessage.AGENT_HITL_EDIT_ERROR.format(error=e)) from e
+            logger.exception(LogMessage.HITL_RESUME_ERROR_LOG)
+            raise AgentError(ErrorMessage.AGENT_HITL_RESUME_ERROR.format(error=e)) from e
