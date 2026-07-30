@@ -54,6 +54,7 @@ async def send_message(
         tool_call_id=body.tool_call_id,
         reason=body.reason,
         edits=body.edits,
+        decisions=body.decisions,
     )
     logger.info(LogMessage.CHAT_RESPONSE, thread_id, result.status, len(result.content or ""))
     return result

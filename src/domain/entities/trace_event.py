@@ -25,6 +25,7 @@ class TraceEventType(StrEnum):
     CONTENT = "content"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
+    HITL_DECISION = "hitl_decision"
 
 
 class TraceEvent(BaseModel, frozen=True):

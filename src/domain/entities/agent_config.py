@@ -12,7 +12,7 @@ class BackendType(StrEnum):
 
 class BackendConfig(BaseModel):
     type: BackendType = BackendType.STORE
-    checkpoint_backend: Literal["memory", "postgres"] = "memory"
+    checkpoint_backend: Literal["memory", "postgres"] = "postgres"
 
 
 class InterruptRule(BaseModel):

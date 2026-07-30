@@ -1,7 +1,10 @@
-"""Tests for SendMessageUseCase (Ticket 3 rewrite).
+"""Tests for SendMessageUseCase (HITL refactor — TDD red phase).
 
 The use case now depends on TraceEventRepository + the new runner API
-``invoke(thread_id, message, turn_id) -> (Message, list[TraceEvent])``.
+``invoke(thread_id, message, turn_id) -> (Message, list[TraceEvent])`` and the
+unified HITL resume method
+``resume_hitl(thread_id, decisions, turn_id) -> (Message, list[TraceEvent])``.
+
 Internal repositories (PostgresThreadRepository, PostgresTraceEventRepository)
 are used for real; only the LLM runner (AgentRunner) is mocked at the port
 boundary.
@@ -13,6 +16,7 @@ from uuid import uuid4
 import pytest
 
 from src.application.use_cases.send_message import SendMessageUseCase
+from src.domain.entities.hitl_decision import HitlDecision
 from src.domain.entities.message import Message, MessageRole, MessageStatus
 from src.domain.entities.trace_event import TraceEvent, TraceEventType
 from src.domain.errors.agent import AgentError
@@ -59,6 +63,20 @@ def _ai_event(thread_id: str, turn_id: str, message: Message, seq: int = 1) -> T
         turn_id=turn_id,
         type=TraceEventType.AI_MESSAGE,
         content=message.model_dump_json(),
+        timestamp=datetime.now(UTC),
+        sequence=seq,
+    )
+
+
+def _hitl_decision_event(thread_id: str, turn_id: str, name: str, content: str, seq: int) -> TraceEvent:
+    """Build a HITL_DECISION trace event emitted by the runner on resume."""
+    return TraceEvent(
+        id=str(uuid4()),
+        thread_id=thread_id,
+        turn_id=turn_id,
+        type=TraceEventType.HITL_DECISION,
+        name=name,
+        content=content,
         timestamp=datetime.now(UTC),
         sequence=seq,
     )
@@ -144,51 +162,198 @@ class TestSendMessageUseCase:
         events = await trace_repo.list_by_thread(thread.id)
         assert len(events) == 4
 
-    async def test_approve_hitl_returns_message_no_trace(self, use_case, mock_agent_runner, thread_repo, trace_repo):
+    # ------------------------------------------------------------------ #
+    # NEW HITL resume contract (decisions-based)
+    # ------------------------------------------------------------------ #
+
+    async def test_resume_hitl_persists_trace(self, use_case, mock_agent_runner, thread_repo, trace_repo):
         # Arrange
         thread = await thread_repo.create("test-agent")
-        approved = Message(role=MessageRole.AI, content="Action approved.", status=MessageStatus.COMPLETED)
-        mock_agent_runner.approve_hitl.return_value = approved
+        final_message = Message(role=MessageRole.AI, content="Resumed after approval.", status=MessageStatus.COMPLETED)
+        decisions = [HitlDecision(tool_call_id="tc-1", action="approve")]
+
+        captured_turn_ids: list[str] = []
+
+        async def _resume(_tid: str, _decisions, turn_id: str):
+            captured_turn_ids.append(turn_id)
+            hitl_decision_event = _hitl_decision_event(_tid, turn_id, "approve", "tc-1", seq=0)
+            ai_event = _ai_event(_tid, turn_id, final_message, seq=1)
+            return final_message, [hitl_decision_event, ai_event]
+
+        mock_agent_runner.resume_hitl.side_effect = _resume
 
         # Act
+        result = await use_case.execute(thread.id, decisions=decisions)
+
+        # Assert — resume_hitl awaited once with (thread.id, decisions, turn_id)
+        mock_agent_runner.resume_hitl.assert_awaited_once()
+        assert mock_agent_runner.resume_hitl.await_args.args[0] == thread.id
+        assert mock_agent_runner.resume_hitl.await_args.args[1] == decisions
+        # The use case generated a turn_id (non-empty, captured)
+        assert len(captured_turn_ids) == 1
+        assert captured_turn_ids[0] and isinstance(captured_turn_ids[0], str)
+        # And the final message is returned
+        assert result == final_message
+        # And trace events are now persisted (HITL_DECISION then AI_MESSAGE)
+        events = await trace_repo.list_by_thread(thread.id)
+        assert len(events) == 2
+        assert events[0].type == TraceEventType.HITL_DECISION
+        assert events[1].type == TraceEventType.AI_MESSAGE
+
+    async def test_resume_hitl_generates_turn_id(self, use_case, mock_agent_runner, thread_repo, trace_repo):
+        # Arrange — two consecutive resume calls must produce two distinct turns
+        thread = await thread_repo.create("test-agent")
+        msg1 = Message(role=MessageRole.AI, content="first", status=MessageStatus.COMPLETED)
+        msg2 = Message(role=MessageRole.AI, content="second", status=MessageStatus.COMPLETED)
+
+        captured_turn_ids: list[str] = []
+
+        async def _resume1(_tid: str, _decisions, turn_id: str):
+            captured_turn_ids.append(turn_id)
+            return msg1, [
+                _hitl_decision_event(_tid, turn_id, "approve", "tc-1", seq=0),
+                _ai_event(_tid, turn_id, msg1, seq=1),
+            ]
+
+        mock_agent_runner.resume_hitl.side_effect = _resume1
+        await use_case.execute(thread.id, decisions=[HitlDecision(tool_call_id="tc-1", action="approve")])
+
+        async def _resume2(_tid: str, _decisions, turn_id: str):
+            captured_turn_ids.append(turn_id)
+            return msg2, [
+                _hitl_decision_event(_tid, turn_id, "approve", "tc-2", seq=0),
+                _ai_event(_tid, turn_id, msg2, seq=1),
+            ]
+
+        mock_agent_runner.resume_hitl.side_effect = _resume2
+        await use_case.execute(thread.id, decisions=[HitlDecision(tool_call_id="tc-2", action="approve")])
+
+        # Assert — two distinct turn_ids generated by the use case
+        assert len(captured_turn_ids) == 2
+        assert captured_turn_ids[0] != captured_turn_ids[1]
+        # And 4 trace events persisted (2 per turn)
+        events = await trace_repo.list_by_thread(thread.id)
+        assert len(events) == 4
+
+    async def test_legacy_single_approve_converted_to_decisions(
+        self, use_case, mock_agent_runner, thread_repo, trace_repo
+    ):
+        # Arrange
+        thread = await thread_repo.create("test-agent")
+        final_message = Message(role=MessageRole.AI, content="Action approved.", status=MessageStatus.COMPLETED)
+        mock_agent_runner.resume_hitl.return_value = (
+            final_message,
+            [
+                _hitl_decision_event(thread.id, "turn-x", "approve", "tc-1", seq=0),
+                _ai_event(thread.id, "turn-x", final_message, seq=1),
+            ],
+        )
+
+        # Act — legacy single-decision shape
         result = await use_case.execute(thread.id, action="approve", tool_call_id="tc-1")
 
-        # Assert
-        assert result.content == "Action approved."
-        mock_agent_runner.approve_hitl.assert_awaited_once_with(thread.id, "tc-1")
-        # HITL path does not persist trace events
+        # Assert — resume_hitl awaited with a 1-element decisions list
+        mock_agent_runner.resume_hitl.assert_awaited_once()
+        args = mock_agent_runner.resume_hitl.await_args.args
+        assert args[0] == thread.id
+        decisions = args[1]
+        assert isinstance(decisions, list)
+        assert len(decisions) == 1
+        assert isinstance(decisions[0], HitlDecision)
+        assert decisions[0].tool_call_id == "tc-1"
+        assert decisions[0].action == "approve"
+        # And the final message is returned
+        assert result == final_message
+        # And trace events are now persisted (HITL_DECISION then AI_MESSAGE)
         events = await trace_repo.list_by_thread(thread.id)
-        assert events == []
+        assert len(events) == 2
+        assert events[0].type == TraceEventType.HITL_DECISION
+        assert events[1].type == TraceEventType.AI_MESSAGE
 
-    async def test_reject_hitl_returns_message(self, use_case, mock_agent_runner, thread_repo, trace_repo):
+    async def test_legacy_single_reject_converted_to_decisions(
+        self, use_case, mock_agent_runner, thread_repo, trace_repo
+    ):
         # Arrange
         thread = await thread_repo.create("test-agent")
-        rejected = Message(role=MessageRole.AI, content="Action rejected: Too risky", status=MessageStatus.COMPLETED)
-        mock_agent_runner.reject_hitl.return_value = rejected
+        final_message = Message(
+            role=MessageRole.AI, content="Action rejected: Too risky", status=MessageStatus.COMPLETED
+        )
+        mock_agent_runner.resume_hitl.return_value = (
+            final_message,
+            [
+                _hitl_decision_event(thread.id, "turn-y", "reject", "Too risky", seq=0),
+                _ai_event(thread.id, "turn-y", final_message, seq=1),
+            ],
+        )
 
-        # Act
+        # Act — legacy single-decision shape
         result = await use_case.execute(thread.id, action="reject", tool_call_id="tc-1", reason="Too risky")
 
-        # Assert
-        assert result.content == "Action rejected: Too risky"
-        mock_agent_runner.reject_hitl.assert_awaited_once_with(thread.id, "tc-1", "Too risky")
+        # Assert — resume_hitl awaited with a 1-element decisions list
+        mock_agent_runner.resume_hitl.assert_awaited_once()
+        args = mock_agent_runner.resume_hitl.await_args.args
+        assert args[0] == thread.id
+        decisions = args[1]
+        assert isinstance(decisions, list)
+        assert len(decisions) == 1
+        assert isinstance(decisions[0], HitlDecision)
+        assert decisions[0].tool_call_id == "tc-1"
+        assert decisions[0].action == "reject"
+        assert decisions[0].reason == "Too risky"
+        # And the final message is returned
+        assert result == final_message
+        # And trace events are now persisted
         events = await trace_repo.list_by_thread(thread.id)
-        assert events == []
+        assert len(events) == 2
+        assert events[0].type == TraceEventType.HITL_DECISION
+        assert events[1].type == TraceEventType.AI_MESSAGE
 
-    async def test_edit_hitl_returns_message(self, use_case, mock_agent_runner, thread_repo, trace_repo):
+    async def test_legacy_single_edit_converted_to_decisions(
+        self, use_case, mock_agent_runner, thread_repo, trace_repo
+    ):
         # Arrange
         thread = await thread_repo.create("test-agent")
-        edited = Message(role=MessageRole.AI, content="Action edited and approved.", status=MessageStatus.COMPLETED)
-        mock_agent_runner.edit_hitl.return_value = edited
+        final_message = Message(
+            role=MessageRole.AI, content="Action edited and approved.", status=MessageStatus.COMPLETED
+        )
+        mock_agent_runner.resume_hitl.return_value = (
+            final_message,
+            [
+                _hitl_decision_event(thread.id, "turn-z", "edit", "edited", seq=0),
+                _ai_event(thread.id, "turn-z", final_message, seq=1),
+            ],
+        )
 
-        # Act
+        # Act — legacy single-decision shape
         result = await use_case.execute(thread.id, action="edit", tool_call_id="tc-1", edits={"param": "value"})
 
-        # Assert
-        assert result.content == "Action edited and approved."
-        mock_agent_runner.edit_hitl.assert_awaited_once_with(thread.id, "tc-1", {"param": "value"})
+        # Assert — resume_hitl awaited with a 1-element decisions list
+        mock_agent_runner.resume_hitl.assert_awaited_once()
+        args = mock_agent_runner.resume_hitl.await_args.args
+        assert args[0] == thread.id
+        decisions = args[1]
+        assert isinstance(decisions, list)
+        assert len(decisions) == 1
+        assert isinstance(decisions[0], HitlDecision)
+        assert decisions[0].tool_call_id == "tc-1"
+        assert decisions[0].action == "edit"
+        assert decisions[0].edits == {"param": "value"}
+        # And the final message is returned
+        assert result == final_message
+        # And trace events are now persisted
         events = await trace_repo.list_by_thread(thread.id)
-        assert events == []
+        assert len(events) == 2
+        assert events[0].type == TraceEventType.HITL_DECISION
+        assert events[1].type == TraceEventType.AI_MESSAGE
+
+    async def test_resume_hitl_runner_error_propagates(self, use_case, mock_agent_runner, thread_repo):
+        # Arrange
+        thread = await thread_repo.create("test-agent")
+        mock_agent_runner.resume_hitl.side_effect = AgentError("Backend failed")
+
+        # Act / Assert
+        with pytest.raises(AgentError, match="Backend failed"):
+            await use_case.execute(thread.id, decisions=[HitlDecision(tool_call_id="tc-1", action="approve")])
 
     async def test_runner_error_propagates(self, use_case, mock_agent_runner, thread_repo):
         # Arrange
