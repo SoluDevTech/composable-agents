@@ -42,7 +42,7 @@ class LogMessage(StrEnum):
         "SQLAlchemy async engine created (pool: AsyncAdaptedQueuePool, size=20, max_overflow=20)"
     )
     POSTGRES_REPOS_INITIALIZED = "PostgreSQL repositories initialized"
-    MINIO_STORE_INITIALIZED = "MinIO store initialized (bucket=%s)"
+    RUSTFS_STORE_INITIALIZED = "RustFS store initialized (bucket=%s)"
     PERSISTENCE_REGISTRY_SET = "Persistence layer initialized, agent_registry set to PersistentAgentRegistry"
     PERSISTENT_REGISTRY_CLOSED = "Persistent registry closed"
     SQLALCHEMY_ENGINE_DISPOSED = "SQLAlchemy engine disposed"
@@ -210,11 +210,11 @@ class LogMessage(StrEnum):
     AGENT_CACHE_INVALIDATED = "Invalidated cached agent '%s'"
     REGISTRY_CLOSING = "Closing persistent registry, clearing %d cached agents"
 
-    # --- MinIO store ---
-    MINIO_CONFIG_UPLOADED = "Uploaded agent config '%s' to MinIO bucket '%s'"
-    MINIO_CONFIG_DELETED = "Deleted agent config '%s' from MinIO bucket '%s'"
-    MINIO_BUCKET_EXISTS = "MinIO bucket '%s' already exists"
-    MINIO_BUCKET_CREATED = "Created MinIO bucket '%s'"
+    # --- RustFS store ---
+    RUSTFS_CONFIG_UPLOADED = "RustFS config uploaded: %s (bucket=%s)"
+    RUSTFS_CONFIG_DELETED = "RustFS config deleted: %s (bucket=%s)"
+    RUSTFS_BUCKET_CREATED = "Created RustFS bucket '%s'"
+    RUSTFS_BUCKET_EXISTS = "RustFS bucket already created: %s"
 
     # --- MCP loader ---
     MCP_CONNECT_FAILED = "Failed to connect to MCP servers"
