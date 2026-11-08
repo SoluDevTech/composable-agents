@@ -27,10 +27,10 @@ def captured_engine(monkeypatch):
 
     monkeypatch.setattr("src.dependencies.create_async_engine", fake_create_async_engine)
 
-    # Patch MinioAgentConfigStore to avoid network calls
+    # Patch RustfsAgentConfigStore to avoid network calls
     mock_store = MagicMock()
     mock_store.ensure_bucket = AsyncMock()
-    monkeypatch.setattr("src.dependencies.MinioAgentConfigStore", lambda **_: mock_store)
+    monkeypatch.setattr("src.dependencies.RustfsAgentConfigStore", lambda **_: mock_store)
 
     return captured
 

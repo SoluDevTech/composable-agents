@@ -1,4 +1,4 @@
-"""Tests for MinioAgentConfigStore (MinIO adapter).
+"""Tests for RustfsAgentConfigStore (RustFS adapter).
 
 Mocks the miniopy-async Minio client at the external boundary (S3 API).
 Imports all symbols at module top.
@@ -10,7 +10,7 @@ import pytest
 from miniopy_async.error import S3Error
 
 from src.domain.errors.agent import AgentNotFoundError
-from src.infrastructure.minio_store.adapter import MinioAgentConfigStore
+from src.infrastructure.rustfs_store.adapter import RustfsAgentConfigStore
 
 BUCKET = "agent-configs"
 
@@ -26,7 +26,7 @@ def _s3_no_such_key() -> S3Error:
     )
 
 
-class TestMinioAgentConfigStore:
+class TestRustfsAgentConfigStore:
     @pytest.fixture
     def mock_minio_client(self):
         client = AsyncMock()
@@ -35,7 +35,7 @@ class TestMinioAgentConfigStore:
 
     @pytest.fixture
     def store(self, mock_minio_client):
-        return MinioAgentConfigStore(client=mock_minio_client, bucket=BUCKET)
+        return RustfsAgentConfigStore(client=mock_minio_client, bucket=BUCKET)
 
     async def test_put_uploads_yaml_content(self, store, mock_minio_client):
         # Arrange

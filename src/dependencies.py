@@ -54,7 +54,7 @@ from src.infrastructure.auth.jwt_adapter import JwtAdapter
 from src.infrastructure.crypto.fernet_crypto import FernetCrypto
 from src.infrastructure.database.rls_context import current_auth_context, current_user_id
 from src.infrastructure.mcp.adapter import LangchainMcpToolLoader
-from src.infrastructure.minio_store.adapter import MinioAgentConfigStore
+from src.infrastructure.rustfs_store.adapter import RustfsAgentConfigStore
 from src.infrastructure.persistent_registry.adapter import PersistentAgentRegistry
 from src.infrastructure.postgres_api_key.adapter import PostgresApiKeyRepository
 from src.infrastructure.postgres_repository.adapter import PostgresAgentConfigRepository
@@ -147,7 +147,7 @@ class CompositionRoot:
     """Container for application-wide persistence state, replacing module-level globals."""
 
     async_engine: AsyncEngine | None = None
-    minio_store: MinioAgentConfigStore | None = None
+    rustfs_store: RustfsAgentConfigStore | None = None
     pg_repository: PostgresAgentConfigRepository | None = None
     agent_registry: AgentRegistry | None = None
     thread_repository: ThreadRepository | None = None
@@ -245,13 +245,13 @@ async def init_persistence() -> None:
         secret_key=settings.minio_secret_key,
         secure=settings.minio_secure,
     )
-    _root.minio_store = MinioAgentConfigStore(client=minio_client, bucket=settings.minio_bucket)
-    await _root.minio_store.ensure_bucket()
-    logger.info(LogMessage.MINIO_STORE_INITIALIZED, settings.minio_bucket)
+    _root.rustfs_store = RustfsAgentConfigStore(client=minio_client, bucket=settings.minio_bucket)
+    await _root.rustfs_store.ensure_bucket()
+    logger.info(LogMessage.RUSTFS_STORE_INITIALIZED, settings.minio_bucket)
 
     _root.agent_registry = PersistentAgentRegistry(
         config_loader=agent_config_loader,
-        config_store=_root.minio_store,
+        config_store=_root.rustfs_store,
         config_repository=_root.pg_repository,
         mcp_tool_loader=mcp_tool_loader,
         tracing_provider=tracing_provider,
@@ -324,7 +324,7 @@ async def close_persistence() -> None:
 def reset() -> None:
     """Reset all persisted state. Useful for testing."""
     _root.async_engine = None
-    _root.minio_store = None
+    _root.rustfs_store = None
     _root.pg_repository = None
     _root.agent_registry = None
     _root.thread_repository = None
@@ -412,11 +412,11 @@ def get_load_agent_config_use_case() -> LoadAgentConfigUseCase:
     return LoadAgentConfigUseCase(agent_config_loader)
 
 
-def _require_persistence() -> tuple[MinioAgentConfigStore, PostgresAgentConfigRepository]:
+def _require_persistence() -> tuple[RustfsAgentConfigStore, PostgresAgentConfigRepository]:
     """Return persistence adapters or raise StorageError if not initialized."""
-    if _root.minio_store is None or _root.pg_repository is None:
+    if _root.rustfs_store is None or _root.pg_repository is None:
         raise StorageError(ErrorMessage.STORAGE_PERSISTENCE_NOT_INITIALIZED)
-    return _root.minio_store, _root.pg_repository
+    return _root.rustfs_store, _root.pg_repository
 
 
 def get_create_agent_config_use_case() -> CreateAgentConfigUseCase:
