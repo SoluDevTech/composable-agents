@@ -213,9 +213,8 @@ class LogMessage(StrEnum):
     # --- RustFS store ---
     RUSTFS_CONFIG_UPLOADED = "RustFS config uploaded: %s (bucket=%s)"
     RUSTFS_CONFIG_DELETED = "RustFS config deleted: %s (bucket=%s)"
-    RUSTFS_BUCKET_CREATED = "RustFS bucket created: %s"
-    RUSTFS_BUCKET_EXISTS = "RustFS bucket already created: %s"
     RUSTFS_BUCKET_CREATED = "Created RustFS bucket '%s'"
+    RUSTFS_BUCKET_EXISTS = "RustFS bucket already created: %s"
 
     # --- MCP loader ---
     MCP_CONNECT_FAILED = "Failed to connect to MCP servers"
