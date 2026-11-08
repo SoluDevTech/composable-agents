@@ -13,9 +13,11 @@ requires-python = ">=3.11"
 dependencies = [
     "deepagents>=0.6.12",
     "cryptography>=48.0.1",
+    "anyio>=4.14.2",
+    "certifi>=2026.10.18",
     "langchain-core>=1.4.7",
     "pyasn1>=0.6.4",
-    "pyjwt>=2.13.0",
+    "pyjwt>=2.14.0",
     "langgraph>=1.2.5",
     "langgraph-checkpoint-postgres>=3.0.5",
     "psycopg[binary]>=3.2.0",
