@@ -34,9 +34,9 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.0",
     "alembic>=1.13.0",
     "cachetools>=7.0.5",
-    "arize-phoenix-otel==0.15.0",
-    "openinference-instrumentation-langchain==0.1.62",
-    "arize-phoenix-client==2.3.0",
+    "arize-phoenix-otel==0.17.2",
+    "openinference-instrumentation-langchain==0.1.78",
+    "arize-phoenix-client==1.23.0",
     "tenacity>=8.0.0",
     # --- Security: pin above fixed versions of known CVEs (trivy) ---
     "aiohttp>=3.14.1",
